@@ -81,15 +81,37 @@ def test_return_paths_split_current_using_engine_resistance(engine):
     assert path["current_a"] == pytest.approx(744.8 * rg / abs((1 + 1j) + rg), rel=1e-6)
 
 
-def test_layered_soil_is_rejected(engine):
-    snapshot = {**ANNEX_H_GRID1, "soil_layers": [{"resistivity_ohm_m": 300, "depth_m": 6.1}, {"resistivity_ohm_m": 100}]}
-    with pytest.raises(UnsupportedModelError, match="homogéneo"):
+def test_two_layer_artifact_is_calculated(engine):
+    # Annex H Grid 3 as an artifact: Grid 2 geometry (rods at the 20 perimeter nodes) in 300/100 soil.
+    snapshot = {**ANNEX_H_GRID1, "geometry": {**ANNEX_H_GRID1["geometry"], "rods_count": 20},
+                "soil_layers": [{"resistivity_ohm_m": 300, "depth_m": 6.096}, {"resistivity_ohm_m": 100}]}
+    result = calculate(snapshot, {**PARAMETERS, "surface_spacing_m": 1.0}, engine)["result"]
+    assert result["soil"] == {"model": "two-layer", "upper_resistivity_ohm_m": 300.0,
+                              "lower_resistivity_ohm_m": 100.0, "upper_thickness_m": 6.096}
+    # Annex H range 0.97-0.972 ohm with 7.95 mm rods; the artifact uses the conductor radius for rods.
+    assert math.isclose(result["grid_resistance_ohm"], 0.971, rel_tol=0.01)
+    # IEEE 80 Cs uses the soil directly beneath the surface layer: the upper layer (300 ohm-m).
+    cs = result["safety"][0]["parameters"]["surface_layer_factor_cs"]
+    assert math.isclose(cs, 1 - 0.09 * (1 - 300 / 3000) / (2 * 0.1 + 0.09), rel_tol=1e-9)
+
+
+def test_more_than_two_soil_layers_are_rejected(engine):
+    snapshot = {**ANNEX_H_GRID1, "soil_layers": [{"resistivity_ohm_m": 300, "depth_m": 2},
+                                                 {"resistivity_ohm_m": 100, "depth_m": 4}, {"resistivity_ohm_m": 50}]}
+    with pytest.raises(UnsupportedModelError, match="dos capas"):
+        calculate(snapshot, PARAMETERS, engine)
+
+
+def test_two_layers_need_upper_thickness(engine):
+    snapshot = {**ANNEX_H_GRID1, "soil_layers": [{"resistivity_ohm_m": 300}, {"resistivity_ohm_m": 100}]}
+    with pytest.raises(UnsupportedModelError, match="espesor"):
         calculate(snapshot, PARAMETERS, engine)
 
 
 def test_identical_layers_count_as_homogeneous(engine):
     snapshot = {**ANNEX_H_GRID1, "soil_layers": [{"resistivity_ohm_m": 140, "depth_m": 3}, {"resistivity_ohm_m": 140}]}
-    assert calculate(snapshot, {**PARAMETERS, "surface_spacing_m": 1.0}, engine)["result"]["soil_resistivity_ohm_m"] == 140
+    assert calculate(snapshot, {**PARAMETERS, "surface_spacing_m": 1.0}, engine)["result"]["soil"] == {
+        "model": "homogeneous", "resistivity_ohm_m": 140.0}
 
 
 def test_grid_over_segment_limit_is_rejected(engine):
@@ -141,13 +163,14 @@ def test_calculation_lifecycle_through_api(env, engine, monkeypatch):  # noqa: F
 def test_layered_artifact_calculation_is_rejected(env, engine, monkeypatch):  # noqa: F811
     _, services, client, _, tokens, _ = env
     monkeypatch.setattr(tasks.calculate_artifact_potential, "apply_async", lambda args, task_id: None)
-    layered = {**ANNEX_H_GRID1, "soil_layers": [{"resistivity_ohm_m": 300, "depth_m": 6.1}, {"resistivity_ohm_m": 100}]}
+    layered = {**ANNEX_H_GRID1, "soil_layers": [{"resistivity_ohm_m": 300, "depth_m": 2},
+                                                {"resistivity_ohm_m": 100, "depth_m": 4}, {"resistivity_ohm_m": 50}]}
     base, artifact = _artifact(client, tokens, layered)
     calculation = client.post(f"{base}/{artifact['artifact_id']}/versions/1/calculos-potencial", json={},
                               headers=headers(tokens)).json()
     run_potential_calculation(services.store, calculation["id"], engine)
     detail = client.get(f"{base}/{artifact['artifact_id']}/calculos-potencial/{calculation['id']}", headers=headers(tokens)).json()
-    assert detail["status"] == "rejected" and "homogéneo" in detail["error"] and detail["result"] is None
+    assert detail["status"] == "rejected" and "dos capas" in detail["error"] and detail["result"] is None
 
 
 def test_cancelled_calculation_is_not_run(env, engine, monkeypatch):  # noqa: F811

@@ -13,13 +13,19 @@
 #include <vector>
 
 namespace {
-constexpr const char* kProtocol = "SPAT-POTENTIAL-2";
-constexpr const char* kSolverVersion = "2.0.0";
+constexpr const char* kProtocol = "SPAT-POTENTIAL-3";
+constexpr const char* kSolverVersion = "3.0.0";
 constexpr const char* kMethod =
     "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;"
     "graded-gauss-legendre-8;lu-partial-pivoting";
+constexpr const char* kLayeredMethod =
+    "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;"
+    "graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;lu-partial-pivoting";
 constexpr const char* kAssumptions =
     "homogeneous-isotropic-semi-infinite-soil;insulating-air-boundary;quasi-static-dc;"
+    "ideal-equipotential-metal-per-group;zero-net-current-for-floating-groups";
+constexpr const char* kLayeredAssumptions =
+    "two-layer-horizontally-stratified-isotropic-soil;insulating-air-boundary;quasi-static-dc;"
     "ideal-equipotential-metal-per-group;zero-net-current-for-floating-groups";
 constexpr const char* kUnits = "length=m;resistivity=ohm_m;current=A;potential=V;resistance=ohm";
 
@@ -37,6 +43,16 @@ constexpr double kMaxRadiusM = 0.5;
 constexpr double kMinLengthToRadius = 5.0;
 constexpr double kMaxResistivityOhmM = 1.0e6;
 constexpr double kMaxCurrentA = 1.0e6;
+constexpr double kMinLayerThicknessM = 0.01;
+// Two-layer image series: truncation tolerance relative to the weakest direct coupling
+// (1 / largest extent), and the most image orders the solver will sum before refusing.
+constexpr double kImageSeriesTolerance = 1.0e-7;
+constexpr int kMaxImageTerms = 2000;
+// Two-layer work limits in image evaluations (one image of one segment seen from one point).
+// Measured with validation/benchmark.py at about 2.5e-9 s per evaluation (Apple M5 Pro), so each
+// limit is about 10 s; homogeneous requests stay far below them.
+constexpr double kMaxMatrixImageWork = 4.0e9;
+constexpr double kMaxPointImageWork = 4.0e9;
 
 // Numerical acceptance limits.
 constexpr double kMaxBackwardError = 1.0e-10;
@@ -227,6 +243,132 @@ double coefficient(const Segment& target, const Segment& source, bool same) {
     return integrate([&](double t) { return source_potential(at(target, t), source); }, near);
 }
 
+// Two-layer soil: upper layer rho1 of thickness h over a semi-infinite layer rho2, with an
+// insulating air boundary at z = 0. The point-source potential is the classical image series
+// (Sunde 1949; Tagg 1964) with reflection coefficient K = (rho2 - rho1) / (rho2 + rho1):
+//   source and observation in layer 1: rho1 sum_{n=-inf..inf} K^|n| [1/R(t-s+2nh) + 1/R(t+s+2nh)]
+//   source in layer 1, observation in 2: rho1 (1+K) sum_{n>=0} K^n [1/R(t-s+2nh) + 1/R(t+s+2nh)]
+//   source in layer 2, observation in 1: rho1 (1+K) sum_{n>=0} K^n [1/R(s-t+2nh) + 1/R(s+t+2nh)]
+//   source and observation in layer 2: rho2 [1/R(t-s) - K/R(t+s-2h) + (1-K^2) sum_{n>=0} K^n/R(t+s+2nh)]
+// with depths s, t > 0 and R(d) = sqrt(r^2 + d^2), all over 4 pi. Every term is the potential of
+// a translated or mirrored copy of the source segment, so the analytic line integral applies to each.
+struct Soil {
+    bool layered{false};
+    double rho1{}, rho2{}, h{}, k{};
+    int terms{0};              // image orders n = 0..terms
+    double tail_bound{0.0};    // truncation bound relative to the weakest direct coupling
+};
+
+struct Image {
+    double weight;   // relative to rho1
+    bool mirrored;   // z -> -z before the shift
+    double shift;    // added to z
+};
+
+int layer_of(double z, const Soil& soil) { return -z < soil.h ? 0 : 1; }
+int layer_of(const Segment& s, const Soil& soil) { return layer_of(0.5 * (s.a.z + s.b.z), soil); }
+
+// images[source layer][observation layer]
+using ImageTable = std::array<std::array<std::vector<Image>, 2>, 2>;
+
+ImageTable image_table(const Soil& soil) {
+    ImageTable table;
+    const double K = soil.k, r = soil.rho2 / soil.rho1;
+    auto& upper = table[0][0];
+    upper = {{1.0, false, 0.0}, {1.0, true, 0.0}};
+    double kn = 1.0;
+    for (int n = 1; n <= soil.terms; ++n) {
+        kn *= K;
+        const double d = 2.0 * n * soil.h;
+        upper.insert(upper.end(), {{kn, false, d}, {kn, true, d}, {kn, false, -d}, {kn, true, -d}});
+    }
+    kn = 1.0 + K;
+    for (int n = 0; n <= soil.terms; ++n, kn *= K) {
+        const double d = 2.0 * n * soil.h;
+        table[0][1].insert(table[0][1].end(), {{kn, false, d}, {kn, true, d}});
+        table[1][0].insert(table[1][0].end(), {{kn, false, -d}, {kn, true, d}});
+    }
+    auto& lower = table[1][1];
+    lower = {{r, false, 0.0}, {-r * K, true, -2.0 * soil.h}};
+    kn = r * (1.0 - K * K);
+    for (int n = 0; n <= soil.terms; ++n, kn *= K) lower.push_back({kn, true, 2.0 * n * soil.h});
+    return table;
+}
+
+Vec3 apply(const Image& image, const Vec3& p) { return {p.x, p.y, (image.mirrored ? -p.z : p.z) + image.shift}; }
+
+// Smallest image order whose a-priori tail bound is below the tolerance. At order n every image
+// lies at least 2nh - 2 Dmax away, there are at most 4 images per order with weight at most
+// 2 max(1, rho2/rho1) |K|^n, so the tail beyond N is at most
+//   8 max(1, rho2/rho1) |K|^(N+1) / ((1 - |K|)(2(N+1)h - 2 Dmax)),
+// measured against 1 / extent, the weakest direct coupling in the problem.
+void choose_image_terms(Soil& soil, double max_depth, double extent) {
+    const double K = std::abs(soil.k), c = 8.0 * std::max(1.0, soil.rho2 / soil.rho1);
+    for (int n = 1; n <= kMaxImageTerms; ++n) {
+        const double gap = 2.0 * (n + 1) * soil.h - 2.0 * max_depth;
+        if (gap <= soil.h) continue;
+        const double tail = c * std::pow(K, n + 1) / ((1.0 - K) * gap) * extent;
+        if (tail <= kImageSeriesTolerance) { soil.terms = n; soil.tail_bound = tail; return; }
+    }
+    std::ostringstream message;
+    message << "two-layer image series needs more than " << kMaxImageTerms << " terms (K = " << soil.k
+            << ", h = " << soil.h << " m); the resistivity contrast is too high for this solver";
+    throw std::runtime_error(message.str());
+}
+
+// Integral of 1/R over an image of the source segment; images farther than 4 lengths use a
+// two-point Gauss rule (relative error below about 2e-5).
+double image_integral(const Vec3& p, const Segment& source, const Image& image) {
+    const Vec3 a = apply(image, source.a), b = apply(image, source.b);
+    const Vec3 mid = (a + b) * 0.5;
+    if (norm(p - mid) > 4.0 * source.length) {
+        const Vec3 half = (b - a) * (0.5 / std::sqrt(3.0));
+        return 0.5 * source.length * (1.0 / norm(p - (mid - half)) + 1.0 / norm(p - (mid + half)));
+    }
+    return line_integral(p, a, b, source.length, source.radius);
+}
+
+// Potential at p per unit source-segment current, relative to rho1 / (4 pi) (units 1/m).
+double layered_source_potential(const Vec3& p, int observation_layer, const Segment& source, int source_layer,
+                                const ImageTable& table) {
+    double sum = 0.0;
+    for (const auto& image : table[source_layer][observation_layer]) sum += image.weight * image_integral(p, source, image);
+    return sum / source.length;
+}
+
+// Galerkin coefficient in two-layer soil (relative to rho1 / (4 pi)), image by image: closed form
+// for the segment itself, 2x2 Gauss for far images, graded quadrature with the analytic line
+// integral for near ones.
+double layered_coefficient(const Segment& target, int target_layer, const Segment& source, int source_layer,
+                           bool same, const ImageTable& table) {
+    const double L = target.length;
+    constexpr double kGauss2 = 0.2113248654051871;  // (1 - 1/sqrt(3)) / 2
+    const Vec3 target_mid = (target.a + target.b) * 0.5;
+    double total = 0.0;
+    for (const auto& image : table[source_layer][target_layer]) {
+        const Vec3 a = apply(image, source.a), b = apply(image, source.b);
+        if (same && !image.mirrored && image.shift == 0.0) {
+            const double r = target.radius;
+            total += image.weight * 2.0 * (L * std::asinh(L / r) - std::sqrt(L * L + r * r) + r) / (L * L);
+            continue;
+        }
+        if (norm(target_mid - (a + b) * 0.5) > 4.0 * (L + source.length)) {
+            double sum = 0.0;
+            for (double ti : {kGauss2, 1.0 - kGauss2})
+                for (double sj : {kGauss2, 1.0 - kGauss2}) sum += 1.0 / norm(at(target, ti) - (a + (b - a) * sj));
+            total += image.weight * 0.25 * sum;
+            continue;
+        }
+        double s = 0.0, t = 0.0;
+        const double gap = segment_distance(target.a, target.b, a, b, s, t);
+        std::vector<NearPoint> near;
+        if (gap < 2.0 * L) near.push_back({s, std::max({gap, source.radius, 1e-6 * L}) / L});
+        const auto f = [&](double u) { return line_integral(at(target, u), a, b, source.length, source.radius) / source.length; };
+        total += image.weight * integrate(f, near);
+    }
+    return total;
+}
+
 struct Lu {
     std::vector<std::vector<double>> a;
     std::vector<std::size_t> perm;
@@ -387,10 +529,27 @@ void run_request() {
         throw std::runtime_error(std::string("expected ") + kProtocol + " protocol header");
     if (!std::getline(std::cin, line)) throw std::runtime_error("missing soil and segment count");
     auto header = fields(line);
-    if (header.size() != 2) throw std::runtime_error("soil line must contain resistivity and segment count");
-    const double rho = number(header[0], "soil resistivity");
-    const std::size_t segment_count = count_value(header[1], "segment count", kMaxSegments);
-    if (rho <= 0 || rho > kMaxResistivityOhmM) throw std::runtime_error("soil resistivity must be in (0, 1e6] ohm-m");
+    Soil soil;
+    std::vector<std::string> warnings;
+    if (header.size() == 3 && header[0] == "homogeneous") {
+        soil.rho1 = soil.rho2 = number(header[1], "soil resistivity");
+    } else if (header.size() == 5 && header[0] == "two-layer") {
+        soil.rho1 = number(header[1], "upper-layer resistivity");
+        soil.rho2 = number(header[2], "lower-layer resistivity");
+        soil.h = number(header[3], "upper-layer thickness");
+        if (soil.h < kMinLayerThicknessM || soil.h > kMaxDepthM)
+            throw std::runtime_error("upper-layer thickness must be between 0.01 and 1000 m");
+        soil.layered = soil.rho1 != soil.rho2;
+        if (!soil.layered) warnings.push_back("equal-layers\ttwo-layer soil with equal resistivities solved as homogeneous");
+    } else {
+        throw std::runtime_error("soil line must be 'homogeneous <rho> <segments>' or "
+                                 "'two-layer <rho_upper> <rho_lower> <upper_thickness> <segments>'");
+    }
+    for (double value : {soil.rho1, soil.rho2})
+        if (value <= 0 || value > kMaxResistivityOhmM) throw std::runtime_error("soil resistivity must be in (0, 1e6] ohm-m");
+    soil.k = (soil.rho2 - soil.rho1) / (soil.rho2 + soil.rho1);
+    const double rho = soil.rho1;
+    const std::size_t segment_count = count_value(header.back(), "segment count", kMaxSegments);
     if (segment_count == 0) throw std::runtime_error("segment count must be positive");
 
     std::map<std::string, Group> groups;
@@ -438,8 +597,46 @@ void run_request() {
     }
     if (!std::getline(std::cin, line) || line != "END") throw std::runtime_error("expected END protocol marker");
     validate_geometry(segments);
+    ImageTable table;
+    std::vector<int> layers(segments.size(), 0);
+    if (soil.layered) {
+        double max_depth = 0.0, low_x = 0.0, high_x = 0.0, low_y = 0.0, high_y = 0.0;
+        bool first = true;
+        const auto extend = [&](const Vec3& p) {
+            if (first) { low_x = high_x = p.x; low_y = high_y = p.y; first = false; }
+            low_x = std::min(low_x, p.x); high_x = std::max(high_x, p.x);
+            low_y = std::min(low_y, p.y); high_y = std::max(high_y, p.y);
+        };
+        const double tolerance = 1e-9 * std::max(1.0, soil.h);
+        for (std::size_t i = 0; i < segments.size(); ++i) {
+            const auto& s = segments[i];
+            const double top = std::min(-s.a.z, -s.b.z), bottom = std::max(-s.a.z, -s.b.z);
+            if (top < soil.h - tolerance && bottom > soil.h + tolerance)
+                throw std::runtime_error("segment " + s.id + " crosses the soil interface; split it at the interface "
+                                         "depth (the Python client does this automatically)");
+            max_depth = std::max(max_depth, bottom);
+            extend(s.a); extend(s.b);
+            layers[i] = layer_of(s, soil);
+        }
+        for (const auto& point : points) { extend(point.p); max_depth = std::max(max_depth, std::abs(point.p.z)); }
+        const double extent = std::max(1.0, std::hypot(high_x - low_x, high_y - low_y) + 2.0 * max_depth);
+        choose_image_terms(soil, max_depth, extent);
+        table = image_table(soil);
+        double per_layer[2] = {0.0, 0.0};
+        for (int layer : layers) per_layer[layer] += 1.0;
+        double matrix_work = 0.0, point_work = 0.0;
+        for (int target = 0; target < 2; ++target)
+            for (int source = 0; source < 2; ++source)
+                matrix_work += per_layer[target] * per_layer[source] * static_cast<double>(table[source][target].size());
+        for (int source = 0; source < 2; ++source)
+            point_work += static_cast<double>(points.size()) * per_layer[source] * static_cast<double>(table[source][0].size());
+        if (matrix_work > kMaxMatrixImageWork)
+            throw std::runtime_error("two-layer system needs more than 4e9 image evaluations; use fewer segments");
+        if (point_work > kMaxPointImageWork)
+            throw std::runtime_error("two-layer surface query needs more than 4e9 image evaluations; split the "
+                                     "points into smaller batches");
+    }
 
-    std::vector<std::string> warnings;
     double total_injection = 0.0;
     for (const auto& [id, group] : groups) { (void)id; total_injection += std::abs(group.injected_current); }
     if (total_injection == 0.0) warnings.push_back("no-injection\tall group currents are zero; every potential is zero");
@@ -452,7 +649,10 @@ void run_request() {
     std::vector<std::vector<double>> matrix(size, std::vector<double>(size, 0.0));
     std::vector<double> rhs(size, 0.0);
     for (std::size_t i = 0; i < n; ++i) {
-        for (std::size_t j = 0; j < n; ++j) matrix[i][j] = coefficient(segments[i], segments[j], i == j);
+        for (std::size_t j = 0; j < n; ++j)
+            matrix[i][j] = soil.layered
+                ? layered_coefficient(segments[i], layers[i], segments[j], layers[j], i == j, table)
+                : coefficient(segments[i], segments[j], i == j);
         matrix[i][n + group_index.at(segments[i].group)] = -1.0;
     }
     for (std::size_t j = 0; j < n; ++j) matrix[n + group_index.at(segments[j].group)][j] = 1.0;
@@ -503,17 +703,27 @@ void run_request() {
     std::cout << std::setprecision(12) << kProtocol << "\tOK\n";
     std::cout << "META\tprotocol\t" << kProtocol << '\n'
               << "META\tsolver_version\t" << kSolverVersion << '\n'
-              << "META\tmethod\t" << kMethod << '\n'
-              << "META\tassumptions\t" << kAssumptions << '\n'
-              << "META\tunits\t" << kUnits << '\n'
-              << "META\tsoil_resistivity_ohm_m\t" << rho << '\n'
-              << "META\tsegment_count\t" << n << '\n'
+              << "META\tmethod\t" << (soil.layered ? kLayeredMethod : kMethod) << '\n'
+              << "META\tassumptions\t" << (soil.layered ? kLayeredAssumptions : kAssumptions) << '\n'
+              << "META\tunits\t" << kUnits << '\n';
+    if (soil.layered)
+        std::cout << "META\tsoil_model\ttwo-layer\n"
+                  << "META\tsoil_upper_resistivity_ohm_m\t" << soil.rho1 << '\n'
+                  << "META\tsoil_lower_resistivity_ohm_m\t" << soil.rho2 << '\n'
+                  << "META\tsoil_upper_thickness_m\t" << soil.h << '\n'
+                  << "META\tsoil_reflection_coefficient\t" << soil.k << '\n';
+    else
+        std::cout << "META\tsoil_model\thomogeneous\n"
+                  << "META\tsoil_resistivity_ohm_m\t" << rho << '\n';
+    std::cout << "META\tsegment_count\t" << n << '\n'
               << "META\tgroup_count\t" << g << '\n'
               << "META\tpoint_count\t" << points.size() << '\n';
     std::cout << "DIAG\tbackward_error\t" << backward_error << '\n'
               << "DIAG\tcondition_1norm_estimate\t" << condition << '\n'
               << "DIAG\tpivot_ratio\t" << lu.min_pivot / lu.max_pivot << '\n'
-              << "DIAG\tmax_relative_balance_error\t" << max_balance_error << '\n';
+              << "DIAG\tmax_relative_balance_error\t" << max_balance_error << '\n'
+              << "DIAG\timage_terms\t" << soil.terms << '\n'
+              << "DIAG\timage_series_tail_bound\t" << soil.tail_bound << '\n';
     for (const auto& warning : warnings) std::cout << "WARNING\t" << warning << '\n';
     for (std::size_t i = 0; i < n; ++i) std::cout << "SEGMENT\t" << segments[i].id << '\t' << solution[i] << '\n';
     for (const auto& id : group_ids) {
@@ -526,7 +736,13 @@ void run_request() {
     }
     for (const auto& point : points) {
         double potential = 0.0;
-        for (std::size_t j = 0; j < n; ++j) potential += source_potential(point.p, segments[j]) * solution[j];
+        if (soil.layered) {
+            const int observation_layer = layer_of(point.p.z, soil);
+            for (std::size_t j = 0; j < n; ++j)
+                potential += layered_source_potential(point.p, observation_layer, segments[j], layers[j], table) * solution[j];
+        } else {
+            for (std::size_t j = 0; j < n; ++j) potential += source_potential(point.p, segments[j]) * solution[j];
+        }
         std::cout << "POINT\t" << point.id << '\t' << factor_v * potential << '\n';
     }
     std::cout << "END\n";

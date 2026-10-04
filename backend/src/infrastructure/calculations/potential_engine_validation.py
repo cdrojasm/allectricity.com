@@ -12,11 +12,13 @@ from pathlib import Path
 from typing import Any
 
 from src.infrastructure.calculations.potential_engine_client import (
-    MAX_POINT_SEGMENT_WORK,
-    MAX_POINTS,
     ElectrodeSegment,
+    HomogeneousSoil,
     PotentialEngineClient,
     PotentialPoint,
+    SoilModel,
+    TwoLayerSoil,
+    point_batch_size,
 )
 
 DEFAULT_CASES_PATH = Path(__file__).resolve().parents[4] / "services" / "potential_engine" / "validation" / "reference_cases.json"
@@ -27,7 +29,24 @@ def load_cases(path: str | Path = DEFAULT_CASES_PATH) -> dict[str, Any]:
         return json.load(handle)
 
 
-def _split(prefix: str, group: str, kind: str, start, end, radius: float, max_length_m: float) -> list[ElectrodeSegment]:
+def case_soil(case: dict[str, Any]) -> SoilModel:
+    """Soil model of a case: `soil` (two-layer) or the homogeneous `soil_resistivity_ohm_m`."""
+    soil = case.get("soil")
+    if soil:
+        return TwoLayerSoil(soil["upper_resistivity_ohm_m"], soil["lower_resistivity_ohm_m"], soil["upper_thickness_m"])
+    return HomogeneousSoil(case["soil_resistivity_ohm_m"])
+
+
+def _split(prefix: str, group: str, kind: str, start, end, radius: float, max_length_m: float,
+           interface_z: float | None = None) -> list[ElectrodeSegment]:
+    """Discretise one straight conductor; with `interface_z`, cut it there first."""
+    if interface_z is not None and min(start[2], end[2]) < interface_z < max(start[2], end[2]):
+        t = (interface_z - start[2]) / (end[2] - start[2])
+        cut = (start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t, interface_z)
+        if min(dist(start, cut), dist(cut, end)) < 5.0 * radius:
+            raise ValueError(f"conductor {prefix} crosses the soil interface within 5 radii of its end")
+        return (_split(f"{prefix}a", group, kind, start, cut, radius, max_length_m)
+                + _split(f"{prefix}b", group, kind, cut, end, radius, max_length_m))
     pieces = max(1, ceil(dist(start, end) / max_length_m - 1e-9))
     return [
         ElectrodeSegment(
@@ -41,12 +60,15 @@ def _split(prefix: str, group: str, kind: str, start, end, radius: float, max_le
 
 
 def case_segments(case: dict[str, Any], discretization_m: float | None = None) -> list[ElectrodeSegment]:
-    """Discretise a case's conductors; grid conductors are cut at every crossing."""
+    """Discretise a case's conductors; grid conductors are cut at every crossing and, in two-layer
+    soil, every conductor is cut at the interface so no segment straddles it."""
     step = float(discretization_m or case["discretization_m"])
+    soil = case_soil(case)
+    interface_z = -soil.upper_thickness_m if isinstance(soil, TwoLayerSoil) else None
     segments: list[ElectrodeSegment] = []
     for index, conductor in enumerate(case.get("conductors", [])):
         segments += _split(f"c{index}", conductor["group"], conductor["kind"], conductor["start_m"],
-                           conductor["end_m"], conductor["radius_m"], step)
+                           conductor["end_m"], conductor["radius_m"], step, interface_z)
     grid = case.get("grid")
     if grid:
         xs, ys, z, r, group = grid["x_lines_m"], grid["y_lines_m"], -grid["depth_m"], grid["radius_m"], grid["group"]
@@ -61,7 +83,7 @@ def case_segments(case: dict[str, Any], discretization_m: float | None = None) -
             corners = [(x, y) for x in xs for y in ys if x in (xs[0], xs[-1]) or y in (ys[0], ys[-1])]
             for index, (x, y) in enumerate(corners):
                 segments += _split(f"rod{index}", group, "rod", (x, y, z), (x, y, z - rods["length_m"]),
-                                   rods["radius_m"], step)
+                                   rods["radius_m"], step, interface_z)
     return segments
 
 
@@ -92,11 +114,11 @@ def evaluate_case(
             rasters[index] = [f"k{index}r{n}" for n in range(len(raster))]
             points.update({pid: (x, y, 0.0) for pid, (x, y) in zip(rasters[index], raster)})
     queries = [PotentialPoint(pid, xyz) for pid, xyz in points.items()]
-    batch = max(1, min(MAX_POINTS, int(MAX_POINT_SEGMENT_WORK // len(segments))))
+    batch = point_batch_size(case_soil(case), segments, queries)
     v: dict[str, float] = {}
     for start in range(0, max(len(queries), 1), batch):
         result = client.calculate(
-            soil_resistivity_ohm_m=case["soil_resistivity_ohm_m"],
+            soil=case_soil(case),
             segments=segments,
             injections_a=case["injections_a"],
             points=queries[start:start + batch],

@@ -6,9 +6,12 @@ import pytest
 from src.infrastructure.calculations.potential_engine_client import (
     PROTOCOL,
     ElectrodeSegment,
+    HomogeneousSoil,
     PotentialEngineClient,
     PotentialEngineError,
     PotentialPoint,
+    TwoLayerSoil,
+    split_at_interface,
     validate_request,
 )
 from src.infrastructure.calculations.potential_engine_validation import (
@@ -128,7 +131,7 @@ def test_soil_resistivity_must_be_positive():
     (["a g rod 0 0 0 0 0 -3 0.008", "b h grid -1 0 -1 1 0 -1 0.005"], "different groups"),
 ])
 def test_engine_rejects_invalid_geometry(client, rows, message):
-    payload = "\n".join([PROTOCOL, f"100 {len(rows)}", *rows, "1", "g 1 test", "0", "END", ""])
+    payload = "\n".join([PROTOCOL, f"homogeneous 100 {len(rows)}", *rows, "1", "g 1 test", "0", "END", ""])
     done = subprocess.run([client.executable], input=payload, capture_output=True, text=True)
     assert done.returncode == 2
     assert done.stdout.startswith(f"{PROTOCOL}\tERROR\t") and message in done.stdout
@@ -139,3 +142,90 @@ def test_timeout_is_enforced(client):
     case = next(case for case in CASES["cases"] if case["id"] == "ieee80_annex_h_grid1")
     with pytest.raises(PotentialEngineError, match="time limit"):
         slow.calculate(soil_resistivity_ohm_m=140, segments=case_segments(case), injections_a={"grid": 1}, points=[])
+
+
+def rod_segments(top=0.0, bottom=-3.0, pieces=12, group="g", x=0.0):
+    return [ElectrodeSegment(f"{group}{k}", group, "rod", (x, 0.0, top + (bottom - top) * k / pieces),
+                             (x, 0.0, top + (bottom - top) * (k + 1) / pieces), 0.008) for k in range(pieces)]
+
+
+def resistance(client, soil, segments, group="g"):
+    result = client.calculate(soil=soil, segments=segments, injections_a={group: 1.0}, points=[])
+    return result["groups"][group]["resistance_to_remote_earth_ohm"]
+
+
+def test_two_layer_limits_recover_homogeneous_soil(client):
+    shallow, buried = rod_segments(), rod_segments(-0.5, -3.5)
+    # A very thick upper layer behaves as homogeneous rho1; a very thin one as homogeneous rho2.
+    assert math.isclose(resistance(client, TwoLayerSoil(300, 100, 1000), shallow),
+                        resistance(client, HomogeneousSoil(300), shallow), rel_tol=1e-3)
+    assert math.isclose(resistance(client, TwoLayerSoil(300, 100, 0.01), buried),
+                        resistance(client, HomogeneousSoil(100), buried), rel_tol=1e-3)
+
+
+def test_equal_layers_reproduce_homogeneous_result_exactly(client):
+    segments = rod_segments()
+    homogeneous = client.calculate(soil=HomogeneousSoil(140), segments=segments, injections_a={"g": 1}, points=[])
+    equal = client.calculate(soil=TwoLayerSoil(140, 140, 2), segments=segments, injections_a={"g": 1}, points=[])
+    assert equal["segment_currents_a"] == homogeneous["segment_currents_a"]
+    assert [w["code"] for w in equal["warnings"]] == ["equal-layers"]
+
+
+def test_two_layer_result_reports_series_and_soil_trace(client):
+    result = client.calculate(soil=TwoLayerSoil(300, 100, 1.3), segments=rod_segments(),
+                              injections_a={"g": 1}, points=[PotentialPoint("p", (2, 0, 0))])
+    assert 1 <= result["diagnostics"]["image_terms"] <= 2000
+    assert 0 < result["diagnostics"]["image_series_tail_bound"] <= 1e-7
+    assert result["trace"]["soil"] == {"model": "two-layer", "upper_resistivity_ohm_m": 300,
+                                       "lower_resistivity_ohm_m": 100, "upper_thickness_m": 1.3}
+    assert result["trace"]["soil_reflection_coefficient"] == "-0.5"
+    assert "two-layer" in result["trace"]["assumptions"]
+    # The rod crosses the interface at 1.3 m: the client split the segment that straddled it.
+    assert {"g5.u", "g5.l"} <= set(result["segment_currents_a"])
+
+
+def test_two_layer_transfer_potential_is_reciprocal(client):
+    segments = rod_segments(group="a") + rod_segments(-0.5, -5.0, 9, group="b", x=7.0)
+    soil = TwoLayerSoil(100, 400, 2.0)
+    one = client.calculate(soil=soil, segments=segments, injections_a={"a": 1.0}, points=[])
+    two = client.calculate(soil=soil, segments=segments, injections_a={"b": 1.0}, points=[])
+    assert math.isclose(one["groups"]["b"]["potential_v"], two["groups"]["a"]["potential_v"], rel_tol=1e-4)
+
+
+def test_resistance_varies_continuously_with_layer_thickness(client):
+    values = [resistance(client, TwoLayerSoil(300, 100, h), rod_segments()) for h in (2.95, 3.0, 3.05)]
+    assert values[0] < values[1] < values[2] and values[2] - values[0] < 0.1 * values[1]
+
+
+def test_split_at_interface_cuts_straddling_segments():
+    soil = TwoLayerSoil(300, 100, 1.0)
+    parts = split_at_interface([ElectrodeSegment("r", "g", "rod", (0, 0, -0.5), (0, 0, -2.0), 0.008)], soil)
+    assert [(p.id, p.start_m[2], p.end_m[2]) for p in parts] == [("r.u", -0.5, -1.0), ("r.l", -1.0, -2.0)]
+    with pytest.raises(ValueError, match="shorter than 5 radii"):
+        split_at_interface([ElectrodeSegment("r", "g", "rod", (0, 0, -0.98), (0, 0, -2.0), 0.008)], soil)
+
+
+@pytest.mark.parametrize(("soil", "message"), [
+    (TwoLayerSoil(300, 100, 0.001), "thickness"),
+    (TwoLayerSoil(300, -1, 2), "resistivity"),
+])
+def test_invalid_two_layer_soil_is_rejected(soil, message):
+    with pytest.raises(ValueError, match=message):
+        validate_request(soil, rod_segments(), {"g": 1}, [])
+
+
+def test_segment_crossing_interface_is_rejected_without_split():
+    crossing = [ElectrodeSegment("r", "g", "rod", (0, 0, 0), (0, 0, -3), 0.008)]
+    with pytest.raises(ValueError, match="crosses the soil interface"):
+        validate_request(TwoLayerSoil(300, 100, 1.0), crossing, {"g": 1}, [])
+
+
+@pytest.mark.parametrize(("soil_line", "rows", "message"), [
+    ("two-layer 300 100 1 1", ["a g rod 0 0 0 0 0 -3 0.008"], "crosses the soil interface"),
+    ("two-layer 1 1000000 5 1", ["a g rod 0 0 0 0 0 -3 0.008"], "contrast is too high"),
+    ("layered 300 1", ["a g rod 0 0 0 0 0 -3 0.008"], "soil line must be"),
+])
+def test_engine_rejects_invalid_two_layer_requests(client, soil_line, rows, message):
+    payload = "\n".join([PROTOCOL, soil_line, *rows, "1", "g 1 test", "0", "END", ""])
+    done = subprocess.run([client.executable], input=payload, capture_output=True, text=True)
+    assert done.returncode == 2 and message in done.stdout

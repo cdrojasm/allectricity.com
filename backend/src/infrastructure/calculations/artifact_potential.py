@@ -9,13 +9,16 @@ from typing import Any
 from src.infrastructure.calculations import safety_criteria
 from src.infrastructure.calculations.fault_current import ReturnPath, grid_current
 from src.infrastructure.calculations.potential_engine_client import (
-    MAX_POINT_SEGMENT_WORK,
-    MAX_POINTS,
     MAX_SEGMENTS,
+    HomogeneousSoil,
     PotentialEngineClient,
     PotentialEngineError,
     PotentialPoint,
+    SoilModel,
+    TwoLayerSoil,
+    point_batch_size,
     rectangular_grid_segments,
+    soil_record,
 )
 
 GROUP = "grid"
@@ -37,17 +40,32 @@ class UnsupportedModelError(ValueError):
     """The artifact needs a model the engine does not solve; the calculation is rejected."""
 
 
-def homogeneous_resistivity(soil_layers: list[dict[str, Any]]) -> float:
-    values = {float(layer["resistivity_ohm_m"]) for layer in soil_layers}
-    if len(values) != 1:
+def soil_model(soil_layers: list[dict[str, Any]]) -> SoilModel:
+    """Engine soil model from the artifact's layers (top to bottom, `depth_m` = layer thickness).
+
+    Adjacent layers with the same resistivity are merged. One resulting layer is homogeneous soil;
+    two are a two-layer soil whose upper thickness is the merged `depth_m`; more are rejected.
+    """
+    merged: list[list[Any]] = []
+    for layer in soil_layers:
+        rho, thickness = float(layer["resistivity_ohm_m"]), layer.get("depth_m")
+        if merged and merged[-1][0] == rho:
+            merged[-1][1] = None if merged[-1][1] is None or thickness is None else merged[-1][1] + float(thickness)
+        else:
+            merged.append([rho, None if thickness is None else float(thickness)])
+    if len(merged) == 1:
+        return HomogeneousSoil(merged[0][0])
+    if len(merged) > 2:
         raise UnsupportedModelError(
-            "El motor solo resuelve suelo homogéneo y el artefacto tiene capas con resistividades distintas; "
-            "el suelo estratificado es un P1 del backlog."
+            f"El motor resuelve suelo homogéneo o de dos capas y el artefacto tiene {len(merged)} capas con "
+            "resistividades distintas; el suelo de n capas está pendiente en el backlog."
         )
-    return values.pop()
+    if merged[0][1] is None:
+        raise UnsupportedModelError("La capa superior del suelo de dos capas necesita su espesor (depth_m).")
+    return TwoLayerSoil(merged[0][0], merged[1][0], merged[0][1])
 
 
-def _fault_current(fault, parameters, client, rho, segments) -> tuple[float, str, dict[str, Any] | None]:
+def _fault_current(fault, parameters, client, soil, segments) -> tuple[float, str, dict[str, Any] | None]:
     """Grid current I_G = D_f · S_f · 3I0, its injection origin token and breakdown (None without data).
 
     R_g does not depend on the injected current, so return paths need one points-free solve at
@@ -61,7 +79,7 @@ def _fault_current(fault, parameters, client, rho, segments) -> tuple[float, str
              for p in split.get("return_paths") or []]
     grid_resistance = None
     if paths:
-        unit = client.calculate(soil_resistivity_ohm_m=rho, segments=segments, injections_a={GROUP: 1.0},
+        unit = client.calculate(soil=soil, segments=segments, injections_a={GROUP: 1.0},
                                 points=[], injection_origins={GROUP: "unit-current-for-split"})
         grid_resistance = unit["groups"][GROUP]["resistance_to_remote_earth_ohm"]
     breakdown = grid_current(
@@ -75,14 +93,14 @@ def _fault_current(fault, parameters, client, rho, segments) -> tuple[float, str
     return breakdown["grid_current_a"], origin, breakdown
 
 
-def _solve(client, rho, segments, current, points, origin=INJECTION_ORIGIN):
+def _solve(client, soil, segments, current, points, origin=INJECTION_ORIGIN):
     """Solve once per batch of surface points; every batch shares the same electrode solution."""
-    batch = max(1, min(MAX_POINTS, int(MAX_POINT_SEGMENT_WORK // len(segments))))
+    batch = point_batch_size(soil, segments, points)
     potentials: dict[str, float] = {}
     first, hashes = None, []
     for start in range(0, max(len(points), 1), batch):
         result = client.calculate(
-            soil_resistivity_ohm_m=rho, segments=segments, injections_a={GROUP: current},
+            soil=soil, segments=segments, injections_a={GROUP: current},
             points=points[start:start + batch], injection_origins={GROUP: origin},
         )
         potentials.update(result["potentials_v"])
@@ -94,7 +112,7 @@ def _solve(client, rho, segments, current, points, origin=INJECTION_ORIGIN):
 def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: PotentialEngineClient) -> dict[str, Any]:
     """Return `{"result": ..., "trace": ...}` for an artifact snapshot and calculation parameters."""
     geometry, fault = snapshot["geometry"], snapshot["fault"]
-    rho = homogeneous_resistivity(snapshot["soil_layers"])
+    soil = soil_model(snapshot["soil_layers"])
     step = float(parameters["discretization_m"])
     segments = rectangular_grid_segments(
         length_m=geometry["length_m"], width_m=geometry["width_m"],
@@ -102,13 +120,14 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
         conductor_radius_m=parameters["conductor_radius_m"], group=GROUP,
         rods_count=geometry.get("rods_count", 0), rod_length_m=geometry.get("rod_length_m", 2.4),
         discretization_m=step,
+        interface_depth_m=soil.upper_thickness_m if isinstance(soil, TwoLayerSoil) else None,
     )
     if len(segments) > MAX_SEGMENTS:
         raise UnsupportedModelError(
             f"La malla necesita {len(segments)} segmentos con discretización de {step:g} m y el límite es "
             f"{MAX_SEGMENTS}. Una discretización mayor reduce la precisión de las tensiones de paso."
         )
-    current, origin, fault_breakdown = _fault_current(fault, parameters, client, rho, segments)
+    current, origin, fault_breakdown = _fault_current(fault, parameters, client, soil, segments)
     half_x, half_y = geometry["length_m"] / 2, geometry["width_m"] / 2
     spacing = float(parameters["surface_spacing_m"])
     nx = round(2 * (half_x + SURFACE_MARGIN_M) / spacing)
@@ -117,7 +136,7 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
         f"s{i}_{j}": (-half_x - SURFACE_MARGIN_M + i * spacing, -half_y - SURFACE_MARGIN_M + j * spacing, 0.0)
         for i in range(nx + 1) for j in range(ny + 1)
     }
-    first, v, hashes = _solve(client, rho, segments, current,
+    first, v, hashes = _solve(client, soil, segments, current,
                               [PotentialPoint(pid, xyz) for pid, xyz in raster.items()], origin)
     gpr = first["groups"][GROUP]["potential_v"]
 
@@ -138,7 +157,7 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
         for d in range(STEP_DIRECTIONS):
             angle = 2 * pi * d / STEP_DIRECTIONS
             probes[f"p{c}_{d}"] = (x + STEP_DISTANCE_M * cos(angle), y + STEP_DISTANCE_M * sin(angle), 0.0)
-    _, probe_v, probe_hashes = _solve(client, rho, segments, current,
+    _, probe_v, probe_hashes = _solve(client, soil, segments, current,
                                       [PotentialPoint(pid, xyz) for pid, xyz in probes.items()], origin)
     step_value, step_from, step_to = 0.0, None, None
     for c, pid in enumerate(candidates):
@@ -149,7 +168,7 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
 
     group = first["groups"][GROUP]
     result = {
-        "soil_resistivity_ohm_m": rho,
+        "soil": soil_record(soil),
         "injected_current_a": current,
         "grid_resistance_ohm": group["resistance_to_remote_earth_ohm"],
         "gpr_v": gpr,
@@ -162,7 +181,9 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
         "model_warnings": MODEL_WARNINGS if fault_breakdown is None else MODEL_WARNINGS[1:],
         "fault_current": fault_breakdown,
     }
-    result["safety"] = _safety(result, fault, rho, parameters)
+    # IEEE 80 Cs uses the resistivity of the soil directly beneath the surface layer.
+    upper_rho = soil.resistivity_ohm_m if isinstance(soil, HomogeneousSoil) else soil.upper_resistivity_ohm_m
+    result["safety"] = _safety(result, fault, upper_rho, parameters)
     trace = {**first["trace"], "parameters": parameters, "request_sha256_batches": hashes + probe_hashes,
              "fault_current": fault_breakdown}
     return {"result": result, "trace": trace}
