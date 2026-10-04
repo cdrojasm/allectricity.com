@@ -1,0 +1,129 @@
+# SPAT Design Agent
+
+## React artifact workspace
+
+The frontend is in `app/` (React + Vite), served by Nginx. The frontend
+commands build static files into `app/dist`; start the API and Nginx together:
+
+```bash
+make frontend-up
+```
+
+Open `http://localhost:3000`. Nginx proxies `/api/`, `/docs`, `/openapi.json`
+and `/ready` to the API service. The API is available through that Nginx
+endpoint; its container port is not published directly on the host. Run
+`make frontend-build` to build the static files without starting containers.
+Stop only Nginx with `make frontend-down`.
+
+The main page includes a navigation rail, project bar, asset list/graph,
+multimodal chat composer, and collapsible mesh, potential, soil, design and
+pricing sections. Mesh dimensions, spacing and rods are editable; selecting
+a rod adds chat context. Save and restore design versions or export a JSON
+snapshot. Layouts adapt to desktop, tablet and mobile screens.
+
+This is a frontend prototype: chat replies and the potential chart are demo
+content, and initial files are reference metadata. File selection stages local
+attachment metadata in chat; files are not uploaded or parsed. Voice uses the
+browser's speech-recognition service where supported (microphone permission
+required; the browser may process speech remotely). State lasts for the current
+page session; export JSON to keep a snapshot. Engineering validation, backend
+persistence, AI responses and CAD/report exports remain integration work.
+
+See [app/README.md](app/README.md) for the frontend structure and integration points.
+
+Scaffold hexagonal para un agente de diseño y validación de sistemas de puesta
+a tierra. Conserva las dependencias hacia el interior:
+
+```text
+entrypoint/API -> application (use cases + ports) -> domain
+                       ^
+             infrastructure adapters
+```
+
+El primer vertical disponible expone `POST /api/v1/designs/assess`: recibe
+geometría, capas de suelo y escenario de falla, y devuelve un artefacto de
+diseño con una evaluación preliminar. El estimador actual no es certificable;
+la implementación trazable de IEEE 80 está planificada en el backlog.
+
+## Ejecutar en local
+
+```bash
+make local-config
+make local-up
+make create-admin
+make test
+```
+
+La API queda disponible en `http://localhost:3000/docs` a través de Nginx, y el
+correo local en `http://localhost:18025`. Toda instalación de dependencias y ejecución de pruebas
+se realiza dentro de Docker. Los contenedores, redes y volúmenes tienen prefijo
+`grounding-design-ai-`. `make local-down` conserva los datos.
+
+El backend incluye JWT HS256, refresh rotativo, revocación, RBAC, usuarios/roles,
+clientes M2M, Google ID tokens, presupuesto de tokens y reset por Celery + SMTP.
+Los endpoints de diseño ahora requieren Bearer token. Configurar `GOOGLE_CLIENT_ID`
+para habilitar Google. El frontend demo todavía no integra estos flujos.
+Contratos, permisos y operación: [docs/AUTH.md](docs/AUTH.md).
+
+El backlog priorizado y el plan de despliegue portable están en
+[docs/BACKLOG.md](docs/BACKLOG.md).
+
+## Carga de archivos
+
+La API crea cargas con `POST /api/v1/files/presign` (Bearer token con
+`files:write`). Envía `filename`, `mime_type` y `category` (`documents` o
+`designs`). La respuesta incluye un PUT URL válido por 15 minutos; usa ese URL
+para subir el contenido directamente a MinIO. El evento `ObjectCreated` del
+bucket `quarantine` pone el archivo en la cola de Celery. También se puede
+llamar `POST /api/v1/files/{upload_id}/complete` como reintento manual.
+Consulta `GET /api/v1/files/{upload_id}` para ver el estado.
+
+Los objetos esperan en el bucket privado `quarantine`. El worker valida el MIME
+detectado en los bytes y pasa el contenido por ClamAV. Luego extrae texto de
+PDF, CSV y XLSX; para PNG/JPEG consulta por HTTP el servicio OCR `ocr:8080`,
+desplegado en un contenedor separado con Tesseract e inglés/español. Detecta
+menciones iniciales de equipos, circuitos y parámetros eléctricos, y guarda
+un grafo por proyecto en Neo4j: proyecto, documentos, activos eléctricos y
+parámetros. Cada mención conserva el fragmento y la posición de origen; los
+nodos repetidos se consolidan dentro del proyecto y mantienen evidencia por
+documento. Las menciones provenientes de OCR conservan su indicador de revisión.
+Al terminar, copia el archivo limpio a `documents` o `designs`. Esta extracción
+usa reglas y OCR general, así que requiere revisión técnica; OCR de PDF
+escaneados e interpretación de símbolos CAD quedan pendientes. En local, MinIO
+usa `http://localhost:19000` y su consola
+`http://localhost:19001`; Neo4j Browser usa `http://localhost:17474`. Configura
+`MINIO_WEBHOOK_AUTH_TOKEN`, `NEO4J_USER` y `NEO4J_PASSWORD` en `.env`. Ajusta
+`MINIO_*` y `CLAMAV_*` en otros entornos. El límite local de carga es 20 MiB
+(`UPLOAD_MAX_BYTES`).
+
+El servicio OCR expone `GET /health` y `POST /v1/ocr` (JSON con `image_base64` y
+`language`). El worker lo consume mediante `OCR_SERVICE_URL`; en local apunta a
+`http://ocr:8080`. Esta interfaz permite sustituir el contenedor por un adaptador
+a un servicio administrado como AWS Textract sin acoplar Celery a su SDK.
+El servicio calcula confianza media y proporción de palabras dudosas a partir
+de Tesseract; recomienda revisión si la media es menor a 60%, más del 20% de las
+palabras queda bajo 45%, o no reconoce palabras. Los umbrales se configuran con
+`OCR_MIN_MEAN_CONFIDENCE`, `OCR_MAX_LOW_CONFIDENCE_RATIO` y
+`OCR_LOW_WORD_CONFIDENCE`. La recomendación aparece en los archivos del proyecto.
+Es una señal heurística, no una garantía de exactitud.
+
+### Agentes documentales y prompts versionados
+
+El worker de Celery puede ejecutar un extractor ReAct con herramientas de
+búsqueda/lectura de líneas y un consolidador que compara los hallazgos, marca
+conflictos y formula preguntas. Sus propuestas se validan contra citas literales
+de la fuente y permanecen sujetas a revisión; el constructor las persiste en el
+grafo junto con las preguntas y las versiones exactas de los prompts.
+
+Los prompts de ejecución se leen desde Langfuse con la etiqueta configurada en
+`LANGFUSE_PROMPT_LABEL` (por defecto `production`). Los archivos bajo
+`prompts/langfuse/` son semillas: configura credenciales Langfuse en `.env` y
+ejecuta `make sync-prompts` para crear nuevas versiones bajo la etiqueta
+`staging`; promuévelas a `production` en Langfuse cuando estén revisadas. Luego
+configura `LLM_API_KEY` y `LLM_MODEL` (opcional: `LLM_BASE_URL` para una API
+compatible); con `DOCUMENT_AGENTS_ENABLED=auto` se activarán cuando estén las
+credenciales de Langfuse y del proveedor LLM. Se pueden fijar
+versiones individuales con `DOCUMENT_EXTRACTOR_PROMPT_VERSION` y
+`DOCUMENT_CONSOLIDATOR_PROMPT_VERSION`. Usa `DOCUMENT_AGENTS_ENABLED=false`
+para desactivarlos o `true` para exigirlos. Sin credenciales, Celery conserva la
+ruta determinista de reglas y OCR.

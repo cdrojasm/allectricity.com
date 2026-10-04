@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "review": {
+    "status": "pending-independent-review",
+    "note": "Tolerances are proposals until a competent grounding engineer signs them off. Re-check every published value against your licensed copy of the cited standard before relying on it."
+  },
+  "sources": {
+    "dwight_1936": {
+      "citation": "H. B. Dwight, 'Calculation of resistances to ground', AIEE Transactions, vol. 55, pp. 1319-1328, 1936; reproduced in IEEE Std 142-2007 (Green Book), Table 4-5",
+      "method": "closed form, average-potential method with uniform leakage current",
+      "version": "IEEE Std 142-2007"
+    },
+    "ieee80_2013_annex_h": {
+      "citation": "IEEE Std 80-2013 incl. Cor 1-2015, Annex H.3, Tables H.5 and H.6 (Grids 1 and 2): range of results from CDEGS, ETAP and WinIGS",
+      "method": "commercial method-of-moments grounding programs, uniform soil",
+      "version": "IEEE Std 80-2013/Cor 1-2015; values transcribed from github.com/jacho35/protectionpro testing/earth-grid-validation/validate.py at commit 557027e415936e9fb1738997f1cccd49767988de (2026-10-04)"
+    },
+    "spat_convergence_2026_10_04": {
+      "citation": "Internal convergence study of this engine: IEEE 80 Annex H Grid 1 with 1, 0.5 and 0.25 m segments (840-3360 segments) and Richardson extrapolation to zero segment length",
+      "method": "Galerkin method of moments, solver 2.0.0; cross-checked with a midpoint-collocation variant",
+      "version": "solver 2.0.0, 2026-10-04; not an independent reference"
+    },
+    "ieee80_2013_annex_b": {
+      "citation": "IEEE Std 80-2013, Annex B, Example 1 (square grid without rods): computer result from EPRI TR-100622",
+      "method": "EPRI SGSYS-type method-of-moments program",
+      "version": "IEEE Std 80-2013; values transcribed from github.com/jacho35/protectionpro testing/earth-grid-validation/validate.py at commit 557027e415936e9fb1738997f1cccd49767988de (2026-10-04)"
+    }
+  },
+  "cases": [
+    {
+      "id": "single_rod",
+      "description": "Single vertical rod from grade, 3 m long, radius 8 mm, uniform 100 ohm-m",
+      "soil_resistivity_ohm_m": 100.0,
+      "discretization_m": 0.25,
+      "conductors": [
+        {"group": "rod", "kind": "rod", "start_m": [0, 0, 0], "end_m": [0, 0, -3], "radius_m": 0.008}
+      ],
+      "injections_a": {"rod": 1.0},
+      "checks": [
+        {"quantity": "resistance_ohm", "group": "rod", "reference": {"value": 33.4927}, "tolerance_rel": 0.02, "source": "dwight_1936",
+         "note": "R = rho/(2 pi L) (ln(4L/a) - 1); Dwight assumes uniform leakage, so method-of-moments results sit slightly below"}
+      ]
+    },
+    {
+      "id": "horizontal_wire",
+      "description": "Single horizontal wire, 20 m long, radius 5 mm, buried 0.5 m, uniform 100 ohm-m",
+      "soil_resistivity_ohm_m": 100.0,
+      "discretization_m": 0.5,
+      "conductors": [
+        {"group": "wire", "kind": "grid", "start_m": [0, 0, -0.5], "end_m": [20, 0, -0.5], "radius_m": 0.005}
+      ],
+      "injections_a": {"wire": 1.0},
+      "checks": [
+        {"quantity": "resistance_ohm", "group": "wire", "reference": {"value": 8.5350}, "tolerance_rel": 0.02, "source": "dwight_1936",
+         "note": "R = rho/(4 pi L)(ln(4L/a) + ln(4L/s) - 2 + s/(2L) - s^2/(16L^2) + s^4/(512L^4)), wire length 2L, s twice the depth"}
+      ]
+    },
+    {
+      "id": "two_rods_bonded",
+      "description": "Two bonded 3 m rods, radius 8 mm, 10 m apart, uniform 100 ohm-m",
+      "soil_resistivity_ohm_m": 100.0,
+      "discretization_m": 0.5,
+      "conductors": [
+        {"group": "pair", "kind": "rod", "start_m": [0, 0, 0], "end_m": [0, 0, -3], "radius_m": 0.008},
+        {"group": "pair", "kind": "rod", "start_m": [10, 0, 0], "end_m": [10, 0, -3], "radius_m": 0.008}
+      ],
+      "injections_a": {"pair": 1.0},
+      "checks": [
+        {"quantity": "resistance_ohm", "group": "pair", "reference": {"value": 17.5208}, "tolerance_rel": 0.02, "source": "dwight_1936",
+         "note": "two rods, s > L: R = rho/(4 pi L)(ln(4L/a) - 1) + rho/(4 pi s)(1 - L^2/(3 s^2) + 2 L^4/(5 s^4))"}
+      ]
+    },
+    {
+      "id": "two_rods_coupled_groups",
+      "description": "Two separately driven 3 m rods, 10 m apart: rod A 1 A, rod B -0.5 A; mutual coupling through the soil",
+      "soil_resistivity_ohm_m": 100.0,
+      "discretization_m": 0.5,
+      "conductors": [
+        {"group": "rod_a", "kind": "rod", "start_m": [0, 0, 0], "end_m": [0, 0, -3], "radius_m": 0.008},
+        {"group": "rod_b", "kind": "rod", "start_m": [10, 0, 0], "end_m": [10, 0, -3], "radius_m": 0.008}
+      ],
+      "injections_a": {"rod_a": 1.0, "rod_b": -0.5},
+      "checks": [
+        {"quantity": "group_potential_v", "group": "rod_a", "reference": {"value": 32.7182}, "tolerance_rel": 0.02, "source": "dwight_1936",
+         "note": "V_A = R_s I_A + R_m I_B with R_s single-rod and R_m = rho/(2 pi s)(1 - L^2/(3 s^2) + 2 L^4/(5 s^4)) from the two-rod formula"},
+        {"quantity": "group_potential_v", "group": "rod_b", "reference": {"value": -15.1974}, "tolerance_rel": 0.02, "source": "dwight_1936",
+         "note": "V_B = R_s I_B + R_m I_A"}
+      ]
+    },
+    {
+      "id": "floating_rod",
+      "description": "Driven 3 m rod (1 A) and an unbonded 3 m rod 10 m away carrying zero net current",
+      "soil_resistivity_ohm_m": 100.0,
+      "discretization_m": 0.5,
+      "conductors": [
+        {"group": "driven", "kind": "rod", "start_m": [0, 0, 0], "end_m": [0, 0, -3], "radius_m": 0.008},
+        {"group": "floating", "kind": "structure", "start_m": [10, 0, 0], "end_m": [10, 0, -3], "radius_m": 0.008}
+      ],
+      "injections_a": {"driven": 1.0},
+      "checks": [
+        {"quantity": "group_potential_v", "group": "floating", "reference": {"value": 1.5490}, "tolerance_rel": 0.03, "source": "dwight_1936",
+         "note": "transferred potential V_B = R_m I_A (mutual resistance from the two-rod formula)"},
+        {"quantity": "group_potential_v", "group": "driven", "reference": {"value": 33.4927}, "tolerance_rel": 0.02, "source": "dwight_1936",
+         "note": "the floating rod carries no net current, so the driven rod stays close to its isolated resistance"}
+      ]
+    },
+    {
+      "id": "ieee80_annex_h_grid1",
+      "description": "IEEE 80 Annex H Grid 1: 70 m x 70 m, 6 x 6 conductors at 14 m, 2/0 Cu (radius 5.25 mm) at 0.5 m, uniform 140 ohm-m, no rods, I_G 744.8 A",
+      "soil_resistivity_ohm_m": 140.0,
+      "discretization_m": 1.0,
+      "grid": {"group": "grid", "x_lines_m": [0, 14, 28, 42, 56, 70], "y_lines_m": [0, 14, 28, 42, 56, 70], "depth_m": 0.5, "radius_m": 0.00525},
+      "injections_a": {"grid": 744.8},
+      "checks": [
+        {"quantity": "resistance_ohm", "group": "grid", "reference": {"min": 1.0, "max": 1.01}, "tolerance_rel": 0.025, "source": "ieee80_2013_annex_h"},
+        {"quantity": "touch_v", "group": "grid", "point_m": [7, 7], "label": "T1 corner-mesh centre", "reference": {"min": 194.9, "max": 200.9}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h"},
+        {"quantity": "max_touch_v", "group": "grid", "area_m": [0, 0, 70, 70], "spacing_m": 0.5, "label": "T3 worst touch inside the grid", "reference": {"min": 202.7, "max": 209.0}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h"},
+        {"quantity": "step_v", "points_m": [[0, 0], [-0.70710678, -0.70710678]], "label": "S1 grid corner, 1 m outward diagonal", "reference": {"min": 87.2, "max": 89.3}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h",
+         "note": "Known deviation of about +2 %: the engine converges to 91.24 V (Richardson extrapolation, observed order 2.6, from 1, 0.5 and 0.25 m segments; Galerkin and collocation agree within 0.3 %). With 3.5-7 m segments it reproduces 86-89 V, so the published range is most likely under-resolved at the corner, where leakage current concentrates. Not an engine defect; pending confirmation of the programs' segmentation (IEEE 80-2013 Table H.5) or a fine-segment run in a commercial tool."},
+        {"quantity": "step_v", "points_m": [[0, 0], [-0.70710678, -0.70710678]], "label": "S1 regression against converged value", "reference": {"value": 91.24}, "tolerance_rel": 0.005, "source": "spat_convergence_2026_10_04",
+         "note": "Self-consistency check, not independent validation: detects solver changes that move the converged corner step voltage. At the case's 1 m segments the engine is 0.3 % below the extrapolated value."}
+      ]
+    },
+    {
+      "id": "ieee80_annex_h_grid2",
+      "description": "IEEE 80 Annex H Grid 2: Grid 1 plus 20 perimeter rods, 7.5 m long, 5/8 in (radius 7.95 mm), uniform 140 ohm-m, I_G 744.8 A",
+      "soil_resistivity_ohm_m": 140.0,
+      "discretization_m": 1.0,
+      "grid": {"group": "grid", "x_lines_m": [0, 14, 28, 42, 56, 70], "y_lines_m": [0, 14, 28, 42, 56, 70], "depth_m": 0.5, "radius_m": 0.00525,
+               "perimeter_rods": {"length_m": 7.5, "radius_m": 0.00795}},
+      "injections_a": {"grid": 744.8},
+      "checks": [
+        {"quantity": "resistance_ohm", "group": "grid", "reference": {"min": 0.917, "max": 0.92}, "tolerance_rel": 0.025, "source": "ieee80_2013_annex_h"},
+        {"quantity": "touch_v", "group": "grid", "point_m": [7, 7], "label": "T1 corner-mesh centre", "reference": {"min": 145.4, "max": 150.2}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h"},
+        {"quantity": "max_touch_v", "group": "grid", "area_m": [0, 0, 70, 70], "spacing_m": 0.5, "label": "T3 worst touch inside the grid", "reference": {"min": 149.6, "max": 154.0}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h"},
+        {"quantity": "step_v", "points_m": [[0, 0], [-0.70710678, -0.70710678]], "label": "S1 grid corner, 1 m outward diagonal", "reference": {"min": 70.7, "max": 79.3}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h"}
+      ]
+    },
+    {
+      "id": "ieee80_annex_b_example1",
+      "description": "IEEE 80 Annex B Example 1: 70 m x 70 m, 11 x 11 conductors at 7 m, radius 5 mm at 0.5 m, uniform 400 ohm-m, no rods, I_G 1908 A",
+      "soil_resistivity_ohm_m": 400.0,
+      "discretization_m": 1.75,
+      "grid": {"group": "grid", "x_lines_m": [0, 7, 14, 21, 28, 35, 42, 49, 56, 63, 70], "y_lines_m": [0, 7, 14, 21, 28, 35, 42, 49, 56, 63, 70], "depth_m": 0.5, "radius_m": 0.005},
+      "injections_a": {"grid": 1908.0},
+      "checks": [
+        {"quantity": "resistance_ohm", "group": "grid", "reference": {"value": 2.67}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_b",
+         "note": "older single-program result; wider tolerance than the Annex H range"},
+        {"quantity": "max_touch_v", "group": "grid", "area_m": [0, 0, 70, 70], "spacing_m": 0.5, "label": "worst touch inside the grid", "reference": {"value": 984.3}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_b"}
+      ]
+    }
+  ]
+}

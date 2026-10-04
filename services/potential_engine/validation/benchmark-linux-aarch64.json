@@ -1,0 +1,128 @@
+{
+  "hardware": {
+    "system": "Linux",
+    "machine": "aarch64",
+    "cpu": "aarch64",
+    "cpu_count": 15,
+    "python": "3.12.15"
+  },
+  "rows": [
+    {
+      "segments": 120,
+      "points": 0,
+      "seconds": 0.013,
+      "peak_mib": 24.7
+    },
+    {
+      "segments": 120,
+      "points": 10000,
+      "seconds": 0.049,
+      "peak_mib": 24.7
+    },
+    {
+      "segments": 120,
+      "points": 40000,
+      "seconds": 0.166,
+      "peak_mib": 27.8
+    },
+    {
+      "segments": 240,
+      "points": 0,
+      "seconds": 0.021,
+      "peak_mib": 29.8
+    },
+    {
+      "segments": 240,
+      "points": 10000,
+      "seconds": 0.092,
+      "peak_mib": 29.8
+    },
+    {
+      "segments": 240,
+      "points": 40000,
+      "seconds": 0.291,
+      "peak_mib": 29.8
+    },
+    {
+      "segments": 360,
+      "points": 0,
+      "seconds": 0.046,
+      "peak_mib": 29.9
+    },
+    {
+      "segments": 360,
+      "points": 10000,
+      "seconds": 0.138,
+      "peak_mib": 29.9
+    },
+    {
+      "segments": 360,
+      "points": 40000,
+      "seconds": 0.425,
+      "peak_mib": 29.9
+    },
+    {
+      "segments": 480,
+      "points": 0,
+      "seconds": 0.082,
+      "peak_mib": 30.0
+    },
+    {
+      "segments": 480,
+      "points": 10000,
+      "seconds": 0.199,
+      "peak_mib": 30.0
+    },
+    {
+      "segments": 480,
+      "points": 40000,
+      "seconds": 0.569,
+      "peak_mib": 30.0
+    },
+    {
+      "segments": 840,
+      "points": 0,
+      "seconds": 0.255,
+      "peak_mib": 30.4
+    },
+    {
+      "segments": 840,
+      "points": 10000,
+      "seconds": 0.446,
+      "peak_mib": 30.4
+    },
+    {
+      "segments": 1200,
+      "points": 0,
+      "seconds": 0.564,
+      "peak_mib": 30.4
+    },
+    {
+      "segments": 1200,
+      "points": 10000,
+      "seconds": 0.825,
+      "peak_mib": 30.4
+    },
+    {
+      "segments": 1680,
+      "points": 0,
+      "seconds": 1.151,
+      "peak_mib": 46.9
+    },
+    {
+      "segments": 1680,
+      "points": 10000,
+      "seconds": 1.502,
+      "peak_mib": 48.1
+    }
+  ],
+  "worst_allowed_case": {
+    "segments": 1200,
+    "points": 16641,
+    "seconds": 1.027,
+    "timeout_s": 60.0,
+    "memory_limit_mib": 512,
+    "memory_limit_enforced": true,
+    "backward_error": 1.38469329456e-17
+  }
+}
