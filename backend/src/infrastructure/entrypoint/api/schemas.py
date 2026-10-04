@@ -85,6 +85,37 @@ class GroundingArtifactRequest(BaseModel):
     compliance: list[ComplianceStandard] = Field(default_factory=default_grounding_compliance, max_length=30)
 
 
+class ReturnPathRequest(BaseModel):
+    """One return path to remote earth (shield wires, neutral, cable screen) as a lumped impedance."""
+
+    name: str = Field(min_length=1, max_length=80)
+    kind: str = Field(default="other", pattern="^(shield_wire|neutral|cable_screen|remote_ground|other)$")
+    resistance_ohm: float = Field(ge=0, le=1e6)
+    reactance_ohm: float = Field(default=0.0, ge=-1e6, le=1e6)
+
+    @model_validator(mode="after")
+    def impedance_is_not_zero(self):
+        if self.resistance_ohm == 0 and self.reactance_ohm == 0:
+            raise ValueError("return path impedance must not be zero")
+        return self
+
+
+class FaultSplitRequest(BaseModel):
+    """Either a known split factor S_f with its origin, or the return paths to compute it."""
+
+    split_factor: float | None = Field(default=None, gt=0, le=1)
+    split_factor_origin: str | None = Field(default=None, min_length=1, max_length=200)
+    return_paths: list[ReturnPathRequest] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def one_source(self):
+        if (self.split_factor is None) == (not self.return_paths):
+            raise ValueError("give either split_factor or return_paths")
+        if self.split_factor is not None and not self.split_factor_origin:
+            raise ValueError("split_factor_origin is required with split_factor")
+        return self
+
+
 class PotentialCalculationRequest(BaseModel):
     """Engine parameters the artifact does not carry; all are recorded in the calculation trace."""
 
@@ -93,6 +124,9 @@ class PotentialCalculationRequest(BaseModel):
     surface_spacing_m: float = Field(default=0.5, description="Surface raster spacing for touch and step search")
     safety_standards: list[str] = Field(default_factory=lambda: [IEEE80_2013], min_length=1, max_length=5,
                                         description="Standards and editions to evaluate; never inferred")
+    fault_split: FaultSplitRequest | None = Field(default=None, description="Current division S_f (IEEE 80 §15.9)")
+    x_over_r: float | None = Field(default=None, ge=0, le=100, description="Source X/R for the decrement factor D_f")
+    system_frequency_hz: float = Field(default=60.0, description="50 or 60 Hz, for D_f")
 
     @model_validator(mode="after")
     def raster_spacing_divides_step_distance(self):
@@ -101,6 +135,8 @@ class PotentialCalculationRequest(BaseModel):
         unknown = [standard for standard in self.safety_standards if standard not in SUPPORTED_STANDARDS]
         if unknown:
             raise ValueError(f"Unsupported safety standards: {unknown}; options: {list(SUPPORTED_STANDARDS)}")
+        if self.system_frequency_hz not in (50.0, 60.0):
+            raise ValueError("system_frequency_hz must be 50 or 60")
         return self
 
 

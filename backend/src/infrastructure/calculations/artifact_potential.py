@@ -7,6 +7,7 @@ from time import time
 from typing import Any
 
 from src.infrastructure.calculations import safety_criteria
+from src.infrastructure.calculations.fault_current import ReturnPath, grid_current
 from src.infrastructure.calculations.potential_engine_client import (
     MAX_POINT_SEGMENT_WORK,
     MAX_POINTS,
@@ -46,7 +47,35 @@ def homogeneous_resistivity(soil_layers: list[dict[str, Any]]) -> float:
     return values.pop()
 
 
-def _solve(client, rho, segments, current, points):
+def _fault_current(fault, parameters, client, rho, segments) -> tuple[float, str, dict[str, Any] | None]:
+    """Grid current I_G = D_f · S_f · 3I0, its injection origin token and breakdown (None without data).
+
+    R_g does not depend on the injected current, so return paths need one points-free solve at
+    1 A first; a user split factor or X/R alone need no extra solve.
+    """
+    split = parameters.get("fault_split") or {}
+    x_over_r = parameters.get("x_over_r")
+    if not split and x_over_r is None:
+        return float(fault["current_a"]), INJECTION_ORIGIN, None
+    paths = [ReturnPath(p["name"], p["kind"], complex(p["resistance_ohm"], p.get("reactance_ohm", 0.0)))
+             for p in split.get("return_paths") or []]
+    grid_resistance = None
+    if paths:
+        unit = client.calculate(soil_resistivity_ohm_m=rho, segments=segments, injections_a={GROUP: 1.0},
+                                points=[], injection_origins={GROUP: "unit-current-for-split"})
+        grid_resistance = unit["groups"][GROUP]["resistance_to_remote_earth_ohm"]
+    breakdown = grid_current(
+        float(fault["current_a"]), float(fault["clearing_time_s"]), grid_resistance_ohm=grid_resistance,
+        x_over_r=x_over_r, frequency_hz=parameters.get("system_frequency_hz", 60.0),
+        split_factor=split.get("split_factor"), split_factor_origin=split.get("split_factor_origin"),
+        return_paths=paths,
+    )
+    origin = INJECTION_ORIGIN + (":df" if x_over_r is not None else "") + (
+        ":sf-paths" if paths else ":sf-user" if split.get("split_factor") is not None else "")
+    return breakdown["grid_current_a"], origin, breakdown
+
+
+def _solve(client, rho, segments, current, points, origin=INJECTION_ORIGIN):
     """Solve once per batch of surface points; every batch shares the same electrode solution."""
     batch = max(1, min(MAX_POINTS, int(MAX_POINT_SEGMENT_WORK // len(segments))))
     potentials: dict[str, float] = {}
@@ -54,7 +83,7 @@ def _solve(client, rho, segments, current, points):
     for start in range(0, max(len(points), 1), batch):
         result = client.calculate(
             soil_resistivity_ohm_m=rho, segments=segments, injections_a={GROUP: current},
-            points=points[start:start + batch], injection_origins={GROUP: INJECTION_ORIGIN},
+            points=points[start:start + batch], injection_origins={GROUP: origin},
         )
         potentials.update(result["potentials_v"])
         hashes.append(result["trace"]["request_sha256"])
@@ -79,7 +108,7 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
             f"La malla necesita {len(segments)} segmentos con discretización de {step:g} m y el límite es "
             f"{MAX_SEGMENTS}. Una discretización mayor reduce la precisión de las tensiones de paso."
         )
-    current = float(fault["current_a"])
+    current, origin, fault_breakdown = _fault_current(fault, parameters, client, rho, segments)
     half_x, half_y = geometry["length_m"] / 2, geometry["width_m"] / 2
     spacing = float(parameters["surface_spacing_m"])
     nx = round(2 * (half_x + SURFACE_MARGIN_M) / spacing)
@@ -89,7 +118,7 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
         for i in range(nx + 1) for j in range(ny + 1)
     }
     first, v, hashes = _solve(client, rho, segments, current,
-                              [PotentialPoint(pid, xyz) for pid, xyz in raster.items()])
+                              [PotentialPoint(pid, xyz) for pid, xyz in raster.items()], origin)
     gpr = first["groups"][GROUP]["potential_v"]
 
     inside = [pid for pid, (x, y, _) in raster.items() if abs(x) <= half_x + 1e-9 and abs(y) <= half_y + 1e-9]
@@ -110,7 +139,7 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
             angle = 2 * pi * d / STEP_DIRECTIONS
             probes[f"p{c}_{d}"] = (x + STEP_DISTANCE_M * cos(angle), y + STEP_DISTANCE_M * sin(angle), 0.0)
     _, probe_v, probe_hashes = _solve(client, rho, segments, current,
-                                      [PotentialPoint(pid, xyz) for pid, xyz in probes.items()])
+                                      [PotentialPoint(pid, xyz) for pid, xyz in probes.items()], origin)
     step_value, step_from, step_to = 0.0, None, None
     for c, pid in enumerate(candidates):
         for d in range(STEP_DIRECTIONS):
@@ -130,10 +159,12 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
         "surface_point_count": len(raster) + len(probes),
         "diagnostics": first["diagnostics"],
         "engine_warnings": first["warnings"],
-        "model_warnings": MODEL_WARNINGS,
+        "model_warnings": MODEL_WARNINGS if fault_breakdown is None else MODEL_WARNINGS[1:],
+        "fault_current": fault_breakdown,
     }
     result["safety"] = _safety(result, fault, rho, parameters)
-    trace = {**first["trace"], "parameters": parameters, "request_sha256_batches": hashes + probe_hashes}
+    trace = {**first["trace"], "parameters": parameters, "request_sha256_batches": hashes + probe_hashes,
+             "fault_current": fault_breakdown}
     return {"result": result, "trace": trace}
 
 

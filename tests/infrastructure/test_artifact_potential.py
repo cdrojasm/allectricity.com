@@ -55,6 +55,32 @@ def test_annex_h_grid1_artifact_matches_reference(engine):
     assert touch["actual_v"] == result["max_touch_v"]["value"] and step["actual_v"] == result["max_step_v"]["value"]
 
 
+def test_user_split_factor_scales_injection_without_extra_solve(engine):
+    parameters = {**PARAMETERS, "surface_spacing_m": 1.0, "x_over_r": 10,
+                  "fault_split": {"split_factor": 0.6, "split_factor_origin": "estudio de reparto 2026"}}
+    outcome = calculate(ANNEX_H_GRID1, parameters, engine)
+    result, trace = outcome["result"], outcome["trace"]
+    expected = 744.8 * 0.6 * 1.026
+    assert result["injected_current_a"] == pytest.approx(expected, rel=1e-3)
+    assert result["gpr_v"] == pytest.approx(result["injected_current_a"] * result["grid_resistance_ohm"], rel=1e-9)
+    assert trace["injections"][0]["origin"] == "artifact:fault.current_a:df:sf-user"
+    assert trace["fault_current"]["split_origin"] == "user: estudio de reparto 2026"
+    assert not any("sin factor de división" in w for w in result["model_warnings"])
+
+
+def test_return_paths_split_current_using_engine_resistance(engine):
+    parameters = {**PARAMETERS, "surface_spacing_m": 1.0,
+                  "fault_split": {"return_paths": [{"name": "ohgw-1", "kind": "shield_wire",
+                                                    "resistance_ohm": 1.0, "reactance_ohm": 1.0}]}}
+    result = calculate(ANNEX_H_GRID1, parameters, engine)["result"]
+    rg = result["grid_resistance_ohm"]
+    sf = abs((1 + 1j) / ((1 + 1j) + rg))
+    assert result["fault_current"]["split_factor"] == pytest.approx(sf, rel=1e-6)
+    assert result["injected_current_a"] == pytest.approx(744.8 * sf, rel=1e-6)
+    path = result["fault_current"]["paths"][0]
+    assert path["current_a"] == pytest.approx(744.8 * rg / abs((1 + 1j) + rg), rel=1e-6)
+
+
 def test_layered_soil_is_rejected(engine):
     snapshot = {**ANNEX_H_GRID1, "soil_layers": [{"resistivity_ohm_m": 300, "depth_m": 6.1}, {"resistivity_ohm_m": 100}]}
     with pytest.raises(UnsupportedModelError, match="homogéneo"):
@@ -92,7 +118,8 @@ def test_calculation_lifecycle_through_api(env, engine, monkeypatch):  # noqa: F
     calculation = response.json()
     assert calculation["status"] == "pending" and queued == [([calculation["id"]], calculation["id"])]
     assert calculation["parameters"] == {**PARAMETERS, "surface_spacing_m": 1.0,
-                                         "safety_standards": ["IEEE 80-2013", "RETIE 2013"]}
+                                         "safety_standards": ["IEEE 80-2013", "RETIE 2013"], "fault_split": None,
+                                         "x_over_r": None, "system_frequency_hz": 60.0}
 
     run_potential_calculation(services.store, calculation["id"], engine)
     run_potential_calculation(services.store, calculation["id"], engine)  # redelivery is a no-op
@@ -143,6 +170,20 @@ def test_missing_artifact_version_is_not_queued(env, monkeypatch):  # noqa: F811
     base, artifact = _artifact(client, tokens, ANNEX_H_GRID1)
     response = client.post(f"{base}/{artifact['artifact_id']}/versions/9/calculos-potencial", json={}, headers=headers(tokens))
     assert response.status_code == 404
+
+
+@pytest.mark.parametrize("payload", [
+    {"fault_split": {"split_factor": 0.5}},
+    {"fault_split": {}},
+    {"fault_split": {"return_paths": [{"name": "p", "resistance_ohm": 0}]}},
+    {"system_frequency_hz": 55},
+])
+def test_invalid_fault_split_is_rejected(env, payload):  # noqa: F811
+    _, _, client, _, tokens, _ = env
+    base, artifact = _artifact(client, tokens, ANNEX_H_GRID1)
+    response = client.post(f"{base}/{artifact['artifact_id']}/versions/1/calculos-potencial",
+                           json=payload, headers=headers(tokens))
+    assert response.status_code == 422
 
 
 def test_invalid_surface_spacing_is_rejected(env, monkeypatch):  # noqa: F811
