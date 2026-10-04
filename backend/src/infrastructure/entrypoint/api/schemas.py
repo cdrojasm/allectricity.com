@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field, model_validator
 
+from src.infrastructure.calculations.safety_criteria import IEEE80_2013, SUPPORTED_STANDARDS
+
 
 class ComplianceCriterion(BaseModel):
     criterion_id: str = Field(min_length=1, max_length=100)
@@ -89,11 +91,16 @@ class PotentialCalculationRequest(BaseModel):
     conductor_radius_m: float = Field(default=0.00525, ge=1e-4, le=0.5, description="Default: 2/0 AWG copper")
     discretization_m: float = Field(default=1.0, gt=0, le=20, description="Maximum segment length; 1 m is the validated default")
     surface_spacing_m: float = Field(default=0.5, description="Surface raster spacing for touch and step search")
+    safety_standards: list[str] = Field(default_factory=lambda: [IEEE80_2013], min_length=1, max_length=5,
+                                        description="Standards and editions to evaluate; never inferred")
 
     @model_validator(mode="after")
     def raster_spacing_divides_step_distance(self):
         if self.surface_spacing_m not in (0.25, 0.5, 1.0):
             raise ValueError("surface_spacing_m must be 0.25, 0.5 or 1.0")
+        unknown = [standard for standard in self.safety_standards if standard not in SUPPORTED_STANDARDS]
+        if unknown:
+            raise ValueError(f"Unsupported safety standards: {unknown}; options: {list(SUPPORTED_STANDARDS)}")
         return self
 
 

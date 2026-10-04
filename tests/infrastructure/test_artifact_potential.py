@@ -46,6 +46,13 @@ def test_annex_h_grid1_artifact_matches_reference(engine):
     assert outcome["trace"]["parameters"] == PARAMETERS
     assert outcome["trace"]["injections"][0]["origin"] == "artifact:fault.current_a"
     assert len(outcome["trace"]["request_sha256_batches"]) >= 2
+    # Default safety evaluation: IEEE 80-2013, 50 kg, 3000 ohm-m x 0.1 m surface layer, t_s 0.5 s.
+    [ieee] = result["safety"]
+    cs = 1 - 0.09 * (1 - 140 / 3000) / (2 * 0.1 + 0.09)
+    touch, step = ieee["criteria"]
+    assert ieee["standard"] == "IEEE 80-2013" and ieee["status"] == "cumple"
+    assert math.isclose(touch["tolerable_v"], (1000 + 1.5 * cs * 3000) * 0.116 / math.sqrt(0.5))
+    assert touch["actual_v"] == result["max_touch_v"]["value"] and step["actual_v"] == result["max_step_v"]["value"]
 
 
 def test_layered_soil_is_rejected(engine):
@@ -79,11 +86,13 @@ def test_calculation_lifecycle_through_api(env, engine, monkeypatch):  # noqa: F
     base, artifact = _artifact(client, tokens, ANNEX_H_GRID1)
     url = f"{base}/{artifact['artifact_id']}/versions/1/calculos-potencial"
 
-    response = client.post(url, json={"surface_spacing_m": 1.0}, headers=headers(tokens))
+    response = client.post(url, json={"surface_spacing_m": 1.0, "safety_standards": ["IEEE 80-2013", "RETIE 2013"]},
+                           headers=headers(tokens))
     assert response.status_code == 202
     calculation = response.json()
     assert calculation["status"] == "pending" and queued == [([calculation["id"]], calculation["id"])]
-    assert calculation["parameters"] == {**PARAMETERS, "surface_spacing_m": 1.0}
+    assert calculation["parameters"] == {**PARAMETERS, "surface_spacing_m": 1.0,
+                                         "safety_standards": ["IEEE 80-2013", "RETIE 2013"]}
 
     run_potential_calculation(services.store, calculation["id"], engine)
     run_potential_calculation(services.store, calculation["id"], engine)  # redelivery is a no-op
@@ -92,6 +101,8 @@ def test_calculation_lifecycle_through_api(env, engine, monkeypatch):  # noqa: F
     assert math.isclose(detail["result"]["grid_resistance_ohm"], 1.0002, rel_tol=1e-3)
     assert detail["trace"]["solver_version"] and len(detail["trace"]["request_sha256"]) == 64
     assert detail["trace"]["segments"][0]["radius_m"] == 0.00525
+    assert [(entry["standard"], entry["status"]) for entry in detail["result"]["safety"]] == [
+        ("IEEE 80-2013", "cumple"), ("RETIE 2013", "no_evaluable")]
 
     listed = client.get(url, headers=headers(tokens)).json()
     assert [row["id"] for row in listed] == [calculation["id"]]
@@ -139,4 +150,12 @@ def test_invalid_surface_spacing_is_rejected(env, monkeypatch):  # noqa: F811
     base, artifact = _artifact(client, tokens, ANNEX_H_GRID1)
     response = client.post(f"{base}/{artifact['artifact_id']}/versions/1/calculos-potencial",
                            json={"surface_spacing_m": 0.3}, headers=headers(tokens))
+    assert response.status_code == 422
+
+
+def test_unsupported_safety_standard_is_rejected(env, monkeypatch):  # noqa: F811
+    _, _, client, _, tokens, _ = env
+    base, artifact = _artifact(client, tokens, ANNEX_H_GRID1)
+    response = client.post(f"{base}/{artifact['artifact_id']}/versions/1/calculos-potencial",
+                           json={"safety_standards": ["IEEE 80-2000"]}, headers=headers(tokens))
     assert response.status_code == 422

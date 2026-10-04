@@ -6,6 +6,7 @@ from math import cos, pi, sin
 from time import time
 from typing import Any
 
+from src.infrastructure.calculations import safety_criteria
 from src.infrastructure.calculations.potential_engine_client import (
     MAX_POINT_SEGMENT_WORK,
     MAX_POINTS,
@@ -27,7 +28,7 @@ STALE_RUNNING_S = 900
 MODEL_WARNINGS = [
     "La corriente de falla del artefacto se inyecta completa en la malla, sin factor de división (P1 del backlog).",
     "El contacto máximo se busca solo dentro del perímetro de la malla; cercas y estructuras externas no se modelan.",
-    "Sin capa superficial ni criterios tolerables: compare con la norma seleccionada por separado.",
+    "La capa superficial solo modifica las tensiones tolerables (factor Cs); el campo eléctrico del motor no la modela.",
 ]
 
 
@@ -131,8 +132,23 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
         "engine_warnings": first["warnings"],
         "model_warnings": MODEL_WARNINGS,
     }
+    result["safety"] = _safety(result, fault, rho, parameters)
     trace = {**first["trace"], "parameters": parameters, "request_sha256_batches": hashes + probe_hashes}
     return {"result": result, "trace": trace}
+
+
+def _safety(result: dict[str, Any], fault: dict[str, Any], rho: float, parameters: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normative decision, kept apart from the field result it reads."""
+    exposure = safety_criteria.FaultExposure(
+        clearing_time_s=float(fault["clearing_time_s"]),
+        body_weight_kg=float(fault.get("body_weight_kg", 50)),
+        surface_resistivity_ohm_m=float(fault.get("surface_resistivity_ohm_m", 3000)),
+        surface_thickness_m=float(fault.get("surface_thickness_m", 0.1)),
+        soil_resistivity_ohm_m=rho,
+    )
+    field = {"touch_v": result["max_touch_v"]["value"], "step_v": result["max_step_v"]["value"], "gpr_v": result["gpr_v"]}
+    standards = parameters.get("safety_standards") or [safety_criteria.IEEE80_2013]
+    return safety_criteria.evaluate(field, exposure, standards)
 
 
 def run_potential_calculation(store, calculation_id: str, client: PotentialEngineClient | None = None) -> None:
