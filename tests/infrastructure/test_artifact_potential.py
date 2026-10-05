@@ -6,8 +6,10 @@ from src.infrastructure.calculations.artifact_potential import (
     UnsupportedModelError,
     calculate,
     run_potential_calculation,
+    soil_model,
 )
-from src.infrastructure.calculations.potential_engine_client import PotentialEngineClient
+from src.infrastructure.calculations.n_layer_soil import NLayerSoil, SoilLayer, apparent_resistivity_n_layer
+from src.infrastructure.calculations.potential_engine_client import LayerStackSoil, PotentialEngineClient, TwoLayerSoil
 from src.infrastructure.entrypoint.worker import tasks
 
 from tests.infrastructure.test_identity import env, headers  # noqa: F401
@@ -96,11 +98,48 @@ def test_two_layer_artifact_is_calculated(engine):
     assert math.isclose(cs, 1 - 0.09 * (1 - 300 / 3000) / (2 * 0.1 + 0.09), rel_tol=1e-9)
 
 
-def test_more_than_two_soil_layers_are_rejected(engine):
-    snapshot = {**ANNEX_H_GRID1, "soil_layers": [{"resistivity_ohm_m": 300, "depth_m": 2},
-                                                 {"resistivity_ohm_m": 100, "depth_m": 4}, {"resistivity_ohm_m": 50}]}
-    with pytest.raises(UnsupportedModelError, match="dos capas"):
-        calculate(snapshot, PARAMETERS, engine)
+def test_three_soil_layers_are_calculated_with_the_n_layer_kernel(engine):
+    # Grid 1 geometry with 7.5 m rods through both interfaces (2 m and 6 m).
+    snapshot = {**ANNEX_H_GRID1, "geometry": {**ANNEX_H_GRID1["geometry"], "rods_count": 4},
+                "soil_layers": [{"resistivity_ohm_m": 300, "depth_m": 2},
+                                {"resistivity_ohm_m": 100, "depth_m": 4}, {"resistivity_ohm_m": 50}]}
+    outcome = calculate(snapshot, {**PARAMETERS, "surface_spacing_m": 1.0}, engine)
+    result, trace = outcome["result"], outcome["trace"]
+    assert result["soil"] == {"model": "n-layer", "kernel_density": 10, "layers": [
+        {"resistivity_ohm_m": 300.0, "thickness_m": 2.0}, {"resistivity_ohm_m": 100.0, "thickness_m": 4.0},
+        {"resistivity_ohm_m": 50.0, "thickness_m": None}]}
+    assert result["diagnostics"]["kernel_error_bound"] < 1e-5
+    assert trace["soil_model"] == "n-layer" and "n-layer-generalized-reflection-recursion" in trace["method"]
+    rods = [s["id"] for s in trace["segments"] if s["kind"] == "rod"]
+    assert any(".L2" in r or "p1" in r for r in rods) and any("p2" in r for r in rods)
+    # Between the homogeneous grids of the bottom (50) and top (300 ohm-m) resistivities.
+    homogeneous = {rho: calculate({**snapshot, "soil_layers": [{"resistivity_ohm_m": rho}]},
+                                  {**PARAMETERS, "surface_spacing_m": 1.0}, engine)["result"]["grid_resistance_ohm"]
+                   for rho in (50, 300)}
+    assert homogeneous[50] < result["grid_resistance_ohm"] < homogeneous[300]
+    # IEEE 80 Cs uses the soil directly beneath the surface layer: the top layer (300 ohm-m).
+    cs = result["safety"][0]["parameters"]["surface_layer_factor_cs"]
+    assert math.isclose(cs, 1 - 0.09 * (1 - 300 / 3000) / (2 * 0.1 + 0.09), rel_tol=1e-9)
+
+
+def test_soil_layer_stacks_are_merged_or_rejected():
+    assert soil_model([{"resistivity_ohm_m": 300, "depth_m": 2}, {"resistivity_ohm_m": 300, "depth_m": 4},
+                       {"resistivity_ohm_m": 100}]) == TwoLayerSoil(300.0, 100.0, 6.0)
+    assert soil_model([{"resistivity_ohm_m": 300, "depth_m": 2}, {"resistivity_ohm_m": 100, "depth_m": 4},
+                       {"resistivity_ohm_m": 100}]) == TwoLayerSoil(300.0, 100.0, 2.0)
+    stack = soil_model([{"resistivity_ohm_m": r, "depth_m": 1.0} for r in (10, 20, 30, 40, 50, 60, 70)] +
+                       [{"resistivity_ohm_m": 80}])
+    assert isinstance(stack, LayerStackSoil) and len(stack.layers) == 8
+    with pytest.raises(UnsupportedModelError, match="semiespacio"):
+        soil_model([{"resistivity_ohm_m": 300, "depth_m": 2}, {"resistivity_ohm_m": 100, "depth_m": 4},
+                    {"resistivity_ohm_m": 50, "depth_m": 3}])
+    with pytest.raises(UnsupportedModelError, match="capa 2"):
+        soil_model([{"resistivity_ohm_m": 300, "depth_m": 2}, {"resistivity_ohm_m": 100}, {"resistivity_ohm_m": 50}])
+    with pytest.raises(UnsupportedModelError, match="entre 1 y 8"):
+        soil_model([{"resistivity_ohm_m": 10 + r, "depth_m": 1.0} for r in range(8)] + [{"resistivity_ohm_m": 5}])
+    with pytest.raises(UnsupportedModelError, match="fuera del rango"):
+        soil_model([{"resistivity_ohm_m": 1, "depth_m": 2}, {"resistivity_ohm_m": 20000, "depth_m": 4},
+                    {"resistivity_ohm_m": 50}])
 
 
 def test_two_layers_need_upper_thickness(engine):
@@ -187,17 +226,32 @@ def test_calculation_lifecycle_through_api(env, engine, monkeypatch):  # noqa: F
     assert cancel.status_code == 409
 
 
-def test_layered_artifact_calculation_is_rejected(env, engine, monkeypatch):  # noqa: F811
+def test_fitted_three_layer_soil_is_stored_and_calculated_through_api(env, engine, monkeypatch):  # noqa: F811
     _, services, client, _, tokens, _ = env
     monkeypatch.setattr(tasks.calculate_artifact_potential, "apply_async", lambda args, task_id: None)
-    layered = {**ANNEX_H_GRID1, "soil_layers": [{"resistivity_ohm_m": 300, "depth_m": 2},
-                                                {"resistivity_ohm_m": 100, "depth_m": 4}, {"resistivity_ohm_m": 50}]}
-    base, artifact = _artifact(client, tokens, layered)
-    calculation = client.post(f"{base}/{artifact['artifact_id']}/versions/1/calculos-potencial", json={},
-                              headers=headers(tokens)).json()
+    project = client.post("/api/v1/projects", json={"name": "Subestación"}, headers=headers(tokens)).json()
+    base = f"/api/v1/projects/{project['id']}/artefactos-diseno-tierras"
+    sounding = NLayerSoil((SoilLayer(300.0, 2.0), SoilLayer(80.0, 5.0), SoilLayer(600.0)))
+    readings = [{"spacing_m": a, "apparent_resistivity_ohm_m": apparent_resistivity_n_layer(sounding, "wenner", a)}
+                for a in (0.5, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32)]
+    fitted = client.post(f"{base}/mediciones-suelo/ajustar", json={"array": "wenner", "layer_count": 3,
+                                                                   "measurements": readings}, headers=headers(tokens))
+    assert fitted.status_code == 200, fitted.text
+    fit = fitted.json()
+    assert fit["layer_count"] == 3 and fit["model"]["model"] == "n-layer" and fit["excluded"] == []
+    assert fit["soil_layers"][-1]["depth_m"] is None and fit["rms_error_percent"] < 0.5
+    assert len(fit["relative_uncertainty_percent"]) == 3 and "koefoed-transform" in fit["forward_model"]
+    snapshot = {**ANNEX_H_GRID1, "soil_layers": fit["soil_layers"],
+                "soil_measurements": {"array": "wenner", "layer_count": 3, "measurements": readings}}
+    artifact = client.post(base, json=snapshot, headers=headers(tokens)).json()
+    calculation = client.post(f"{base}/{artifact['artifact_id']}/versions/1/calculos-potencial",
+                              json={"surface_spacing_m": 1.0}, headers=headers(tokens)).json()
     run_potential_calculation(services.store, calculation["id"], engine)
-    detail = client.get(f"{base}/{artifact['artifact_id']}/calculos-potencial/{calculation['id']}", headers=headers(tokens)).json()
-    assert detail["status"] == "rejected" and "dos capas" in detail["error"] and detail["result"] is None
+    detail = client.get(f"{base}/{artifact['artifact_id']}/calculos-potencial/{calculation['id']}",
+                        headers=headers(tokens)).json()
+    assert detail["status"] == "completed", detail["error"]
+    assert detail["result"]["soil"]["model"] == "n-layer" and len(detail["result"]["soil"]["layers"]) == 3
+    assert detail["trace"]["soil_model"] == "n-layer"
 
 
 def test_cancelled_calculation_is_not_run(env, engine, monkeypatch):  # noqa: F811

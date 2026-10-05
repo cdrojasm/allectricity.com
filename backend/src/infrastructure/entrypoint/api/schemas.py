@@ -25,6 +25,19 @@ class SoilLayerRequest(BaseModel):
     depth_m: float | None = Field(default=None, gt=0)
 
 
+class SoilMeasurementRequest(BaseModel):
+    spacing_m: float = Field(gt=0)
+    apparent_resistivity_ohm_m: float = Field(gt=0)
+    potential_spacing_m: float | None = Field(default=None, gt=0)
+
+
+class SoilMeasurementsRequest(BaseModel):
+    array: str = Field(default="wenner", pattern="^(wenner|schlumberger)$")
+    measurements: list[SoilMeasurementRequest] = Field(min_length=4, max_length=200)
+    outlier_threshold: float = Field(default=0.15, gt=0, lt=1)
+    layer_count: int = Field(default=2, ge=2, le=8)
+
+
 class GridGeometryRequest(BaseModel):
     length_m: float = Field(gt=0)
     width_m: float = Field(gt=0)
@@ -81,6 +94,7 @@ class GroundingArtifactRequest(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     geometry: GridGeometryRequest
     soil_layers: list[SoilLayerRequest] = Field(min_length=1, max_length=8)
+    soil_measurements: SoilMeasurementsRequest | None = None
     fault: FaultScenarioRequest
     compliance: list[ComplianceStandard] = Field(default_factory=default_grounding_compliance, max_length=30)
 

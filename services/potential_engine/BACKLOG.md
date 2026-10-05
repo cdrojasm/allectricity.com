@@ -2,7 +2,7 @@
 
 ## Estado actual
 
-El motor C++17 (protocolo `SPAT-POTENTIAL-2`, solver 2.0.0) resuelve una distribución cuasiestática de potencial para segmentos rectos de electrodos cilíndricos ideales en suelo homogéneo, isotrópico y semiinfinito. Calcula acoplamiento por el suelo entre grupos, corriente por segmento, potencial de cada grupo y potencial superficial en puntos consultados, y devuelve diagnósticos numéricos y metadatos de trazabilidad. El cliente Python invoca el ejecutable con `subprocess.Popen`.
+El motor C++17 (protocolo `SPAT-POTENTIAL-3`, solver 3.2.0) resuelve una distribución cuasiestática de potencial para segmentos rectos de electrodos cilíndricos ideales en suelo homogéneo, de dos capas (serie de imágenes) o de 1–8 capas horizontales (línea `n-layer`, kernel de reflexión generalizada con imágenes ajustadas). Usa LU denso hasta 1 500 segmentos y GMRES con matriz densa hasta 4 000 segmentos. Calcula acoplamiento por el suelo entre grupos, corriente por segmento, potencial de cada grupo y potencial superficial en puntos consultados, y devuelve diagnósticos numéricos y metadatos de trazabilidad. El cliente Python invoca el ejecutable con `subprocess.Popen`.
 
 La validación del 2026-10-04 encontró que la versión 1 usaba ρ/(2πr) para una fuente enterrada y sobrestimaba resistencias y tensiones por un factor de 2. Todo resultado calculado con `SPAT-POTENTIAL-1` debe descartarse.
 
@@ -17,22 +17,24 @@ El resultado actual es exploratorio. No se debe usar para declarar cumplimiento 
 | P0 | Hecho | Diagnóstico de condicionamiento y balance | Devolver residuo del sistema, error de balance de corriente por grupo, condición de pivote y advertencia cuando el sistema sea singular o mal condicionado. Rechazar resultados no finitos o con error por encima del límite. |
 | P0 | Hecho | Contrato de cálculo y trazabilidad | Versionar protocolo, solver, hipótesis, unidades, geometría discretizada, parámetros y origen de cada inyección. Incluir estos metadatos en cada resultado y artefacto/versionado del proyecto. |
 | P0 | Hecho; re-medir en la CPU de producción | Límites operativos del ejecutable | Validar dimensiones, radio, cruces, segmentos duplicados, IDs, suelo e inyecciones en Python y C++. Definir límites de segmentos/puntos, timeout y memoria con mediciones de rendimiento representativas. |
-| P1 | Hecho (dos capas) | Suelo estratificado | Implementar Green de dos capas y luego n capas con suelo superior, inferior y profundidad de interfaz, incluidas varillas que atraviesan capas. Validar contra soluciones de referencia; propagar incertidumbre de resistividad y espesor. **Brecha de mercado crítica:** todos los programas comerciales lo tienen y casi ningún diseño real usa suelo homogéneo. |
-| P1 | Hecho (dos capas) | Modelo de suelo desde mediciones | Interpretar mediciones Wenner y Schlumberger (IEEE Std 81) e invertir modelos de 2 y n capas con error RMS, sensibilidad y descarte de lecturas atípicas. Conservar las mediciones crudas y el modelo elegido como entradas versionadas. Validar con los modelos de suelo del Anexo H de IEEE 80 y los casos de IEEE 81. |
+| P1 · Orden 3 | Hecho (motor 3.2.0, cliente, artefactos y ajuste); falta firma del revisor y vista de n capas en el frontend | Suelo estratificado multicapa | Generalizar Green a 1–8 capas horizontales, isotrópicas y semiinfinitas (espesor positivo en todas salvo la última); admitir electrodos que cruzan varias interfaces; conectar protocolo, cliente, artefactos y ajuste Wenner/Schlumberger; conservar incertidumbre, residuos y trazabilidad. Validar límites homogéneo/dos capas, reciprocidad, continuidad, convergencia y referencias publicadas; fijar límites de coste. Resultado en «Resultado del orden 3». |
+| P1 | Hecho (2 capas; 3–8 capas en el endpoint; la vista del frontend solo muestra 2) | Modelo de suelo desde mediciones | Interpretar mediciones Wenner y Schlumberger (IEEE Std 81) e invertir modelos de 2 y n capas con error RMS, sensibilidad y descarte de lecturas atípicas. Conservar las mediciones crudas y el modelo elegido como entradas versionadas. Validar con los modelos de suelo del Anexo H de IEEE 80 y los casos de IEEE 81. |
 | P1 | Hecho; falta firma del revisor | Validación de suelo estratificado | Agregar a `reference_cases.json` los Grids 3–6 del Anexo H de IEEE 80-2013: dos capas, cerca separada con conductor flotante, malla en L y malla irregular con diagonales. Cubre el conductor flotante en malla que falta en la validación P0. Depende de "Suelo estratificado". |
 | P1 | Hecho para IEEE 80-2013 | Verificación de tensiones de seguridad | Evaluar paso, contacto, malla y tensiones transferidas (incluidas cercas y estructuras) sobre una grilla adaptativa. Usar criterios tolerables con tiempo de despeje, masa corporal, capa superficial y norma/edición seleccionadas: IEEE Std 80, IEC/EN 50522 y RETIE para proyectos en Colombia. Mantener cálculo de campo separado de decisión normativa. |
 | P1 | Parcial | Capa superficial | Modelar gravilla/concreto/capa superficial en la respuesta del suelo y las tensiones tolerables según el método normativo seleccionado; validar casos publicados antes de mostrar estados de cumplimiento. |
 | P1 | Hecho (base) | Corriente de falla y reparto de retorno | Modelar factor de decremento, división de corriente entre malla, neutros, cables de guarda, pantallas y tierras remotas. Aceptar impedancias/conexiones de la red externa y conservar el desglose de aportes. |
-| P1 | Pendiente | Elementos metálicos con impedancia finita | Incorporar resistividad y sección del metal, conexiones y caída longitudinal para barras, uniones, pantallas, cercas, estructuras y neutros. Reemplazar el supuesto actual de conductor perfecto/equipotencial por una red eléctrica verificable. |
+| P1 · Orden 4 | Pendiente | Impedancia de conductores y escalera de cables de guarda | Incorporar resistividad, sección y conexiones de los conductores, caída longitudinal y una red de retorno distribuida para cables de guarda (modelo de escalera con impedancias por tramo, apoyos y puesta a tierra de torres). Acoplar la red con la malla y otros retornos para calcular reparto de corriente de falla y potenciales transferidos en instalaciones extensas. Validar contra casos de referencia y conservar parámetros, supuestos y aportes en la traza. Depende de definir nodos/conexiones eléctricos y de cerrar los límites de malla grande; reutiliza la interfaz de reparto de corriente existente. |
 | P1 | Pendiente | Malla y geometría CAD | Crear importador DXF, asignar capas a tipos de elemento, detectar uniones/cruces reales y construir segmentos/nodos automáticamente. Añadir revisión visual de malla y puntos de consulta del mapa de potencial. |
+| Por priorizar | Pendiente | Editor de geometría en canvas | Canvas 2D con paleta (conductor, varilla, cerca, obstáculo constructivo que no se puede atravesar) para que el usuario dibuje geometrías irregulares (polígonos, triángulos, mallas en L, anillos como polígonos de N lados). Requiere un esquema de geometría v2 del artefacto, reglas geométricas en frontend y backend y la conversión a segmentos del motor, que ya admite cualquier red de segmentos rectos. Desglose, dudas y estimación en «Editor de geometría en canvas». Relacionado con «Malla y geometría CAD» (mismo esquema) y con «Mapa de potencial superficial U». |
 | P1 | Hecho | Segmentación graduada e incertidumbre numérica | Segmentos cortos cerca de puntas, esquinas, uniones y varillas, y largos en tramos rectos. Estimar el error de discretización en cada cálculo (dos refinamientos y extrapolación de Richardson) y reportarlo junto a cada magnitud, por ejemplo "S1 = 91,2 V ± 0,1 %". Criterio: igualar el paso convergido del Grid 1 (91,24 V) con menos de 500 segmentos. |
-| P1 | Pendiente | Rendimiento de mallas grandes | Las mediciones de 2026-10-04 dan tiempo cúbico y memoria cuadrática en el número de segmentos. Comparar el solucionador denso con métodos iterativos o acelerados para pasar de 1 500 a más de 10 000 segmentos, como exigen las subestaciones grandes. Ampliar límites solo con benchmarks en la CPU de despliegue. |
+| P1 | Parcial (GMRES hasta 4 000, Grid 5 medido; >10 000 pendiente) | Rendimiento de mallas grandes | Sustituir LU por un método iterativo o acelerado para superar los 1 500 segmentos del Grid 5 y llegar a más de 10 000 segmentos; medir tiempo, memoria y precisión en CPU de despliegue antes de ampliar límites. |
 | P1 | Hecho (base) | Integración asíncrona | Ejecutar cálculos largos desde Celery/worker aislado; API encola y devuelve identificador, estado, cancelación y resultado. Aplicar concurrencia limitada, timeout y reintentos idempotentes. |
 | P1 | Pendiente | Prueba de contrato Python/C++ | Formalizar serialización, escaping, unidades, errores, límites y versionado. Evaluar JSON Lines o Protobuf para reemplazar el protocolo de tokens cuando se requieran objetos más ricos; conservar `Popen` como adaptador sencillo. |
 | P2 | Pendiente | Impedancia compleja en AC | Extender la formulación a frecuencia y fasores para incluir inductancia, efecto piel, impedancia de conductores y acoplamientos mutuos. Validar por frecuencia y con redes de retorno representativas. |
 | P2 | Pendiente | Transitorios e impulso | Desarrollar un solver transitorio separado para rayos/frentes rápidos, con parámetros dependientes de frecuencia y modelos físicos de electrodos. No extrapolar el solver cuasiestático actual. |
 | P2 | Pendiente | Barridos paramétricos y optimización | Calcular alternativas de espaciamiento, profundidad, sección, varillas y capa superficial; comparar costo, seguridad y sensibilidad y publicar cada alternativa como una versión inmutable del artefacto. |
 | P2 | Pendiente | Formatos de salida y visualización | Exportar raster/CSV de potencial, isolíneas, máximos locales, pares paso/contacto y distribución de corriente por elemento con unidades y leyenda. Agregar vista 3D de la malla con densidad de corriente y potenciales. |
+| P2 · Primer entregable de la fila anterior | Pendiente | Mapa de potencial superficial U sobre la malla | Hoy el motor calcula U en cualquier rejilla (1, 2 o 3–8 capas) y el `trace` trae la geometría discretizada, pero el cálculo del artefacto descarta la rejilla de `_field` y solo guarda GPR y máximos de contacto/paso; `PotentialChart` del frontend es ilustrativo. Entregar: (1) backend: guardar en el resultado la rejilla de U (x, y, U, unidades, espaciado, margen, versión del motor y hash) con la geometría de malla, varillas y cercas; exponerla por la API y como descarga raster/CSV; probar tamaño (~23 000 puntos ≈ 0,5 MB para 70 × 70 m a 0,5 m) y coherencia con GPR y máximos; (2) frontend: mapa de calor o isolíneas de U con los elementos físicos superpuestos y los puntos de contacto y paso peores marcados, con leyenda y unidades. El frontend se coordina con la tarea que edita `app/src/main.jsx`. |
 | P2 | Pendiente | Memoria de cálculo | Generar un informe reproducible con entradas, modelo de suelo, geometría, hipótesis, norma/edición, resultados, diagnóstico numérico, incertidumbre y `trace` del motor, firmable por el ingeniero responsable. Los programas comerciales lo entregan de serie. |
 | P2 | Pendiente | Electrodos no cilíndricos | Modelar placas, platinas, anillos curvos y cimentaciones o electrodos en concreto. Validar contra fórmulas cerradas (placa, anillo) y casos publicados. |
 | P2 | Pendiente | Simulación de mediciones IEEE 81 | Simular la prueba de caída de potencial con la posición de los electrodos auxiliares y el acoplamiento de los cables de prueba, para comparar la resistencia medida en campo con la calculada. Ayuda a cerrar la recomendación 5 con datos de campo. |
@@ -46,28 +48,94 @@ El resultado actual es exploratorio. No se debe usar para declarar cumplimiento 
 - **Convergencia:** `validation/convergence.py`. Del penúltimo al último refinamiento, en el Grid 1 la resistencia cambia 0,00 %, T1 0,02 %, el contacto máximo 0,01 % y el paso 0,17 %. En el Grid 2 los cambios son 0,01 %, 0,06 %, 0,06 % y 0,73 %. Con rejillas de búsqueda de 0,5 m a 0,25 m el contacto máximo cambia ≤0,02 %. El paso cerca de varillas y esquinas exige segmentos ≤1 m.
 - **Diagnóstico:** error hacia atrás normado, estimación de condición en norma 1 (Hager/Higham), razón de pivotes, error de balance por grupo y dispersión del potencial del grupo. Se rechazan resultados no finitos, con error hacia atrás >1e-10, condición >1e13 o balance >1e-9; se advierte si la condición supera 1e10 o no hay inyección.
 - **Trazabilidad:** cada resultado incluye protocolo, versión del solver, método, hipótesis, unidades, SHA-256 de la solicitud y del binario, fecha, duración, geometría discretizada y origen de cada inyección. Desde el 2026-10-04 cada cálculo de un artefacto se guarda en `calculos_potencial_tierras` (migración 0008), ligado a (artefacto, versión), con parámetros, resultado y `trace` completo, incluidos los hashes de cada lote de puntos.
-- **Límites:** validación espejo en Python y C++. Medidos con `validation/benchmark.py`: 1500 segmentos, 100 000 puntos, 2e7 puntos × segmentos, timeout de 60 s y 512 MiB en Linux. Re-medidos el 2026-10-04 en la imagen de despliegue (Linux aarch64 en Docker sobre Apple M5 Pro, `validation/benchmark-linux-aarch64.json`): el peor caso permitido (1 200 segmentos, 16 641 puntos) tarda 1,03 s con el límite de 512 MiB activo. **Pendiente:** repetir en la CPU real de producción, que aún no está definida.
+- **Límites:** validación espejo en Python y C++. Los antiguos benchmarks de LU fijaron el máximo inicial en 1 500 segmentos, 100 000 puntos, 2e7 puntos × segmentos, timeout de 60 s y 512 MiB en Linux. Con GMRES el máximo de entrada es 4 000 segmentos; benchmark específico de Grid 5 hasta 2 079 segmentos está en `validation/benchmark-grid5-large-macos-arm64.json`. **Pendiente:** medir el máximo de 4 000 y repetir en la CPU real de producción, que aún no está definida.
+- **Mallas grandes:** el motor conserva LU hasta 1 500 segmentos y cambia a GMRES con equilibrado por filas entre 1 501 y 4 000. Benchmark del Grid 5 del Anexo H, suelo de dos capas, en Apple arm64: con 1 883 segmentos y d=1 m converge en 55 iteraciones y 1,87 s; frente a LU en la misma matriz, resistencia y GPR coinciden exactamente a la precisión publicada. Error hacia atrás 1,1e-15 y balance relativo de corriente 7,2e-14. Con 2 079 segmentos y d=0,7 m: 54 iteraciones, 2,29 s, error hacia atrás 1,4e-15. Datos reproducibles en `validation/benchmark-grid5-large-macos-arm64.json`; ejecutar `validation/large_mesh_benchmark.py`. El diagnóstico de condición 1-norma no está disponible con GMRES y se marca como -1 con advertencia explícita. **Pendiente:** >4 000 y en particular >10 000 segmentos con aceleración jerárquica, más medición en CPU de producción.
+
+## Resultado del orden 3: suelo de 3–8 capas (2026-10-05)
+
+- **Contrato:** `SPAT-POTENTIAL-3` extendido de forma explícita y aditiva con la línea `n-layer <count> <rho_1> <h_1> ... <rho_N> inf <kernel_density> <segments>` (solver 3.2.0). Las solicitudes y respuestas homogéneas y de dos capas no cambian; un binario anterior rechaza la línea nueva con error. La respuesta añade `META soil_model n-layer`, capas pedidas y resueltas, `kernel_limits` y `DIAG kernel_*`/`*_image_work`. En Python, `LayerStackSoil` (1–8 capas, última semiespacio) se valida, serializa, registra en el `trace`, estima su coste igual que el motor (`kernel_terms`, `image_work`, `point_batch_size`) y el cliente rechaza respuestas que no resolvieron `n-layer`. La ruta de dos capas por serie de imágenes se conserva para `TwoLayerSoil` y para los artefactos de dos capas.
+- **Kernel (`src/main.cpp`, sección «N-layer soil»):** forma espectral de Sunde/Koefoed con coeficientes por recursión estable de reflexión/transmisión generalizada (sin exponenciales crecientes; el espesor que cruza el rayo directo se factoriza analíticamente); cada coeficiente menos su límite se aproxima con exponenciales reales en una malla geométrica de profundidades (SVD truncado, variante real del método de imágenes complejas de Chow et al. 1992 y Li et al. 2006), y cada término es una imagen exacta del segmento, de modo que la integral de línea analítica y la cuadratura Galerkin de dos capas se reutilizan. Cota de error a posteriori del ajuste en el dominio espacial (`kernel_error_bound`), con rechazo por encima de 1e-4. No se aproxima N capas como homogéneo ni se encadenan soluciones de dos capas.
+- **Interfaces y conductores:** el cliente corta cada segmento en todas las interfaces que cruza, en orden a lo largo del segmento (también de profundo a superficial), conserva grupo, tipo y radio, nombra las partes `<id>.L<k>` (dos capas: `.u`/`.l`), rechaza partes de menos de 5 radios e IDs que colisionan o superan 80 caracteres. `rectangular_grid_segments(interface_depths_m=...)` y `discretize` ponen nodos en todas las interfaces. El motor rechaza segmentos que cruzan cualquier interfaz.
+- **Artefactos:** `artifact_potential.soil_model` acepta 1–8 capas (`depth_m` = espesor, nulo solo en la última), une capas adyacentes de resistividad exactamente igual sumando espesores y rechaza con mensaje claro un fondo finito, espesores faltantes, más de 8 capas o un apilado fuera de los límites del kernel. Cs usa la capa superior. El endpoint `mediciones-suelo/ajustar` con `layer_count` 3–8 devuelve capas en formato de artefacto, dentro de los límites del motor; la prueba de API ajusta, guarda y calcula un artefacto de 3 capas.
+- **Ajuste Wenner/Schlumberger (`calculations/n_layer_soil.py`):** transformada de Koefoed (recurrencia de Pekeris) con imágenes reales ajustadas por QR con pivoteo de columnas; error frente a la serie exacta de dos capas ≤ 2e-5 hasta contraste 1e3 y frente a cuadratura directa independiente ≤ 1e-4. Levenberg-Marquardt con arranques deterministas cribados, exclusión de lecturas atípicas por validación cruzada (dejar una fuera), incertidumbre 1σ por parámetro, límites del motor (0,01–1e6 Ω·m, contraste ≤ 1e4, 0,01–1000 m) y presupuesto de 60 s con advertencia. 3 capas: ~2–3 s; 8 capas con 20 lecturas: 7,9 s.
+- **Validación (pruebas en `tests/infrastructure/test_n_layer_engine.py`, `test_n_layer_soil.py`, `test_artifact_potential.py`):**
+  - Referencia independiente (`tests/infrastructure/layered_green_reference.py`): sistema de contorno completo por λ e integral de Hankel numérica, sin código compartido; reproduce la serie de Sunde de dos capas a 1e-11. Potencial superficial de una fuente en cada capa (3, 3, 4 y 8 capas, contrastes positivos y negativos) dentro de 2e-5; acoplamiento entre capas distintas dentro de 2e-5.
+  - Dos capas: kernel n capas frente a la serie de imágenes en malla con varillas, R a 1e-6 y potenciales a 1e-5; Grids 3 y 6 del Anexo H y Exhibit 1 del Anexo B por la ruta n capas reproducen cada comprobación de la ruta de dos capas a 2e-5.
+  - Homogéneo: 1 capa o capas iguales dan el resultado homogéneo bit a bit; capas casi iguales (±1e-5 relativo) lo reproducen a 1e-5; un estrato superior grueso tiende al homogéneo.
+  - Reciprocidad entre capas a 1e-7; continuidad del potencial en cada interfaz (el salto decrece linealmente con la separación hasta 1e-5 m); convergencia al refinar el kernel (cota de 4e-5 a 1e-7 entre densidades 7 y 10, resultados estables a 2e-7; densidad 6 rechazada).
+  - Cortes en varias interfaces en ambas orientaciones con resultados idénticos a 1e-9; rechazo de partes cortas, IDs duplicados, espesores/resistividades inválidos, fondo finito, 9 capas, contraste > 1e4, falta de convergencia, más de 120 imágenes y puntos enterrados, en Python y en C++.
+  - Sondeos publicados (no sintéticos): USGS OFR 80-190 (Haines y Campbell 1980), 3 capas 10/4/25 Ω·m con 10 y 50 m, Wenner y Schlumberger: desviación máxima 0,85 % y 0,78 % (mediana 0,19 % y 0,12 %), tolerancia 1 %; USGS OFR 81-160 (El Kahwagy 1981), 4 capas 259/94/27/150 Ω·m con 1, 46 y 150 m, Schlumberger: máxima 3,97 % (mediana 1,56 %), tolerancia 4,5 %. Ambas referencias usan el filtro corto de Ghosh (1971), que el propio OFR 80-190 advierte impreciso en curvas descendentes; la cuadratura directa confirma nuestro modelo a 1e-4 en los puntos donde converge. La inversión del sondeo Wenner publicado recupera el modelo de 3 capas dentro del 3 %.
+- **Rendimiento (`validation/n_layer_benchmark.py`, `validation/benchmark-n-layer-macos-arm64.json`, Apple arm64):** el coste crece de forma controlada con el número de capas: para ~3 000 segmentos y 10 000 puntos (3–4 lotes), 17,3 s con la serie de dos capas, 14,4 s con el kernel de 2 capas, 22,3 s con 3, 27,3 s con 4 y 31,6 s con 8 capas; 2,5–12 ns por evaluación de imagen. La construcción del kernel tarda < 0,1 s. Peor solicitud admitida medida (8 capas, 3 456 segmentos, 5 787 puntos en el límite puntos × segmentos, trabajo 2,1e9 + 3,0e9): 20,6 s y 100 MiB, dentro del timeout de 60 s y 512 MiB. Los benchmarks de mallas grandes y su JSON no se modificaron.
+- **Brechas:** firma del revisor; medir en la CPU de producción; vista de n capas y gráfica de ajuste en el frontend; casos publicados de mallas en suelo de 3 o más capas (p. ej. CDEGS/Dawalibi) para validar resistencias de malla, no solo el kernel y los sondeos; contraste con una tabla de IEEE 81; contrastes > 1e4 y extensiones muy grandes quedan fuera del rango validado; puntos de consulta enterrados no se admiten en n capas.
 
 ## Resultado de los P1 (2026-10-04)
+
+## Próximos trabajos acordados (2026-10-05)
+
+### Orden 3 — Suelo de más de dos capas (hecho el 2026-10-05; ver «Resultado del orden 3»)
+
+Los cinco pasos acordados están hechos: contrato de 1–8 capas, kernel estratificado en C++ con la ruta de dos capas conservada y demostrada equivalente, cortes en todas las interfaces, integración de serialización/metadatos/coste/artefactos/ajuste y validación (referencias, reciprocidad, continuidad, convergencia, límites y rendimiento junto al trabajo de mallas grandes).
+
+### Mapa de potencial superficial U sobre la malla (pedido el 2026-10-05; sin orden asignado)
+
+1. Backend: conservar en el resultado del cálculo del artefacto la rejilla de U que `artifact_potential._field` ya evalúa, con espaciado, extensión y unidades, junto a la geometría discretizada (malla, varillas, cercas) y su trazabilidad.
+2. API: devolver la rejilla con el resultado o como descarga raster/CSV; acotar tamaño y paginar o comprimir si hace falta.
+3. Frontend: reemplazar el `PotentialChart` ilustrativo por un mapa de calor o isolíneas de U con la malla y los elementos físicos superpuestos y los puntos de contacto/paso peores; coordinar con la tarea que edita `app/src/main.jsx`.
+4. Validar que el mapa reproduce GPR y los máximos del resultado y que funciona con suelo homogéneo, de dos capas y de 3–8 capas.
+
+### Editor de geometría en canvas (pedido el 2026-10-05; sin prioridad ni orden asignados)
+
+Hoy el motor y el cliente Python resuelven cualquier red de segmentos rectos 3D (validado con mallas en L, diagonales y cercas separadas del Anexo H), pero el artefacto solo describe una malla rectangular (`rectangular_grid_segments`). El canvas permitiría dibujar geometrías irregulares desde el producto.
+
+| Pieza | Complejidad | Entregable |
+|---|---|---|
+| Esquema de geometría v2 del artefacto | Media | Nodos, conductores como polilíneas, varillas, cercas, obstáculos como polígonos, grupos y profundidad por elemento; versionado y migración de los artefactos rectangulares actuales. Es la decisión que conviene fijar primero. |
+| Canvas con paleta | Media | Dibujo, selección, mover, borrar, deshacer/rehacer, zoom, ajuste a rejilla y a nodos, edición de vértices; SVG o una librería tipo Konva. |
+| Reglas geométricas en vivo | Media-alta | Ningún conductor atraviesa obstáculos; los cruces entre conductores crean uniones; longitud mínima de 5 radios; varillas fuera de cimentaciones; grupos distintos no se tocan; avisos visuales. |
+| Conversión en el backend | Baja-media | Geometría v2 → `ElectrodeSegment`: cortes en cruces de polilíneas arbitrarias, en interfaces del suelo y segmentación graduada (reutiliza `discretize` y `split_at_interface`). |
+| Validación en el backend y pruebas | Media | Repetir todas las reglas en Python (no confiar en el frontend); casos con geometrías irregulares y obstáculos. |
+| Obstáculos en la verificación de seguridad | Baja | Excluir el área de los obstáculos de la búsqueda de contacto y paso. |
+
+Estimación (una persona con experiencia; incertidumbre alta porque el prototipo SVG actual no se revisó en detalle): MVP en 2–3 semanas (esquema v2, paleta básica, bloqueo de cruces con obstáculos, conversión y cálculo); versión sólida en 6–8 semanas (deshacer/rehacer, edición de vértices, anillos, propiedades y vista de profundidad, migración, validación completa, pruebas y mapa de U superpuesto).
+
+Dudas abiertas a resolver antes de empezar:
+
+1. **Naturaleza de los obstáculos:** ¿son solo restricción geométrica (cimentaciones, edificios, canales) o deben afectar el campo eléctrico (acero de cimentaciones como electrodo, concreto)? Lo segundo entra en «Electrodos no cilíndricos» y es mucho más trabajo.
+2. **Conductor que cruza un obstáculo:** ¿se bloquea el trazo, se recorta en el borde o se propone un desvío automático alrededor del obstáculo?
+3. **Curvas:** ¿basta con dibujar anillos y arcos guardados como polígonos de N lados (N configurable u oculto al usuario) o se requiere un elemento curvo exacto?
+4. **Profundidad y capas:** el canvas es 2D; ¿se edita la profundidad por elemento en un panel de propiedades o hace falta una vista de corte con las capas del suelo?
+5. **Relación con DXF:** ¿el importador DXF debe producir el mismo esquema v2 para editar después en el canvas? (recomendado)
+6. **Compatibilidad:** ¿se migran los artefactos rectangulares existentes al esquema v2 o conviven ambos formatos?
+7. **Coordinación:** el canvas vive en `app/src/main.jsx`, que edita otra tarea; acordar el reparto antes de empezar.
+
+### Orden 4 — Impedancia de conductor y modelo de escalera de cables de guarda
+
+1. Definir nodos eléctricos y uniones para malla, conductores externos, apoyos y tierras de torre.
+2. Calcular impedancia longitudinal por tramo a partir de material, sección, longitud y frecuencia; representar conexiones y puestas a tierra como impedancias explícitas.
+3. Acoplar la red de cables de guarda a la malla y a los retornos existentes, resolviendo en conjunto reparto de corriente y potenciales transferidos.
+4. Validar redes pequeñas contra solución nodal independiente y casos publicados; escalar a mallas extensas con benchmarks, sensibilidad y traza de aportes.
+
+El orden 4 puede avanzar en el contrato de red nodal en paralelo, pero su integración depende del límite de malla grande y de mantener el motor de suelo desacoplado del modelo de circuito.
 
 - **Suelo estratificado:** motor 3.0.0, protocolo `SPAT-POTENTIAL-3`, suelo homogéneo o de dos capas.
   - Usa la serie de imágenes de Sunde/Tagg, truncada con una cota a priori de 1e-7. Si la serie necesita más de 2000 términos, el motor da un error explícito.
   - El suelo homogéneo da resultados idénticos bit a bit al v2. Se verificaron los límites h→∞ y h→0, la reciprocidad y la continuidad en la interfaz.
   - Las varillas que atraviesan la interfaz se parten automáticamente.
   - Límites nuevos de 4e9 evaluaciones de imagen, para la matriz y para los puntos. Peor caso permitido en Linux: 5,7 s con K = −0,5 y 12,3 s con K = 0,82.
-  - Los artefactos aceptan 1 o 2 capas. **Pendiente:** suelo de n capas.
+  - Los artefactos aceptan de 1 a 8 capas; desde el motor 3.2.0, 3–8 capas usan el kernel n capas (ver «Resultado del orden 3»).
 - **Validación de suelo estratificado:** Grids 3–6 del Anexo H y Exhibit 1 del Anexo B; 38 de 42 comprobaciones dentro de tolerancia.
   - 4 desviaciones conocidas, investigadas y documentadas en cada caso:
     - La resistencia de la cerca sola del Grid 4 depende de la profundidad supuesta del conductor: con 0,5 m queda en +3,6 %; con 1,0 m entra en el rango.
     - En el Exhibit 1, la referencia parece no modelar las varillas que atraviesan la interfaz. Sin varillas, el motor coincide con un solver independiente en 0,07 %.
-  - El paso de esquina converge más lento que la resistencia y el contacto (0,8 % a 0,7 m). El Grid 5 solo se valida con segmentos de 1,75 m por el límite de segmentos.
+  - El paso de esquina converge más lento que la resistencia y el contacto (0,8 % a 0,7 m). Las comprobaciones de referencia de Grid 5 permanecen a 1,75 m; la solución de 1 m con 1 883 segmentos fue medida y contrastada con LU en `validation/benchmark-grid5-large-macos-arm64.json`.
   - El arnés excluye los puntos a menos de 0,08 m (radio de pie de IEEE 80) de un electrodo que aflora.
 - **Modelo de suelo desde mediciones:** `calculations/soil_model.py`.
   - Interpreta sondeos Wenner y Schlumberger con el modelo de dos capas de Sunde (1949) y Tagg (1964). Suma la cola de la serie con Euler-Maclaurin para capas delgadas y contrastes fuertes.
   - Invierte ρ1, ρ2 y h por Levenberg-Marquardt con varios arranques. Reporta error RMS, incertidumbre por parámetro, residuo por lectura, exclusión de lecturas atípicas (umbral de 15 %) y la comparación con el modelo homogéneo.
   - Entrega las capas en el formato de los artefactos.
   - Validado con sondeos sintéticos de los suelos del Anexo H, con 2 % de ruido y con una lectura atípica.
-  - **Pendiente:** n capas con filtro de Hankel citado, contraste con una tabla publicada de IEEE 81 y un endpoint para cargar mediciones.
+  - El endpoint de ajuste de mediciones y la vista Wenner del producto ya están conectados; cada artefacto guarda las lecturas crudas junto al modelo de suelo.
+  - De 3 a 8 capas: `calculations/n_layer_soil.py` (ver «Resultado del orden 3»). **Pendiente:** contraste con una tabla publicada de IEEE 81.
 - **Verificación de seguridad y capa superficial:** `calculations/safety_criteria.py`, separado del cálculo de campo.
   - Cada cálculo de artefacto se compara con los tolerables de la norma y la edición pedidas explícitamente (`safety_standards`; por defecto IEEE 80-2013).
   - Cubre 50 y 70 kg, el factor Cs de la capa superficial con la resistividad de la capa superior, el tiempo de despeje entre 0,03 y 3 s, y el chequeo del GPR frente al contacto tolerable.
@@ -95,14 +163,15 @@ El resultado actual es exploratorio. No se debe usar para declarar cumplimiento 
   - `estimate_uncertainty` reporta el error estimado de R, GPR, contacto y paso (Richardson con GCI 1,25, o la diferencia entre refinamientos), a cambio de unas 2,3 veces el tiempo de cálculo.
   - **Pendiente:** cortar las diagonales en los cruces y validar la ganancia en mallas densas (Grid 5) y con cercas (Grid 4).
 
-## Integración con artefactos (2026-10-04)
+## Integración con artefactos (2026-10-04; exposición de mediciones/cálculos 2026-10-04)
 
 - `POST /api/v1/projects/{project_id}/artefactos-diseno-tierras/{artifact_id}/versions/{version}/calculos-potencial` encola un cálculo y responde 202 con su identificador. Parámetros opcionales: radio del conductor (por defecto 2/0 AWG, 5,25 mm), discretización (1 m) y paso de la rejilla superficial (0,25, 0,5 o 1 m).
 - `GET .../versions/{version}/calculos-potencial` lista los cálculos de una versión; `GET .../{artifact_id}/calculos-potencial/{id}` devuelve estado, resultado y `trace`; `POST .../{id}/cancelar` cancela un cálculo pendiente o en curso. Si el motor ya estaba corriendo, su resultado se descarta.
 - La tarea Celery `spat.calculate_artifact_potential` es idempotente. Una nueva entrega solo ejecuta cálculos pendientes, o en curso si llevan más de 15 minutos sin actualizarse (worker caído). Límite de tiempo: 600 s.
-- Estados: `pending`, `running`, `completed`, `failed` (error del motor), `rejected` (modelo no soportado) y `cancelled`. Se rechazan los artefactos con capas de suelo de resistividades distintas y las mallas que superan el límite de segmentos.
+- Estados: `pending`, `running`, `completed`, `failed` (error del motor), `rejected` (modelo no soportado) y `cancelled`. Se rechazan los artefactos con modelos no soportados o mallas que superan el límite vigente.
 - El resultado trae resistencia, GPR, contacto máximo dentro del perímetro (con su ubicación) y paso máximo a 1 m. El paso se busca primero en la rejilla y luego en 16 direcciones alrededor de los 20 puntos más críticos. También incluye el diagnóstico del motor y advertencias del modelo: corriente de falla sin factor de división, sin cercas externas, sin capa superficial ni criterios tolerables.
-- **Pendiente:** cola Celery dedicada para no competir con otras tareas (hoy comparte el worker con concurrencia 2), probar la migración 0008 en PostgreSQL (los tests usan SQLite) y exponer los cálculos en el frontend.
+- La interfaz de proyecto permite ajustar el modelo Wenner, configurar la geometría y la falla, encolar el cálculo y consultar estado, resultados y trazabilidad resumida del artefacto.
+- **Pendiente:** cola Celery dedicada para no competir con otras tareas (hoy comparte el worker con concurrencia 2) y probar la migración 0008 en PostgreSQL (las pruebas usan SQLite).
 
 ## Brechas frente al mercado
 
@@ -110,14 +179,14 @@ Comparación con CDEGS (SES), XGSLab (SINT), SafeGrid (ELEK), ETAP Ground Grid y
 
 | Capacidad del mercado | Estado en SPAT | Fila del backlog |
 |---|---|---|
-| Suelo de 2 capas y multicapa | Dos capas; n capas no | Suelo estratificado (P1) |
-| Interpretación de mediciones de resistividad | Dos capas (Wenner/Schlumberger); sin endpoint | Modelo de suelo desde mediciones (P1) |
+| Suelo de 2 capas y multicapa | Sí: 2 capas (serie) y 3–8 capas (kernel n capas); falta firma del revisor | Suelo estratificado (P1) |
+| Interpretación de mediciones de resistividad | 2–8 capas (Wenner/Schlumberger) con endpoint; vista de 2 capas | Modelo de suelo desde mediciones (P1) |
 | Validación con suelo estratificado (Anexo H Grids 3–6) | Sí; falta firma del revisor | Validación de suelo estratificado (P1) |
 | Criterios tolerables IEEE 80 / IEC / EN 50522 | IEEE 80-2013; EN 50522 y RETIE con tabla pendiente | Verificación de tensiones de seguridad (P1), Capa superficial (P1) |
 | Reparto de corriente de falla (cables de guarda, neutros, pantallas) | Base: S_f y rutas agrupadas; sin modelo de escalera | Corriente de falla y reparto de retorno (P1) |
 | Impedancia del conductor y caída longitudinal | No | Elementos metálicos con impedancia finita (P1) |
 | Importación CAD y segmentación automática | Segmentación graduada sí; CAD no | Malla y geometría CAD (P1), Segmentación graduada (P1) |
-| Mallas de más de 10 000 segmentos | No (límite de 1 500) | Rendimiento de mallas grandes (P1) |
+| Mallas de más de 10 000 segmentos | No (GMRES denso hasta 4 000) | Rendimiento de mallas grandes (P1) |
 | Respuesta en frecuencia y rayo | No | Impedancia compleja en AC (P2), Transitorios e impulso (P2) |
 | Optimización de diseño | No | Barridos paramétricos y optimización (P2) |
 | Informe de cálculo | No | Memoria de cálculo (P2) |
@@ -131,8 +200,7 @@ Comparación con CDEGS (SES), XGSLab (SINT), SafeGrid (ELEK), ETAP Ground Grid y
 El 2026-10-04 se completó el orden sugerido para alcanzar paridad en diseños reales: suelo estratificado, modelo de suelo desde mediciones, validación con los Grids 3–6, verificación de seguridad y reparto de corriente de falla, más la segmentación graduada. Siguen bloqueando el uso en proyectos reales:
 - la firma del revisor;
 - las tablas de EN 50522 y RETIE;
-- el suelo de n capas;
-- las mallas de más de 1 500 segmentos;
+- las mallas de más de 4 000 segmentos (en particular el objetivo de 10 000+) y el diagnóstico de condición para GMRES;
 - la impedancia del conductor.
 
 ## Recomendación de ejecución

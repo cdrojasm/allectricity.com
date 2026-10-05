@@ -1,0 +1,2386 @@
+{
+  "hardware": {
+    "system": "macOS-26.6.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm"
+  },
+  "engine": "services/potential_engine/build/spat-potential-engine",
+  "rows": [
+    {
+      "soil": "two-layer series",
+      "soil_record": {
+        "model": "two-layer",
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 2.0
+      },
+      "mesh_side_m": 20.0,
+      "spacing_m": 5.0,
+      "segments": 296,
+      "points": 0,
+      "batches": 1,
+      "seconds": 0.061,
+      "peak_child_rss_mib_cumulative": 3.3,
+      "resistance_ohm": 2.59850472368,
+      "matrix_image_work": 7648064.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 7.961,
+      "kernel_terms": null,
+      "kernel_error_bound": null,
+      "image_terms": 26.0,
+      "solver_iterations": 0.0,
+      "backward_error": 2.14702541654e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "two-layer series",
+      "soil_record": {
+        "model": "two-layer",
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 2.0
+      },
+      "mesh_side_m": 20.0,
+      "spacing_m": 5.0,
+      "segments": 296,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 0.211,
+      "peak_child_rss_mib_cumulative": 3.6,
+      "resistance_ohm": 2.59850472368,
+      "matrix_image_work": 7648064.0,
+      "point_image_work": 71160000.0,
+      "ns_per_image_evaluation": 2.683,
+      "kernel_terms": null,
+      "kernel_error_bound": null,
+      "image_terms": 26.0,
+      "solver_iterations": 0.0,
+      "backward_error": 2.14702541654e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "two-layer series",
+      "soil_record": {
+        "model": "two-layer",
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 2.0
+      },
+      "mesh_side_m": 20.0,
+      "spacing_m": 5.0,
+      "segments": 296,
+      "points": 10000,
+      "batches": 1,
+      "seconds": 0.666,
+      "peak_child_rss_mib_cumulative": 4.4,
+      "resistance_ohm": 2.59850472368,
+      "matrix_image_work": 7648064.0,
+      "point_image_work": 284640000.0,
+      "ns_per_image_evaluation": 2.279,
+      "kernel_terms": null,
+      "kernel_error_bound": null,
+      "image_terms": 26.0,
+      "solver_iterations": 0.0,
+      "backward_error": 2.14702541654e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "two-layer series",
+      "soil_record": {
+        "model": "two-layer",
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 2.0
+      },
+      "mesh_side_m": 40.0,
+      "spacing_m": 5.0,
+      "segments": 704,
+      "points": 0,
+      "batches": 1,
+      "seconds": 0.336,
+      "peak_child_rss_mib_cumulative": 10.4,
+      "resistance_ohm": 1.39783748049,
+      "matrix_image_work": 48519872.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 6.919,
+      "kernel_terms": null,
+      "kernel_error_bound": null,
+      "image_terms": 26.0,
+      "solver_iterations": 0.0,
+      "backward_error": 5.11395874875e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "two-layer series",
+      "soil_record": {
+        "model": "two-layer",
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 2.0
+      },
+      "mesh_side_m": 40.0,
+      "spacing_m": 5.0,
+      "segments": 704,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 0.704,
+      "peak_child_rss_mib_cumulative": 10.7,
+      "resistance_ohm": 1.39783748049,
+      "matrix_image_work": 48519872.0,
+      "point_image_work": 179280000.0,
+      "ns_per_image_evaluation": 3.093,
+      "kernel_terms": null,
+      "kernel_error_bound": null,
+      "image_terms": 26.0,
+      "solver_iterations": 0.0,
+      "backward_error": 5.11395874875e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "two-layer series",
+      "soil_record": {
+        "model": "two-layer",
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 2.0
+      },
+      "mesh_side_m": 40.0,
+      "spacing_m": 5.0,
+      "segments": 704,
+      "points": 10000,
+      "batches": 1,
+      "seconds": 1.794,
+      "peak_child_rss_mib_cumulative": 11.5,
+      "resistance_ohm": 1.39783748049,
+      "matrix_image_work": 48519872.0,
+      "point_image_work": 717120000.0,
+      "ns_per_image_evaluation": 2.344,
+      "kernel_terms": null,
+      "kernel_error_bound": null,
+      "image_terms": 26.0,
+      "solver_iterations": 0.0,
+      "backward_error": 5.11395874875e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "two-layer series",
+      "soil_record": {
+        "model": "two-layer",
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 2.0
+      },
+      "mesh_side_m": 60.0,
+      "spacing_m": 5.0,
+      "segments": 1304,
+      "points": 0,
+      "batches": 1,
+      "seconds": 1.188,
+      "peak_child_rss_mib_cumulative": 34.9,
+      "resistance_ohm": 0.911821279071,
+      "matrix_image_work": 179246976.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 6.626,
+      "kernel_terms": null,
+      "kernel_error_bound": null,
+      "image_terms": 27.0,
+      "solver_iterations": 0.0,
+      "backward_error": 3.23547909763e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "two-layer series",
+      "soil_record": {
+        "model": "two-layer",
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 2.0
+      },
+      "mesh_side_m": 60.0,
+      "spacing_m": 5.0,
+      "segments": 1304,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 1.888,
+      "peak_child_rss_mib_cumulative": 35.1,
+      "resistance_ohm": 0.911821279071,
+      "matrix_image_work": 179246976.0,
+      "point_image_work": 351040000.0,
+      "ns_per_image_evaluation": 3.561,
+      "kernel_terms": null,
+      "kernel_error_bound": null,
+      "image_terms": 27.0,
+      "solver_iterations": 0.0,
+      "backward_error": 3.23547909763e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "two-layer series",
+      "soil_record": {
+        "model": "two-layer",
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 2.0
+      },
+      "mesh_side_m": 60.0,
+      "spacing_m": 5.0,
+      "segments": 1304,
+      "points": 10000,
+      "batches": 1,
+      "seconds": 4.031,
+      "peak_child_rss_mib_cumulative": 35.9,
+      "resistance_ohm": 0.911821279071,
+      "matrix_image_work": 179246976.0,
+      "point_image_work": 1404160000.0,
+      "ns_per_image_evaluation": 2.546,
+      "kernel_terms": null,
+      "kernel_error_bound": null,
+      "image_terms": 27.0,
+      "solver_iterations": 0.0,
+      "backward_error": 3.23547909763e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "two-layer series",
+      "soil_record": {
+        "model": "two-layer",
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 2.0
+      },
+      "mesh_side_m": 70.0,
+      "spacing_m": 3.5,
+      "segments": 3008,
+      "points": 0,
+      "batches": 1,
+      "seconds": 5.347,
+      "peak_child_rss_mib_cumulative": 79.1,
+      "resistance_ohm": 0.741731159783,
+      "matrix_image_work": 974610432.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 5.486,
+      "kernel_terms": null,
+      "kernel_error_bound": null,
+      "image_terms": 27.0,
+      "solver_iterations": 46.0,
+      "backward_error": 6.3259641624e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;gmres-row-equilibrated"
+    },
+    {
+      "soil": "two-layer series",
+      "soil_record": {
+        "model": "two-layer",
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 2.0
+      },
+      "mesh_side_m": 70.0,
+      "spacing_m": 3.5,
+      "segments": 3008,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 6.977,
+      "peak_child_rss_mib_cumulative": 79.3,
+      "resistance_ohm": 0.741731159783,
+      "matrix_image_work": 974610432.0,
+      "point_image_work": 818560000.0,
+      "ns_per_image_evaluation": 3.891,
+      "kernel_terms": null,
+      "kernel_error_bound": null,
+      "image_terms": 27.0,
+      "solver_iterations": 46.0,
+      "backward_error": 6.3259641624e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;gmres-row-equilibrated"
+    },
+    {
+      "soil": "two-layer series",
+      "soil_record": {
+        "model": "two-layer",
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 2.0
+      },
+      "mesh_side_m": 70.0,
+      "spacing_m": 3.5,
+      "segments": 3008,
+      "points": 10000,
+      "batches": 2,
+      "seconds": 17.252,
+      "peak_child_rss_mib_cumulative": 79.7,
+      "resistance_ohm": 0.741731159783,
+      "matrix_image_work": 1949220864.0,
+      "point_image_work": 3274240000.0,
+      "ns_per_image_evaluation": 3.303,
+      "kernel_terms": null,
+      "kernel_error_bound": null,
+      "image_terms": 27.0,
+      "solver_iterations": 46.0,
+      "backward_error": 6.3259641624e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;gmres-row-equilibrated"
+    },
+    {
+      "soil": "2-layer kernel",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 100.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 20.0,
+      "spacing_m": 5.0,
+      "segments": 296,
+      "points": 0,
+      "batches": 1,
+      "seconds": 0.075,
+      "peak_child_rss_mib_cumulative": 79.7,
+      "resistance_ohm": 2.59850472882,
+      "matrix_image_work": 6093952.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 12.3,
+      "kernel_terms": 20.0,
+      "kernel_error_bound": 8.12410250969e-08,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 1.62296939644e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "2-layer kernel",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 100.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 20.0,
+      "spacing_m": 5.0,
+      "segments": 296,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 0.208,
+      "peak_child_rss_mib_cumulative": 79.7,
+      "resistance_ohm": 2.59850472882,
+      "matrix_image_work": 6093952.0,
+      "point_image_work": 56880000.0,
+      "ns_per_image_evaluation": 3.3,
+      "kernel_terms": 20.0,
+      "kernel_error_bound": 8.87422787101e-08,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 1.62296939644e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "2-layer kernel",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 100.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 20.0,
+      "spacing_m": 5.0,
+      "segments": 296,
+      "points": 10000,
+      "batches": 1,
+      "seconds": 0.604,
+      "peak_child_rss_mib_cumulative": 79.7,
+      "resistance_ohm": 2.59850472882,
+      "matrix_image_work": 6093952.0,
+      "point_image_work": 227520000.0,
+      "ns_per_image_evaluation": 2.586,
+      "kernel_terms": 20.0,
+      "kernel_error_bound": 8.87422787101e-08,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 1.62296939644e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "2-layer kernel",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 100.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 40.0,
+      "spacing_m": 5.0,
+      "segments": 704,
+      "points": 0,
+      "batches": 1,
+      "seconds": 0.391,
+      "peak_child_rss_mib_cumulative": 79.7,
+      "resistance_ohm": 1.39783748396,
+      "matrix_image_work": 38809024.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 10.086,
+      "kernel_terms": 20.0,
+      "kernel_error_bound": 1.04218357604e-07,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 5.15392797367e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "2-layer kernel",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 100.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 40.0,
+      "spacing_m": 5.0,
+      "segments": 704,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 0.712,
+      "peak_child_rss_mib_cumulative": 79.7,
+      "resistance_ohm": 1.39783748396,
+      "matrix_image_work": 38809024.0,
+      "point_image_work": 143580000.0,
+      "ns_per_image_evaluation": 3.902,
+      "kernel_terms": 20.0,
+      "kernel_error_bound": 1.10202229133e-07,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 5.15392797367e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "2-layer kernel",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 100.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 40.0,
+      "spacing_m": 5.0,
+      "segments": 704,
+      "points": 10000,
+      "batches": 1,
+      "seconds": 1.63,
+      "peak_child_rss_mib_cumulative": 79.7,
+      "resistance_ohm": 1.39783748396,
+      "matrix_image_work": 38809024.0,
+      "point_image_work": 574320000.0,
+      "ns_per_image_evaluation": 2.658,
+      "kernel_terms": 20.0,
+      "kernel_error_bound": 1.10202229133e-07,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 5.15392797367e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "2-layer kernel",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 100.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 60.0,
+      "spacing_m": 5.0,
+      "segments": 1304,
+      "points": 0,
+      "batches": 1,
+      "seconds": 1.225,
+      "peak_child_rss_mib_cumulative": 79.7,
+      "resistance_ohm": 0.911821285407,
+      "matrix_image_work": 138327424.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 8.853,
+      "kernel_terms": 20.0,
+      "kernel_error_bound": 1.23063034182e-07,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 6.96657253342e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "2-layer kernel",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 100.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 60.0,
+      "spacing_m": 5.0,
+      "segments": 1304,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 1.789,
+      "peak_child_rss_mib_cumulative": 79.7,
+      "resistance_ohm": 0.911821285407,
+      "matrix_image_work": 138327424.0,
+      "point_image_work": 271080000.0,
+      "ns_per_image_evaluation": 4.371,
+      "kernel_terms": 20.0,
+      "kernel_error_bound": 1.28189834749e-07,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 6.96657253342e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "2-layer kernel",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 100.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 60.0,
+      "spacing_m": 5.0,
+      "segments": 1304,
+      "points": 10000,
+      "batches": 1,
+      "seconds": 3.489,
+      "peak_child_rss_mib_cumulative": 79.7,
+      "resistance_ohm": 0.911821285407,
+      "matrix_image_work": 138327424.0,
+      "point_image_work": 1084320000.0,
+      "ns_per_image_evaluation": 2.854,
+      "kernel_terms": 20.0,
+      "kernel_error_bound": 1.28189834749e-07,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 6.96657253342e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "2-layer kernel",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 100.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 70.0,
+      "spacing_m": 3.5,
+      "segments": 3008,
+      "points": 0,
+      "batches": 1,
+      "seconds": 4.621,
+      "peak_child_rss_mib_cumulative": 79.7,
+      "resistance_ohm": 0.741731161129,
+      "matrix_image_work": 752623616.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 6.14,
+      "kernel_terms": 20.0,
+      "kernel_error_bound": 1.31499612071e-07,
+      "image_terms": null,
+      "solver_iterations": 46.0,
+      "backward_error": 3.83958438011e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;gmres-row-equilibrated"
+    },
+    {
+      "soil": "2-layer kernel",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 100.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 70.0,
+      "spacing_m": 3.5,
+      "segments": 3008,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 5.882,
+      "peak_child_rss_mib_cumulative": 79.7,
+      "resistance_ohm": 0.741731161129,
+      "matrix_image_work": 752623616.0,
+      "point_image_work": 632320000.0,
+      "ns_per_image_evaluation": 4.247,
+      "kernel_terms": 20.0,
+      "kernel_error_bound": 1.36317285381e-07,
+      "image_terms": null,
+      "solver_iterations": 46.0,
+      "backward_error": 3.83958438011e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;gmres-row-equilibrated"
+    },
+    {
+      "soil": "2-layer kernel",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 100.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 70.0,
+      "spacing_m": 3.5,
+      "segments": 3008,
+      "points": 10000,
+      "batches": 2,
+      "seconds": 14.353,
+      "peak_child_rss_mib_cumulative": 80.0,
+      "resistance_ohm": 0.741731161129,
+      "matrix_image_work": 1505247232.0,
+      "point_image_work": 2529280000.0,
+      "ns_per_image_evaluation": 3.558,
+      "kernel_terms": 20.0,
+      "kernel_error_bound": 1.35140550327e-07,
+      "image_terms": null,
+      "solver_iterations": 46.0,
+      "backward_error": 3.83958438011e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;gmres-row-equilibrated"
+    },
+    {
+      "soil": "3-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 1000.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 20.0,
+      "spacing_m": 5.0,
+      "segments": 312,
+      "points": 0,
+      "batches": 1,
+      "seconds": 0.125,
+      "peak_child_rss_mib_cumulative": 80.0,
+      "resistance_ohm": 7.68045143328,
+      "matrix_image_work": 10670912.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 11.749,
+      "kernel_terms": 31.0,
+      "kernel_error_bound": 5.39717406318e-07,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 1.68708403725e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "3-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 1000.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 20.0,
+      "spacing_m": 5.0,
+      "segments": 312,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 0.335,
+      "peak_child_rss_mib_cumulative": 80.0,
+      "resistance_ohm": 7.68045143328,
+      "matrix_image_work": 10670912.0,
+      "point_image_work": 92720000.0,
+      "ns_per_image_evaluation": 3.239,
+      "kernel_terms": 31.0,
+      "kernel_error_bound": 5.94864834698e-07,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 1.68708403725e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "3-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 1000.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 20.0,
+      "spacing_m": 5.0,
+      "segments": 312,
+      "points": 10000,
+      "batches": 1,
+      "seconds": 0.973,
+      "peak_child_rss_mib_cumulative": 80.0,
+      "resistance_ohm": 7.68045143328,
+      "matrix_image_work": 10670912.0,
+      "point_image_work": 370880000.0,
+      "ns_per_image_evaluation": 2.55,
+      "kernel_terms": 31.0,
+      "kernel_error_bound": 5.94864834698e-07,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 1.68708403725e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "3-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 1000.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 40.0,
+      "spacing_m": 5.0,
+      "segments": 720,
+      "points": 0,
+      "batches": 1,
+      "seconds": 0.605,
+      "peak_child_rss_mib_cumulative": 80.0,
+      "resistance_ohm": 5.16414549253,
+      "matrix_image_work": 62408576.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 9.689,
+      "kernel_terms": 31.0,
+      "kernel_error_bound": 7.09473758183e-07,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 4.94492659117e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "3-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 1000.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 40.0,
+      "spacing_m": 5.0,
+      "segments": 720,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 1.082,
+      "peak_child_rss_mib_cumulative": 80.0,
+      "resistance_ohm": 5.16414549253,
+      "matrix_image_work": 62408576.0,
+      "point_image_work": 224300000.0,
+      "ns_per_image_evaluation": 3.775,
+      "kernel_terms": 31.0,
+      "kernel_error_bound": 7.54007611988e-07,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 4.94492659117e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "3-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 1000.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 40.0,
+      "spacing_m": 5.0,
+      "segments": 720,
+      "points": 10000,
+      "batches": 1,
+      "seconds": 2.527,
+      "peak_child_rss_mib_cumulative": 80.0,
+      "resistance_ohm": 5.16414549253,
+      "matrix_image_work": 62408576.0,
+      "point_image_work": 897200000.0,
+      "ns_per_image_evaluation": 2.633,
+      "kernel_terms": 31.0,
+      "kernel_error_bound": 7.54007611988e-07,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 4.94492659117e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "3-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 1000.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 60.0,
+      "spacing_m": 5.0,
+      "segments": 1320,
+      "points": 0,
+      "batches": 1,
+      "seconds": 1.838,
+      "peak_child_rss_mib_cumulative": 80.0,
+      "resistance_ohm": 3.96870266876,
+      "matrix_image_work": 216512576.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 8.49,
+      "kernel_terms": 31.0,
+      "kernel_error_bound": 8.49984881253e-07,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 9.82498007577e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "3-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 1000.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 60.0,
+      "spacing_m": 5.0,
+      "segments": 1320,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 2.71,
+      "peak_child_rss_mib_cumulative": 80.0,
+      "resistance_ohm": 3.96870266876,
+      "matrix_image_work": 216512576.0,
+      "point_image_work": 417800000.0,
+      "ns_per_image_evaluation": 4.273,
+      "kernel_terms": 31.0,
+      "kernel_error_bound": 8.88308534541e-07,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 9.82498007577e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "3-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 1000.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 60.0,
+      "spacing_m": 5.0,
+      "segments": 1320,
+      "points": 10000,
+      "batches": 1,
+      "seconds": 5.309,
+      "peak_child_rss_mib_cumulative": 80.0,
+      "resistance_ohm": 3.96870266876,
+      "matrix_image_work": 216512576.0,
+      "point_image_work": 1671200000.0,
+      "ns_per_image_evaluation": 2.813,
+      "kernel_terms": 31.0,
+      "kernel_error_bound": 8.88308534541e-07,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 9.82498007577e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "3-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 1000.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 70.0,
+      "spacing_m": 3.5,
+      "segments": 3016,
+      "points": 0,
+      "batches": 1,
+      "seconds": 7.252,
+      "peak_child_rss_mib_cumulative": 80.0,
+      "resistance_ohm": 3.54049254419,
+      "matrix_image_work": 1154441280.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 6.282,
+      "kernel_terms": 31.0,
+      "kernel_error_bound": 9.13055198803e-07,
+      "image_terms": null,
+      "solver_iterations": 67.0,
+      "backward_error": 7.02678310756e-16,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;gmres-row-equilibrated"
+    },
+    {
+      "soil": "3-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 1000.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 70.0,
+      "spacing_m": 3.5,
+      "segments": 3016,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 9.186,
+      "peak_child_rss_mib_cumulative": 80.1,
+      "resistance_ohm": 3.54049254419,
+      "matrix_image_work": 1154441280.0,
+      "point_image_work": 964760000.0,
+      "ns_per_image_evaluation": 4.335,
+      "kernel_terms": 31.0,
+      "kernel_error_bound": 9.49106739347e-07,
+      "image_terms": null,
+      "solver_iterations": 67.0,
+      "backward_error": 7.02678310756e-16,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;gmres-row-equilibrated"
+    },
+    {
+      "soil": "3-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 300.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 2.0
+          },
+          {
+            "resistivity_ohm_m": 1000.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 70.0,
+      "spacing_m": 3.5,
+      "segments": 3016,
+      "points": 10000,
+      "batches": 2,
+      "seconds": 22.282,
+      "peak_child_rss_mib_cumulative": 80.5,
+      "resistance_ohm": 3.54049254419,
+      "matrix_image_work": 2308882560.0,
+      "point_image_work": 3859040000.0,
+      "ns_per_image_evaluation": 3.612,
+      "kernel_terms": 31.0,
+      "kernel_error_bound": 9.40293698449e-07,
+      "image_terms": null,
+      "solver_iterations": 67.0,
+      "backward_error": 7.02678310756e-16,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;gmres-row-equilibrated"
+    },
+    {
+      "soil": "4-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 80.0,
+            "thickness_m": 1.2
+          },
+          {
+            "resistivity_ohm_m": 1500.0,
+            "thickness_m": 2.5
+          },
+          {
+            "resistivity_ohm_m": 40.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 20.0,
+      "spacing_m": 5.0,
+      "segments": 320,
+      "points": 0,
+      "batches": 1,
+      "seconds": 0.167,
+      "peak_child_rss_mib_cumulative": 80.5,
+      "resistance_ohm": 1.90366180318,
+      "matrix_image_work": 14090432.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 11.834,
+      "kernel_terms": 38.0,
+      "kernel_error_bound": 1.68117824101e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 2.09109281281e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "4-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 80.0,
+            "thickness_m": 1.2
+          },
+          {
+            "resistivity_ohm_m": 1500.0,
+            "thickness_m": 2.5
+          },
+          {
+            "resistivity_ohm_m": 40.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 20.0,
+      "spacing_m": 5.0,
+      "segments": 320,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 0.429,
+      "peak_child_rss_mib_cumulative": 80.5,
+      "resistance_ohm": 1.90366180318,
+      "matrix_image_work": 14090432.0,
+      "point_image_work": 117540000.0,
+      "ns_per_image_evaluation": 3.259,
+      "kernel_terms": 38.0,
+      "kernel_error_bound": 1.82466642141e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 2.09109281281e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "4-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 80.0,
+            "thickness_m": 1.2
+          },
+          {
+            "resistivity_ohm_m": 1500.0,
+            "thickness_m": 2.5
+          },
+          {
+            "resistivity_ohm_m": 40.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 20.0,
+      "spacing_m": 5.0,
+      "segments": 320,
+      "points": 10000,
+      "batches": 1,
+      "seconds": 1.227,
+      "peak_child_rss_mib_cumulative": 80.5,
+      "resistance_ohm": 1.90366180318,
+      "matrix_image_work": 14090432.0,
+      "point_image_work": 470160000.0,
+      "ns_per_image_evaluation": 2.534,
+      "kernel_terms": 38.0,
+      "kernel_error_bound": 1.82466642141e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 2.09109281281e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "4-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 80.0,
+            "thickness_m": 1.2
+          },
+          {
+            "resistivity_ohm_m": 1500.0,
+            "thickness_m": 2.5
+          },
+          {
+            "resistivity_ohm_m": 40.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 40.0,
+      "spacing_m": 5.0,
+      "segments": 728,
+      "points": 0,
+      "batches": 1,
+      "seconds": 0.758,
+      "peak_child_rss_mib_cumulative": 80.5,
+      "resistance_ohm": 1.24838146834,
+      "matrix_image_work": 78590336.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 9.645,
+      "kernel_terms": 38.0,
+      "kernel_error_bound": 2.12389132907e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 4.60458957293e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "4-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 80.0,
+            "thickness_m": 1.2
+          },
+          {
+            "resistivity_ohm_m": 1500.0,
+            "thickness_m": 2.5
+          },
+          {
+            "resistivity_ohm_m": 40.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 40.0,
+      "spacing_m": 5.0,
+      "segments": 728,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 1.35,
+      "peak_child_rss_mib_cumulative": 80.5,
+      "resistance_ohm": 1.24838146834,
+      "matrix_image_work": 78590336.0,
+      "point_image_work": 277680000.0,
+      "ns_per_image_evaluation": 3.788,
+      "kernel_terms": 38.0,
+      "kernel_error_bound": 2.24051447342e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 4.60458957293e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "4-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 80.0,
+            "thickness_m": 1.2
+          },
+          {
+            "resistivity_ohm_m": 1500.0,
+            "thickness_m": 2.5
+          },
+          {
+            "resistivity_ohm_m": 40.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 40.0,
+      "spacing_m": 5.0,
+      "segments": 728,
+      "points": 10000,
+      "batches": 1,
+      "seconds": 3.129,
+      "peak_child_rss_mib_cumulative": 80.5,
+      "resistance_ohm": 1.24838146834,
+      "matrix_image_work": 78590336.0,
+      "point_image_work": 1110720000.0,
+      "ns_per_image_evaluation": 2.631,
+      "kernel_terms": 38.0,
+      "kernel_error_bound": 2.24051447342e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 4.60458957293e-17,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "4-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 80.0,
+            "thickness_m": 1.2
+          },
+          {
+            "resistivity_ohm_m": 1500.0,
+            "thickness_m": 2.5
+          },
+          {
+            "resistivity_ohm_m": 40.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 60.0,
+      "spacing_m": 5.0,
+      "segments": 1328,
+      "points": 0,
+      "batches": 1,
+      "seconds": 2.245,
+      "peak_child_rss_mib_cumulative": 80.5,
+      "resistance_ohm": 0.857334599804,
+      "matrix_image_work": 268396736.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 8.366,
+      "kernel_terms": 38.0,
+      "kernel_error_bound": 2.49255655548e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 1.2173425747e-16,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "4-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 80.0,
+            "thickness_m": 1.2
+          },
+          {
+            "resistivity_ohm_m": 1500.0,
+            "thickness_m": 2.5
+          },
+          {
+            "resistivity_ohm_m": 40.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 60.0,
+      "spacing_m": 5.0,
+      "segments": 1328,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 3.332,
+      "peak_child_rss_mib_cumulative": 80.5,
+      "resistance_ohm": 0.857334599804,
+      "matrix_image_work": 268396736.0,
+      "point_image_work": 513180000.0,
+      "ns_per_image_evaluation": 4.263,
+      "kernel_terms": 38.0,
+      "kernel_error_bound": 2.5934067743e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 1.2173425747e-16,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "4-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 80.0,
+            "thickness_m": 1.2
+          },
+          {
+            "resistivity_ohm_m": 1500.0,
+            "thickness_m": 2.5
+          },
+          {
+            "resistivity_ohm_m": 40.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 60.0,
+      "spacing_m": 5.0,
+      "segments": 1328,
+      "points": 10000,
+      "batches": 1,
+      "seconds": 6.515,
+      "peak_child_rss_mib_cumulative": 80.5,
+      "resistance_ohm": 0.857334599804,
+      "matrix_image_work": 268396736.0,
+      "point_image_work": 2052720000.0,
+      "ns_per_image_evaluation": 2.807,
+      "kernel_terms": 38.0,
+      "kernel_error_bound": 2.5934067743e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 1.2173425747e-16,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "4-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 80.0,
+            "thickness_m": 1.2
+          },
+          {
+            "resistivity_ohm_m": 1500.0,
+            "thickness_m": 2.5
+          },
+          {
+            "resistivity_ohm_m": 40.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 70.0,
+      "spacing_m": 3.5,
+      "segments": 3024,
+      "points": 0,
+      "batches": 1,
+      "seconds": 8.908,
+      "peak_child_rss_mib_cumulative": 80.5,
+      "resistance_ohm": 0.702525782957,
+      "matrix_image_work": 1416276672.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 6.29,
+      "kernel_terms": 38.0,
+      "kernel_error_bound": 2.65859131376e-06,
+      "image_terms": null,
+      "solver_iterations": 58.0,
+      "backward_error": 4.97093312497e-15,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;gmres-row-equilibrated"
+    },
+    {
+      "soil": "4-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 80.0,
+            "thickness_m": 1.2
+          },
+          {
+            "resistivity_ohm_m": 1500.0,
+            "thickness_m": 2.5
+          },
+          {
+            "resistivity_ohm_m": 40.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 70.0,
+      "spacing_m": 3.5,
+      "segments": 3024,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 11.262,
+      "peak_child_rss_mib_cumulative": 80.5,
+      "resistance_ohm": 0.702525782957,
+      "matrix_image_work": 1416276672.0,
+      "point_image_work": 1178860000.0,
+      "ns_per_image_evaluation": 4.34,
+      "kernel_terms": 38.0,
+      "kernel_error_bound": 2.75357438796e-06,
+      "image_terms": null,
+      "solver_iterations": 58.0,
+      "backward_error": 4.97093312497e-15,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;gmres-row-equilibrated"
+    },
+    {
+      "soil": "4-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 80.0,
+            "thickness_m": 1.2
+          },
+          {
+            "resistivity_ohm_m": 1500.0,
+            "thickness_m": 2.5
+          },
+          {
+            "resistivity_ohm_m": 40.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 70.0,
+      "spacing_m": 3.5,
+      "segments": 3024,
+      "points": 10000,
+      "batches": 2,
+      "seconds": 27.273,
+      "peak_child_rss_mib_cumulative": 80.8,
+      "resistance_ohm": 0.702525782957,
+      "matrix_image_work": 2832553344.0,
+      "point_image_work": 4715440000.0,
+      "ns_per_image_evaluation": 3.613,
+      "kernel_terms": 38.0,
+      "kernel_error_bound": 2.73036016996e-06,
+      "image_terms": null,
+      "solver_iterations": 58.0,
+      "backward_error": 4.97093312497e-15,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;gmres-row-equilibrated"
+    },
+    {
+      "soil": "8-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 200.0,
+            "thickness_m": 0.4
+          },
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 50.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 800.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 120.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 2000.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 4.0
+          },
+          {
+            "resistivity_ohm_m": 400.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 20.0,
+      "spacing_m": 5.0,
+      "segments": 344,
+      "points": 0,
+      "batches": 1,
+      "seconds": 0.221,
+      "peak_child_rss_mib_cumulative": 80.8,
+      "resistance_ohm": 3.97975931023,
+      "matrix_image_work": 20880576.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 10.578,
+      "kernel_terms": 43.0,
+      "kernel_error_bound": 3.07534374981e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 6.083194014e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "8-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 200.0,
+            "thickness_m": 0.4
+          },
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 50.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 800.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 120.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 2000.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 4.0
+          },
+          {
+            "resistivity_ohm_m": 400.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 20.0,
+      "spacing_m": 5.0,
+      "segments": 344,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 0.554,
+      "peak_child_rss_mib_cumulative": 80.8,
+      "resistance_ohm": 3.97975931023,
+      "matrix_image_work": 20880576.0,
+      "point_image_work": 151360000.0,
+      "ns_per_image_evaluation": 3.215,
+      "kernel_terms": 43.0,
+      "kernel_error_bound": 3.30434592445e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 6.083194014e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "8-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 200.0,
+            "thickness_m": 0.4
+          },
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 50.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 800.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 120.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 2000.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 4.0
+          },
+          {
+            "resistivity_ohm_m": 400.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 20.0,
+      "spacing_m": 5.0,
+      "segments": 344,
+      "points": 10000,
+      "batches": 1,
+      "seconds": 1.561,
+      "peak_child_rss_mib_cumulative": 80.8,
+      "resistance_ohm": 3.97975931023,
+      "matrix_image_work": 20880576.0,
+      "point_image_work": 605440000.0,
+      "ns_per_image_evaluation": 2.493,
+      "kernel_terms": 43.0,
+      "kernel_error_bound": 3.30434592445e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 6.083194014e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "8-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 200.0,
+            "thickness_m": 0.4
+          },
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 50.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 800.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 120.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 2000.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 4.0
+          },
+          {
+            "resistivity_ohm_m": 400.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 40.0,
+      "spacing_m": 5.0,
+      "segments": 752,
+      "points": 0,
+      "batches": 1,
+      "seconds": 0.922,
+      "peak_child_rss_mib_cumulative": 80.8,
+      "resistance_ohm": 2.71046068432,
+      "matrix_image_work": 99931392.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 9.225,
+      "kernel_terms": 43.0,
+      "kernel_error_bound": 3.78725612911e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 9.50331495475e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "8-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 200.0,
+            "thickness_m": 0.4
+          },
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 50.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 800.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 120.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 2000.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 4.0
+          },
+          {
+            "resistivity_ohm_m": 400.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 40.0,
+      "spacing_m": 5.0,
+      "segments": 752,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 1.622,
+      "peak_child_rss_mib_cumulative": 80.8,
+      "resistance_ohm": 2.71046068432,
+      "matrix_image_work": 99931392.0,
+      "point_image_work": 330880000.0,
+      "ns_per_image_evaluation": 3.764,
+      "kernel_terms": 43.0,
+      "kernel_error_bound": 3.97663871303e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 9.50331495475e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "8-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 200.0,
+            "thickness_m": 0.4
+          },
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 50.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 800.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 120.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 2000.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 4.0
+          },
+          {
+            "resistivity_ohm_m": 400.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 40.0,
+      "spacing_m": 5.0,
+      "segments": 752,
+      "points": 10000,
+      "batches": 1,
+      "seconds": 3.747,
+      "peak_child_rss_mib_cumulative": 80.8,
+      "resistance_ohm": 2.71046068432,
+      "matrix_image_work": 99931392.0,
+      "point_image_work": 1323520000.0,
+      "ns_per_image_evaluation": 2.632,
+      "kernel_terms": 43.0,
+      "kernel_error_bound": 3.97663871303e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 9.50331495475e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "8-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 200.0,
+            "thickness_m": 0.4
+          },
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 50.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 800.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 120.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 2000.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 4.0
+          },
+          {
+            "resistivity_ohm_m": 400.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 60.0,
+      "spacing_m": 5.0,
+      "segments": 1352,
+      "points": 0,
+      "batches": 1,
+      "seconds": 2.642,
+      "peak_child_rss_mib_cumulative": 80.8,
+      "resistance_ohm": 2.026963823,
+      "matrix_image_work": 323232192.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 8.173,
+      "kernel_terms": 43.0,
+      "kernel_error_bound": 4.38801792486e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 9.0336942934e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "8-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 200.0,
+            "thickness_m": 0.4
+          },
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 50.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 800.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 120.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 2000.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 4.0
+          },
+          {
+            "resistivity_ohm_m": 400.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 60.0,
+      "spacing_m": 5.0,
+      "segments": 1352,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 3.868,
+      "peak_child_rss_mib_cumulative": 80.8,
+      "resistance_ohm": 2.026963823,
+      "matrix_image_work": 323232192.0,
+      "point_image_work": 594880000.0,
+      "ns_per_image_evaluation": 4.213,
+      "kernel_terms": 43.0,
+      "kernel_error_bound": 4.5533448165e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 9.0336942934e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "8-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 200.0,
+            "thickness_m": 0.4
+          },
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 50.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 800.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 120.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 2000.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 4.0
+          },
+          {
+            "resistivity_ohm_m": 400.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 60.0,
+      "spacing_m": 5.0,
+      "segments": 1352,
+      "points": 10000,
+      "batches": 1,
+      "seconds": 7.557,
+      "peak_child_rss_mib_cumulative": 80.8,
+      "resistance_ohm": 2.026963823,
+      "matrix_image_work": 323232192.0,
+      "point_image_work": 2379520000.0,
+      "ns_per_image_evaluation": 2.796,
+      "kernel_terms": 43.0,
+      "kernel_error_bound": 4.5533448165e-06,
+      "image_terms": null,
+      "solver_iterations": 0.0,
+      "backward_error": 9.0336942934e-18,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;lu-partial-pivoting"
+    },
+    {
+      "soil": "8-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 200.0,
+            "thickness_m": 0.4
+          },
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 50.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 800.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 120.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 2000.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 4.0
+          },
+          {
+            "resistivity_ohm_m": 400.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 70.0,
+      "spacing_m": 3.5,
+      "segments": 3048,
+      "points": 0,
+      "batches": 1,
+      "seconds": 10.43,
+      "peak_child_rss_mib_cumulative": 81.3,
+      "resistance_ohm": 1.76864452962,
+      "matrix_image_work": 1643669952.0,
+      "point_image_work": 0.0,
+      "ns_per_image_evaluation": 6.346,
+      "kernel_terms": 43.0,
+      "kernel_error_bound": 4.66036186676e-06,
+      "image_terms": null,
+      "solver_iterations": 88.0,
+      "backward_error": 1.9976565064e-15,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;gmres-row-equilibrated"
+    },
+    {
+      "soil": "8-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 200.0,
+            "thickness_m": 0.4
+          },
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 50.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 800.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 120.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 2000.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 4.0
+          },
+          {
+            "resistivity_ohm_m": 400.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 70.0,
+      "spacing_m": 3.5,
+      "segments": 3048,
+      "points": 2500,
+      "batches": 1,
+      "seconds": 13.124,
+      "peak_child_rss_mib_cumulative": 81.5,
+      "resistance_ohm": 1.76864452962,
+      "matrix_image_work": 1643669952.0,
+      "point_image_work": 1341120000.0,
+      "ns_per_image_evaluation": 4.397,
+      "kernel_terms": 43.0,
+      "kernel_error_bound": 4.81647040069e-06,
+      "image_terms": null,
+      "solver_iterations": 88.0,
+      "backward_error": 1.9976565064e-15,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;gmres-row-equilibrated"
+    },
+    {
+      "soil": "8-layer",
+      "soil_record": {
+        "model": "n-layer",
+        "layers": [
+          {
+            "resistivity_ohm_m": 200.0,
+            "thickness_m": 0.4
+          },
+          {
+            "resistivity_ohm_m": 500.0,
+            "thickness_m": 0.6
+          },
+          {
+            "resistivity_ohm_m": 50.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 800.0,
+            "thickness_m": 0.5
+          },
+          {
+            "resistivity_ohm_m": 120.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 2000.0,
+            "thickness_m": 1.0
+          },
+          {
+            "resistivity_ohm_m": 60.0,
+            "thickness_m": 4.0
+          },
+          {
+            "resistivity_ohm_m": 400.0,
+            "thickness_m": null
+          }
+        ],
+        "kernel_density": 10
+      },
+      "mesh_side_m": 70.0,
+      "spacing_m": 3.5,
+      "segments": 3048,
+      "points": 10000,
+      "batches": 2,
+      "seconds": 31.61,
+      "peak_child_rss_mib_cumulative": 81.8,
+      "resistance_ohm": 1.76864452962,
+      "matrix_image_work": 3287339904.0,
+      "point_image_work": 5364480000.0,
+      "ns_per_image_evaluation": 3.654,
+      "kernel_terms": 43.0,
+      "kernel_error_bound": 4.77831267833e-06,
+      "image_terms": null,
+      "solver_iterations": 88.0,
+      "backward_error": 1.9976565064e-15,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;a-posteriori-spectral-error-bound;far-image-gauss-2x2;gmres-row-equilibrated"
+    }
+  ]
+}

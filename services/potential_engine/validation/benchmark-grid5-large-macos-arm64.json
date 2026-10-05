@@ -1,0 +1,104 @@
+{
+  "case": "ieee80_annex_h_grid5",
+  "hardware": {
+    "system": "macOS-26.6.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "cpu_count": 15
+  },
+  "soil": {
+    "upper_resistivity_ohm_m": 300.0,
+    "lower_resistivity_ohm_m": 100.0,
+    "upper_thickness_m": 6.096
+  },
+  "rows": [
+    {
+      "discretization_m": 1.75,
+      "segments": 1271,
+      "solver_iterations": 0,
+      "seconds": 1.3,
+      "peak_child_rss_mib": 28.8,
+      "resistance_ohm": 0.807163533387,
+      "gpr_v": 601.175399667,
+      "backward_error": 4.81024107718e-18,
+      "relative_current_balance_error": 0.0,
+      "condition_1norm_estimate": 1313.97300191,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;lu-partial-pivoting",
+      "warnings": [],
+      "client_timeout_s": 60.0,
+      "memory_limit_mb": 512,
+      "maxrss_before_mib": 0.0,
+      "direct_comparison": {
+        "seconds": 0.952,
+        "resistance_ohm": 0.807163533387,
+        "gpr_v": 601.175399667,
+        "relative_resistance_delta": 0.0,
+        "relative_gpr_delta": 0.0,
+        "backward_error": 4.81024107718e-18,
+        "condition_1norm_estimate": 1313.97300191
+      }
+    },
+    {
+      "discretization_m": 1.0,
+      "segments": 1883,
+      "solver_iterations": 55,
+      "seconds": 1.863,
+      "peak_child_rss_mib": 32.5,
+      "resistance_ohm": 0.80654082204,
+      "gpr_v": 600.711604256,
+      "backward_error": 1.07029138037e-15,
+      "relative_current_balance_error": 7.18937977536e-14,
+      "condition_1norm_estimate": -1.0,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;gmres-row-equilibrated",
+      "warnings": [
+        {
+          "code": "iterative-solver",
+          "message": "GMRES with row equilibration; 1-norm condition and LU pivot ratio are not estimated"
+        }
+      ],
+      "client_timeout_s": 60.0,
+      "memory_limit_mb": 512,
+      "maxrss_before_mib": 28.8,
+      "direct_comparison": {
+        "seconds": 2.165,
+        "resistance_ohm": 0.80654082204,
+        "gpr_v": 600.711604256,
+        "relative_resistance_delta": 0.0,
+        "relative_gpr_delta": 0.0,
+        "backward_error": 3.32409117431e-17,
+        "condition_1norm_estimate": 1946.61584246
+      }
+    },
+    {
+      "discretization_m": 0.7,
+      "segments": 2079,
+      "solver_iterations": 54,
+      "seconds": 2.291,
+      "peak_child_rss_mib": 61.5,
+      "resistance_ohm": 0.806310102402,
+      "gpr_v": 600.539764269,
+      "backward_error": 1.39784503098e-15,
+      "relative_current_balance_error": 9.95217752343e-14,
+      "condition_1norm_estimate": -1.0,
+      "method": "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;gmres-row-equilibrated",
+      "warnings": [
+        {
+          "code": "iterative-solver",
+          "message": "GMRES with row equilibration; 1-norm condition and LU pivot ratio are not estimated"
+        }
+      ],
+      "client_timeout_s": 60.0,
+      "memory_limit_mb": 512,
+      "maxrss_before_mib": 61.5,
+      "direct_comparison": {
+        "seconds": 2.635,
+        "resistance_ohm": 0.806310102402,
+        "gpr_v": 600.539764269,
+        "relative_resistance_delta": 0.0,
+        "relative_gpr_delta": 0.0,
+        "backward_error": 1.34757155424e-17,
+        "condition_1norm_estimate": 2149.21747363
+      }
+    }
+  ]
+}

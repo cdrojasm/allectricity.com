@@ -16,7 +16,7 @@ from math import ceil
 
 PROTOCOL = "SPAT-POTENTIAL-3"
 # Operational limits mirrored from services/potential_engine/src/main.cpp.
-MAX_SEGMENTS = 1500
+MAX_SEGMENTS = 4000
 MAX_POINTS = 100_000
 MAX_POINT_SEGMENT_WORK = 2.0e7
 MAX_COORDINATE_M = 1.0e5
@@ -31,6 +31,15 @@ IMAGE_SERIES_TOLERANCE = 1.0e-7
 MAX_IMAGE_TERMS = 2000
 MAX_MATRIX_IMAGE_WORK = 4.0e9
 MAX_POINT_IMAGE_WORK = 4.0e9
+# N-layer kernel limits (main.cpp, "N-layer soil").
+MAX_LAYERS = 8
+MAX_LAYER_CONTRAST = 1.0e4
+DEFAULT_KERNEL_DENSITY = 10
+MIN_KERNEL_DENSITY = 6
+MAX_KERNEL_DENSITY = 12
+MAX_KERNEL_TERMS = 120
+KERNEL_DEPTH_FACTOR = 17.0
+MAX_KERNEL_ERROR_BOUND = 1.0e-4
 DEFAULT_TIMEOUT_S = 60.0
 DEFAULT_MEMORY_LIMIT_MB = 512
 
@@ -65,22 +74,73 @@ class TwoLayerSoil:
     upper_thickness_m: float
 
 
-SoilModel = HomogeneousSoil | TwoLayerSoil
+@dataclass(frozen=True)
+class LayerStackSoil:
+    """1 to 8 horizontal layers from the surface down as (resistivity ohm-m, thickness m).
+
+    Every layer except the last has a finite thickness; the last is a half-space (thickness None).
+    Solved with the engine's n-layer kernel (`n-layer` soil line); `kernel_density` is the number of
+    fitted images per decade of depth (6-12) and only matters for refinement studies.
+    """
+
+    layers: tuple[tuple[float, float | None], ...]
+    kernel_density: int = DEFAULT_KERNEL_DENSITY
+
+    def __post_init__(self) -> None:
+        if not 1 <= len(self.layers) <= MAX_LAYERS:
+            raise ValueError(f"layer stack must contain between 1 and {MAX_LAYERS} layers")
+        for index, (rho, thickness) in enumerate(self.layers):
+            if not isinstance(rho, (int, float)) or not math.isfinite(rho) or not 0 < rho <= MAX_RESISTIVITY_OHM_M:
+                raise ValueError(f"soil layer {index + 1} resistivity must be in (0, 1e6] ohm-m")
+            last = index == len(self.layers) - 1
+            if last and thickness is not None:
+                raise ValueError("the bottom soil layer must be a half-space (thickness None)")
+            if not last and (thickness is None or not math.isfinite(thickness) or
+                             not MIN_LAYER_THICKNESS_M <= thickness <= MAX_DEPTH_M):
+                raise ValueError(f"soil layer {index + 1} thickness must be between 0.01 and 1000 m")
+        rhos = [float(rho) for rho, _ in self.layers]
+        if max(rhos) / min(rhos) > MAX_LAYER_CONTRAST:
+            raise ValueError("n-layer resistivity contrast (max/min) exceeds 1e4")
+        if not isinstance(self.kernel_density, int) or not MIN_KERNEL_DENSITY <= self.kernel_density <= MAX_KERNEL_DENSITY:
+            raise ValueError("kernel_density must be an integer between 6 and 12")
+
+    def merged(self) -> tuple[list[float], list[float]]:
+        """(resistivities, finite thicknesses) after merging adjacent equal layers, as the engine does."""
+        rhos, thicknesses, run = [float(self.layers[0][0])], [], 0.0
+        for (rho, thickness), (below, _) in zip(self.layers, self.layers[1:]):
+            run += float(thickness)
+            if float(below) != float(rho):
+                rhos.append(float(below))
+                thicknesses.append(run)
+                run = 0.0
+        return rhos, thicknesses
+
+
+SoilModel = HomogeneousSoil | TwoLayerSoil | LayerStackSoil
 
 
 def as_soil(soil: SoilModel | float) -> SoilModel:
     """Accept a soil model or a plain homogeneous resistivity in ohm-m."""
-    if isinstance(soil, (HomogeneousSoil, TwoLayerSoil)):
+    if isinstance(soil, (HomogeneousSoil, TwoLayerSoil, LayerStackSoil)):
         return soil
     return HomogeneousSoil(float(soil))
 
 
 def soil_record(soil: SoilModel) -> dict[str, Any]:
+    if isinstance(soil, LayerStackSoil):
+        return {"model": "n-layer", "layers": [
+            {"resistivity_ohm_m": rho, "thickness_m": thickness} for rho, thickness in soil.layers
+        ], "kernel_density": soil.kernel_density}
     model = "two-layer" if isinstance(soil, TwoLayerSoil) else "homogeneous"
     return {"model": model, **asdict(soil)}
 
 
 def _soil_line(soil: SoilModel, segment_count: int) -> str:
+    if isinstance(soil, LayerStackSoil):
+        values = []
+        for rho, thickness in soil.layers:
+            values += [format(float(rho), ".17g"), "inf" if thickness is None else format(float(thickness), ".17g")]
+        return f"n-layer {len(soil.layers)} " + " ".join(values) + f" {soil.kernel_density} {segment_count}"
     if isinstance(soil, TwoLayerSoil):
         values = (soil.upper_resistivity_ohm_m, soil.lower_resistivity_ohm_m, soil.upper_thickness_m)
         return "two-layer " + " ".join(format(float(v), ".17g") for v in values) + f" {segment_count}"
@@ -102,22 +162,70 @@ def image_terms(soil: TwoLayerSoil, max_depth_m: float, extent_m: float) -> int 
     return None
 
 
+def interface_depths(soil: SoilModel) -> tuple[float, ...]:
+    """Depths (m, positive down) of the interfaces the engine distinguishes, increasing."""
+    if isinstance(soil, TwoLayerSoil):
+        return (float(soil.upper_thickness_m),)
+    if isinstance(soil, LayerStackSoil):
+        depths, depth = [], 0.0
+        for thickness in soil.merged()[1]:
+            depth += thickness
+            depths.append(depth)
+        return tuple(depths)
+    return ()
+
+
+def _layer_of(depth: float, interfaces: tuple[float, ...]) -> int:
+    """Layer index of a depth; a point on an interface belongs to the layer below (as main.cpp)."""
+    return sum(1 for interface in interfaces if depth >= interface)
+
+
+def kernel_terms(soil: LayerStackSoil) -> int:
+    """Fitted images per coefficient function of the n-layer kernel (mirror of `kernel_plan`); 0 if homogeneous."""
+    rhos, thicknesses = soil.merged()
+    if len(rhos) == 1:
+        return 0
+    kappa = (max(rhos) - min(rhos)) / (max(rhos) + min(rhos))
+    b_min = min(thicknesses)
+    b_max = max(4.0 * b_min, 2.0 * sum(thicknesses) * KERNEL_DEPTH_FACTOR / (1.0 - kappa))
+    return math.ceil(math.log10(b_max / b_min) * soil.kernel_density) + 1
+
+
+def _nlayer_images(soil: LayerStackSoil) -> list[list[int]]:
+    """images[source layer][observation layer] of the n-layer kernel (mirror of `nlayer_table`)."""
+    count, terms = len(soil.merged()[0]), kernel_terms(soil)
+    if terms > MAX_KERNEL_TERMS:
+        raise ValueError(f"n-layer kernel needs {terms} images per coefficient (limit {MAX_KERNEL_TERMS}); the "
+                         "resistivity contrast or the ratio of total depth to thinnest layer is too high")
+    return [[(1 if i == j else 0) + (2 if i < count - 1 else 1) * (2 if j < count - 1 else 1) * (terms + 1)
+             for j in range(count)] for i in range(count)]
+
+
 def image_work(soil: SoilModel, segments: list[ElectrodeSegment], points: list[PotentialPoint]) -> tuple[float, float]:
-    """(matrix, surface-point) image evaluations of a two-layer request; (0, 0) for homogeneous soil."""
-    if not isinstance(soil, TwoLayerSoil) or soil.upper_resistivity_ohm_m == soil.lower_resistivity_ohm_m:
+    """(matrix, surface-point) image evaluations of a layered request; (0, 0) when solved as homogeneous."""
+    if isinstance(soil, LayerStackSoil):
+        interfaces = interface_depths(soil)
+        if not interfaces:
+            return 0.0, 0.0
+        sizes = _nlayer_images(soil)
+    elif not isinstance(soil, TwoLayerSoil) or soil.upper_resistivity_ohm_m == soil.lower_resistivity_ohm_m:
         return 0.0, 0.0
-    xs = [c[0] for s in segments for c in (s.start_m, s.end_m)] + [p.xyz_m[0] for p in points]
-    ys = [c[1] for s in segments for c in (s.start_m, s.end_m)] + [p.xyz_m[1] for p in points]
-    depth = max([-c[2] for s in segments for c in (s.start_m, s.end_m)] + [abs(p.xyz_m[2]) for p in points] + [0.0])
-    extent = max(1.0, math.hypot(max(xs) - min(xs), max(ys) - min(ys)) + 2.0 * depth)
-    n = image_terms(soil, depth, extent)
-    if n is None:
-        raise ValueError("two-layer image series needs more than 2000 terms; the resistivity contrast is too high")
-    sizes = [[4 * n + 2, 2 * (n + 1)], [2 * (n + 1), n + 3]]  # images[source layer][observation layer]
-    lower = sum(1 for s in segments if -0.5 * (s.start_m[2] + s.end_m[2]) >= soil.upper_thickness_m)
-    count = [len(segments) - lower, lower]
-    matrix = sum(count[t] * count[s] * sizes[s][t] for t in range(2) for s in range(2))
-    return float(matrix), float(len(points) * sum(count[s] * sizes[s][0] for s in range(2)))
+    else:
+        interfaces = interface_depths(soil)
+        xs = [c[0] for s in segments for c in (s.start_m, s.end_m)] + [p.xyz_m[0] for p in points]
+        ys = [c[1] for s in segments for c in (s.start_m, s.end_m)] + [p.xyz_m[1] for p in points]
+        depth = max([-c[2] for s in segments for c in (s.start_m, s.end_m)] + [abs(p.xyz_m[2]) for p in points] + [0.0])
+        extent = max(1.0, math.hypot(max(xs) - min(xs), max(ys) - min(ys)) + 2.0 * depth)
+        n = image_terms(soil, depth, extent)
+        if n is None:
+            raise ValueError("two-layer image series needs more than 2000 terms; the resistivity contrast is too high")
+        sizes = [[4 * n + 2, 2 * (n + 1)], [2 * (n + 1), n + 3]]  # images[source layer][observation layer]
+    count = [0] * len(sizes)
+    for s in segments:
+        count[_layer_of(-0.5 * (s.start_m[2] + s.end_m[2]), interfaces)] += 1
+    layers = range(len(sizes))
+    matrix = sum(count[t] * count[s] * sizes[s][t] for t in layers for s in layers)
+    return float(matrix), float(len(points) * sum(count[s] * sizes[s][0] for s in layers))
 
 
 def point_batch_size(soil: SoilModel, segments: list[ElectrodeSegment], points: list[PotentialPoint]) -> int:
@@ -130,34 +238,54 @@ def point_batch_size(soil: SoilModel, segments: list[ElectrodeSegment], points: 
 
 
 def split_at_interface(segments: list[ElectrodeSegment], soil: SoilModel) -> list[ElectrodeSegment]:
-    """Cut every segment that crosses the two-layer interface into an upper (`.u`) and lower (`.l`) part.
+    """Cut every segment at each soil interface it crosses, keeping group, kind and radius.
 
-    The engine assigns each segment to the layer of its mid-point and refuses segments that cross
-    the interface, so rods driven through the upper layer must be split at its depth. A part shorter
-    than the thin-wire minimum (5 radii) is refused: discretise conductors with a node at the
-    interface instead (`rectangular_grid_segments(interface_depth_m=...)`).
+    The engine assigns each segment to the layer of its mid-point and refuses segments that cross an
+    interface, so rods driven through several layers must be split at every interface depth. Cuts are
+    ordered along the segment from `start_m` to `end_m` (also when it runs from deep to shallow).
+    Two-layer parts keep the historical ids `<id>.u` / `<id>.l`; n-layer parts are `<id>.L<k>` with k
+    the 1-based layer of the part, unique because a straight segment crosses each layer once. A part
+    shorter than the thin-wire minimum (5 radii) is refused: discretise conductors with a node at the
+    interface instead (`rectangular_grid_segments(interface_depths_m=...)`). A generated id that
+    collides with another segment id, or is longer than 80 characters, is refused.
     """
-    if not isinstance(soil, TwoLayerSoil):
+    interfaces = interface_depths(soil)
+    if not interfaces:
         return list(segments)
-    z = -float(soil.upper_thickness_m)
-    tolerance = 1e-9 * max(1.0, float(soil.upper_thickness_m))
+    taken = {segment.id for segment in segments}
     result: list[ElectrodeSegment] = []
     for segment in segments:
         z1, z2 = segment.start_m[2], segment.end_m[2]
-        if min(z1, z2) < z - tolerance and max(z1, z2) > z + tolerance:
-            t = (z - z1) / (z2 - z1)
-            cut = tuple(a + (b - a) * t for a, b in zip(segment.start_m, segment.end_m))
-            cut = (cut[0], cut[1], z)
-            first, second = (".u", ".l") if z1 > z2 else (".l", ".u")
-            if min(_distance(segment.start_m, cut), _distance(cut, segment.end_m)) < MIN_LENGTH_TO_RADIUS * segment.radius_m:
-                raise ValueError(
-                    f"segment {segment.id} crosses the soil interface leaving a part shorter than 5 radii; "
-                    "discretise the conductor with a node at the interface depth"
-                )
-            result.append(ElectrodeSegment(segment.id + first, segment.group, segment.kind, segment.start_m, cut, segment.radius_m))
-            result.append(ElectrodeSegment(segment.id + second, segment.group, segment.kind, cut, segment.end_m, segment.radius_m))
-        else:
+        cuts: list[tuple[float, tuple[float, float, float]]] = []
+        for depth in interfaces:
+            z = -depth
+            tolerance = 1e-9 * max(1.0, depth)
+            if min(z1, z2) < z - tolerance and max(z1, z2) > z + tolerance:
+                t = (z - z1) / (z2 - z1)
+                point = tuple(a + (b - a) * t for a, b in zip(segment.start_m, segment.end_m))
+                cuts.append((t, (point[0], point[1], z)))
+        if not cuts:
             result.append(segment)
+            continue
+        nodes = [segment.start_m] + [point for _, point in sorted(cuts)] + [segment.end_m]
+        pieces = list(zip(nodes, nodes[1:]))
+        if any(_distance(start, end) < MIN_LENGTH_TO_RADIUS * segment.radius_m for start, end in pieces):
+            raise ValueError(
+                f"segment {segment.id} crosses a soil interface leaving a part shorter than 5 radii; "
+                "discretise the conductor with a node at the interface depth"
+            )
+        for start, end in pieces:
+            layer = _layer_of(-0.5 * (start[2] + end[2]), interfaces)
+            if isinstance(soil, TwoLayerSoil):
+                suffix = ".u" if layer == 0 else ".l"
+            else:
+                suffix = f".L{layer + 1}"
+            part_id = segment.id + suffix
+            if part_id in taken or len(part_id) > 80:
+                raise ValueError(f"cannot name the part of segment {segment.id} in layer {layer + 1}: {part_id} "
+                                 "is already used or longer than 80 characters; rename the segment")
+            taken.add(part_id)
+            result.append(ElectrodeSegment(part_id, segment.group, segment.kind, start, end, segment.radius_m))
     return result
 
 
@@ -243,11 +371,11 @@ def _node_key(point: tuple[float, float, float]) -> tuple[float, float, float]:
 
 
 def discretize(pieces: list[ElectrodeSegment], segmentation: Segmentation,
-               interface_z: float | None = None) -> list[ElectrodeSegment]:
+               interface_z: float | tuple[float, ...] | list[float] | None = None) -> list[ElectrodeSegment]:
     """Cut node-to-node conductor pieces into segments following `segmentation`.
 
-    Pieces must already end at every junction (crossings, rod joints, soil interface at
-    `interface_z`). Node types are inferred from the pieces that meet there: free ends, corners,
+    Pieces must already end at every junction (crossings, rod joints, soil interfaces at
+    `interface_z`, one height or several, z < 0). Node types are inferred from the pieces that meet there: free ends, corners,
     rod joints, irregular junctions and points on the soil interface are critical; four horizontal
     pieces form a plain crossing; two collinear pieces elsewhere are a plain split and not refined.
     """
@@ -256,6 +384,8 @@ def discretize(pieces: list[ElectrodeSegment], segmentation: Segmentation,
         for piece in pieces:
             result += _cut(piece, [], segmentation.max_length_m)
         return result
+    interface_heights = () if interface_z is None else (
+        (float(interface_z),) if isinstance(interface_z, (int, float)) else tuple(map(float, interface_z)))
     meeting: dict[tuple[float, float, float], list[tuple[float, float, float]]] = {}
     for piece in pieces:
         length = _distance(piece.start_m, piece.end_m)
@@ -266,7 +396,7 @@ def discretize(pieces: list[ElectrodeSegment], segmentation: Segmentation,
     def refinement(point: tuple[float, float, float]) -> float | None:
         directions = meeting[_node_key(point)]
         horizontal = all(abs(d[2]) < 1e-9 for d in directions)
-        on_interface = interface_z is not None and abs(point[2] - interface_z) < 1e-6
+        on_interface = any(abs(point[2] - z) < 1e-6 for z in interface_heights)
         if len(directions) == 2 and sum(a * b for a, b in zip(*directions)) < -1 + 1e-9 and not on_interface:
             return None
         if horizontal and len(directions) == 4:
@@ -342,7 +472,9 @@ def validate_request(
     Segments must already be split at a two-layer interface (see `split_at_interface`).
     """
     soil = as_soil(soil)
-    if isinstance(soil, TwoLayerSoil):
+    if isinstance(soil, LayerStackSoil):
+        resistivities = tuple(rho for rho, _ in soil.layers)  # thicknesses checked by the dataclass
+    elif isinstance(soil, TwoLayerSoil):
         resistivities = (soil.upper_resistivity_ohm_m, soil.lower_resistivity_ohm_m)
         thickness = float(soil.upper_thickness_m)
         if not math.isfinite(thickness) or not MIN_LAYER_THICKNESS_M <= thickness <= MAX_DEPTH_M:
@@ -357,11 +489,13 @@ def validate_request(
     if len(points) > MAX_POINTS or len(points) * len(segments) > MAX_POINT_SEGMENT_WORK:
         raise ValueError(f"at most {MAX_POINTS} points and 2e7 points x segments per request")
     matrix_work, point_work = image_work(soil, segments, points)
+    label = "n-layer" if isinstance(soil, LayerStackSoil) else "two-layer"
     if matrix_work > MAX_MATRIX_IMAGE_WORK:
-        raise ValueError("two-layer system needs more than 4e9 image evaluations; use fewer segments")
+        raise ValueError(f"{label} system needs more than 4e9 image evaluations; use fewer segments")
     if point_work > MAX_POINT_IMAGE_WORK:
-        raise ValueError("two-layer surface query needs more than 4e9 image evaluations; split the points "
+        raise ValueError(f"{label} surface query needs more than 4e9 image evaluations; split the points "
                          "into batches (see point_batch_size)")
+    interfaces = interface_depths(soil)
     groups: set[str] = set()
     ids: set[str] = set()
     for segment in segments:
@@ -384,11 +518,12 @@ def validate_request(
             raise ValueError(f"segment {segment.id} must be at least 5 radii long (thin-wire model)")
         if -0.5 * (segment.start_m[2] + segment.end_m[2]) < segment.radius_m:
             raise ValueError(f"segment {segment.id} lies on the surface; bury its mid-point at least one radius")
-        if isinstance(soil, TwoLayerSoil):
-            depths = (-segment.start_m[2], -segment.end_m[2])
-            tolerance = 1e-9 * max(1.0, float(soil.upper_thickness_m))
-            if min(depths) < soil.upper_thickness_m - tolerance and max(depths) > soil.upper_thickness_m + tolerance:
-                raise ValueError(f"segment {segment.id} crosses the soil interface; split it with split_at_interface")
+        depths = (-segment.start_m[2], -segment.end_m[2])
+        for depth in interfaces:
+            tolerance = 1e-9 * max(1.0, depth)
+            if min(depths) < depth - tolerance and max(depths) > depth + tolerance:
+                raise ValueError(f"segment {segment.id} crosses the soil interface at {depth:g} m; "
+                                 "split it with split_at_interface")
     seen: dict[tuple, str] = {}
     for segment in segments:
         ends = tuple(sorted((tuple(round(c, 9) for c in segment.start_m), tuple(round(c, 9) for c in segment.end_m))))
@@ -420,6 +555,8 @@ def validate_request(
             raise ValueError(f"point {point.id} coordinates are invalid")
         if not 0 <= z <= MAX_DEPTH_M:
             raise ValueError("potential query points must be at or above z=0")
+        if z != 0 and len(interfaces) > 0 and isinstance(soil, LayerStackSoil):
+            raise ValueError(f"n-layer potential query points must lie on the surface (z = 0); point {point.id}")
 
 
 def _limit_memory(limit_mb: int):
@@ -487,9 +624,10 @@ class PotentialEngineClient:
     ) -> dict[str, Any]:
         """Solve and return currents, potentials, solver diagnostics and a traceability record.
 
-        Give either `soil_resistivity_ohm_m` (homogeneous soil) or `soil` (`HomogeneousSoil` or
-        `TwoLayerSoil`). In two-layer soil, segments crossing the interface are split first, so
-        `segment_currents_a` and the trace use the `.u`/`.l` ids of the parts.
+        Give either `soil_resistivity_ohm_m` (homogeneous soil) or `soil` (`HomogeneousSoil`,
+        `TwoLayerSoil` or `LayerStackSoil`). Segments crossing an interface are split first, so
+        `segment_currents_a` and the trace use the ids of the parts (`.u`/`.l` in two-layer soil,
+        `.L<k>` in an n-layer stack; see `split_at_interface`).
         `injection_origins` maps each injected group to a token naming where its current came
         from (for example `user`, `fault:bus-7`); it defaults to `unspecified`.
         """
@@ -534,6 +672,8 @@ class PotentialEngineClient:
             detail = message[2] if len(message) > 2 and message[1] == "ERROR" else stderr.strip()
             raise PotentialEngineError(detail or f"C++ engine exited with status {process.returncode}")
         result = self._decode(stdout)
+        if isinstance(soil, LayerStackSoil) and result["metadata"].get("soil_model") != "n-layer":
+            raise PotentialEngineError("C++ engine did not solve the n-layer soil; rebuild it (make potential-engine)")
         result["trace"] = {
             **result.pop("metadata"),
             "engine_executable": self.executable,
@@ -606,24 +746,28 @@ def rectangular_grid_segments(
     discretization_m: float | None = None,
     interface_depth_m: float | None = None,
     segmentation: str = "uniform",
+    interface_depths_m: tuple[float, ...] | list[float] | None = None,
 ) -> list[ElectrodeSegment]:
     """Create a centered rectangular mesh and perimeter ground rods as line elements.
 
-    With `interface_depth_m` (two-layer soil), rods crossing that depth are cut there before
-    discretisation so that no segment straddles the interface. `segmentation="graded"` cuts the
-    mesh at every crossing and grades each piece with `Segmentation.for_discretization`.
+    With `interface_depth_m` (two-layer soil) or `interface_depths_m` (n-layer soil, see
+    `interface_depths`), rods crossing those depths are cut there before discretisation so that no
+    segment straddles an interface; a rod part shorter than 5 radii is refused.
+    `segmentation="graded"` cuts the mesh at every crossing and grades each piece with
+    `Segmentation.for_discretization`.
     """
+    depths = sorted({float(d) for d in (interface_depths_m or ())} |
+                    ({float(interface_depth_m)} if interface_depth_m is not None else set()))
     if segmentation == "graded":
         # Uniform pieces one conductor spacing long end exactly at the crossings (and the interface).
         pieces = rectangular_grid_segments(
             length_m=length_m, width_m=width_m, conductor_spacing_m=conductor_spacing_m,
             burial_depth_m=burial_depth_m, conductor_radius_m=conductor_radius_m, group=group,
             rods_count=rods_count, rod_length_m=rod_length_m, discretization_m=conductor_spacing_m,
-            interface_depth_m=interface_depth_m,
+            interface_depths_m=depths,
         )
         step = float(discretization_m or conductor_spacing_m)
-        return discretize(pieces, Segmentation.for_discretization("graded", step),
-                          None if interface_depth_m is None else -float(interface_depth_m))
+        return discretize(pieces, Segmentation.for_discretization("graded", step), [-d for d in depths])
     if segmentation != "uniform":
         raise ValueError("segmentation must be 'uniform' or 'graded'")
     values = (length_m, width_m, conductor_spacing_m, burial_depth_m,
@@ -667,15 +811,20 @@ def rectangular_grid_segments(
         else:
             x, y = -length_m / 2, width_m / 2 - (position - 2 * length_m - width_m)
         bottom = z - rod_length_m
-        cut = -float(interface_depth_m) if interface_depth_m is not None else None
-        if cut is not None and bottom < cut < z:
-            if min(z - cut, cut - bottom) < MIN_LENGTH_TO_RADIUS * conductor_radius_m:
-                raise ValueError("a rod crosses the soil interface within 5 radii of its end; adjust the rod "
-                                 "length or the layer thickness")
-            add_line(f"rod{index}u", "rod", (x, y, z), (x, y, cut), conductor_radius_m)
-            add_line(f"rod{index}l", "rod", (x, y, cut), (x, y, bottom), conductor_radius_m)
-        else:
+        cuts = [-d for d in depths if bottom < -d < z]
+        if not cuts:
             add_line(f"rod{index}", "rod", (x, y, z), (x, y, bottom), conductor_radius_m)
+            continue
+        nodes = [z] + cuts + [bottom]
+        if min(a - b for a, b in zip(nodes, nodes[1:])) < MIN_LENGTH_TO_RADIUS * conductor_radius_m:
+            raise ValueError("a rod crosses a soil interface within 5 radii of its end or of another interface; "
+                             "adjust the rod length or the layer thicknesses")
+        if len(depths) == 1:  # historical two-layer ids
+            add_line(f"rod{index}u", "rod", (x, y, z), (x, y, cuts[0]), conductor_radius_m)
+            add_line(f"rod{index}l", "rod", (x, y, cuts[0]), (x, y, bottom), conductor_radius_m)
+            continue
+        for part, (top, low) in enumerate(zip(nodes, nodes[1:])):
+            add_line(f"rod{index}p{part}", "rod", (x, y, top), (x, y, low), conductor_radius_m)
     return result
 
 

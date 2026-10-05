@@ -337,7 +337,7 @@
         "worst touch searched on a 0.5 m raster inside the grid outline, refined at 0.1 m around the 12 lowest potentials",
         "worst step: first foot within 1 m outside the outline, 16 directions, 0.5 m raster refined at 0.1 m around the 5 strongest candidates",
         "surface points closer than 0.08 m (the IEEE 80 foot radius) to an electrode that reaches grade, such as a fence post, are not evaluated; standing on a post's axis is touching it, not stepping (without this rule the search returns 128 V with one foot on a post top)",
-        "1.75 m segments (the 1 m model needs about 1900 segments, above the 1500-segment limit)"
+        "The checked reference case uses 1.75 m segments; the separate large-mesh benchmark solves this Grid 5 at 1 m with 1,883 segments"
       ],
       "soil": {
         "upper_resistivity_ohm_m": 300.0,

@@ -9,13 +9,16 @@ from typing import Any
 from src.infrastructure.calculations import safety_criteria
 from src.infrastructure.calculations.fault_current import ReturnPath, grid_current
 from src.infrastructure.calculations.potential_engine_client import (
+    MAX_LAYERS,
     MAX_SEGMENTS,
     HomogeneousSoil,
+    LayerStackSoil,
     PotentialEngineClient,
     PotentialEngineError,
     PotentialPoint,
     SoilModel,
     TwoLayerSoil,
+    interface_depths,
     point_batch_size,
     rectangular_grid_segments,
     soil_record,
@@ -47,26 +50,45 @@ class UnsupportedModelError(ValueError):
 def soil_model(soil_layers: list[dict[str, Any]]) -> SoilModel:
     """Engine soil model from the artifact's layers (top to bottom, `depth_m` = layer thickness).
 
-    Adjacent layers with the same resistivity are merged. One resulting layer is homogeneous soil;
-    two are a two-layer soil whose upper thickness is the merged `depth_m`; more are rejected.
+    Every layer but the last needs a positive thickness; the last is a half-space (`depth_m` null).
+    Adjacent layers with exactly the same resistivity are one physical layer and are merged, adding
+    their thicknesses (layers with different resistivity are never merged, however close). One
+    resulting layer is homogeneous soil; two are a two-layer soil (image series of the engine, as
+    before); 3 to 8 are an n-layer stack solved with the engine's n-layer kernel.
     """
+    if not 1 <= len(soil_layers) <= MAX_LAYERS:
+        raise UnsupportedModelError(f"El suelo debe tener entre 1 y {MAX_LAYERS} capas; el artefacto tiene {len(soil_layers)}.")
     merged: list[list[Any]] = []
-    for layer in soil_layers:
+    for index, layer in enumerate(soil_layers):
         rho, thickness = float(layer["resistivity_ohm_m"]), layer.get("depth_m")
+        last = index == len(soil_layers) - 1
+        if last and thickness is not None:
+            raise UnsupportedModelError("La última capa del suelo es un semiespacio: su espesor (depth_m) debe ser nulo.")
+        if not last and thickness is None:
+            if len(soil_layers) == 2:
+                raise UnsupportedModelError("La capa superior del suelo de dos capas necesita su espesor (depth_m).")
+            raise UnsupportedModelError(f"La capa {index + 1} del suelo necesita su espesor (depth_m).")
         if merged and merged[-1][0] == rho:
-            merged[-1][1] = None if merged[-1][1] is None or thickness is None else merged[-1][1] + float(thickness)
+            merged[-1][1] = None if thickness is None else merged[-1][1] + float(thickness)
         else:
             merged.append([rho, None if thickness is None else float(thickness)])
-    if len(merged) == 1:
-        return HomogeneousSoil(merged[0][0])
-    if len(merged) > 2:
-        raise UnsupportedModelError(
-            f"El motor resuelve suelo homogéneo o de dos capas y el artefacto tiene {len(merged)} capas con "
-            "resistividades distintas; el suelo de n capas está pendiente en el backlog."
-        )
-    if merged[0][1] is None:
-        raise UnsupportedModelError("La capa superior del suelo de dos capas necesita su espesor (depth_m).")
-    return TwoLayerSoil(merged[0][0], merged[1][0], merged[0][1])
+    try:
+        if len(merged) == 1:
+            return HomogeneousSoil(merged[0][0])
+        if len(merged) == 2:
+            return TwoLayerSoil(merged[0][0], merged[1][0], merged[0][1])
+        return LayerStackSoil(tuple((rho, thickness) for rho, thickness in merged))
+    except ValueError as exc:
+        raise UnsupportedModelError(f"Modelo de suelo fuera del rango del motor: {exc}.") from exc
+
+
+def top_resistivity(soil: SoilModel) -> float:
+    """Resistivity of the soil directly beneath the surface layer."""
+    if isinstance(soil, HomogeneousSoil):
+        return soil.resistivity_ohm_m
+    if isinstance(soil, TwoLayerSoil):
+        return soil.upper_resistivity_ohm_m
+    return float(soil.layers[0][0])
 
 
 def _fault_current(fault, parameters, client, soil, segments) -> tuple[float, str, dict[str, Any] | None]:
@@ -121,7 +143,7 @@ def _segments(geometry: dict[str, Any], parameters: dict[str, Any], soil: SoilMo
         conductor_radius_m=parameters["conductor_radius_m"], group=GROUP,
         rods_count=geometry.get("rods_count", 0), rod_length_m=geometry.get("rod_length_m", 2.4),
         discretization_m=step,
-        interface_depth_m=soil.upper_thickness_m if isinstance(soil, TwoLayerSoil) else None,
+        interface_depths_m=interface_depths(soil),
         segmentation=parameters.get("segmentation", DEFAULT_SEGMENTATION),
     )
 
@@ -160,8 +182,7 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
         result["numerical_uncertainty"], extra = _uncertainty(client, geometry, parameters, soil, current, origin, field)
         hashes = hashes + extra
     # IEEE 80 Cs uses the resistivity of the soil directly beneath the surface layer.
-    upper_rho = soil.resistivity_ohm_m if isinstance(soil, HomogeneousSoil) else soil.upper_resistivity_ohm_m
-    result["safety"] = _safety(result, fault, upper_rho, parameters)
+    result["safety"] = _safety(result, fault, top_resistivity(soil), parameters)
     trace = {**first["trace"], "parameters": parameters, "request_sha256_batches": hashes,
              "fault_current": fault_breakdown, "numerical_uncertainty": result.get("numerical_uncertainty")}
     return {"result": result, "trace": trace}

@@ -5,11 +5,52 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
-from src.infrastructure.entrypoint.api.schemas import GroundingArtifactRequest, PotentialCalculationRequest
+from src.infrastructure.entrypoint.api.schemas import GroundingArtifactRequest, PotentialCalculationRequest, SoilMeasurementsRequest
+from src.infrastructure.calculations.soil_model import ResistivityMeasurement, fit_two_layer, to_soil_layers
+from src.infrastructure.calculations.n_layer_soil import fit_n_layer, soil_layers_record
 from src.infrastructure.entrypoint.worker.tasks import calculate_artifact_potential
 from src.infrastructure.security.middleware import require
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/artefactos-diseno-tierras", tags=["artefactos-diseno-tierras"])
+
+
+@router.post("/mediciones-suelo/ajustar")
+def fit_soil_measurements(project_id: str, payload: SoilMeasurementsRequest, request: Request,
+                          actor=Depends(require("designs:write"))):
+    """Fit a Wenner/Schlumberger sounding to a 2-layer (image series) or 3-8-layer soil model.
+
+    The returned `soil_layers` use the artifact format (`depth_m` = layer thickness, null for the
+    bottom half-space) and stay within the potential engine's limits, so they can be stored in an
+    artifact and calculated directly.
+    """
+    with request.app.state.services.store.transaction() as db:
+        owned_project(db, project_id, actor)
+    readings = [ResistivityMeasurement(**item.model_dump()) for item in payload.measurements]
+    try:
+        if payload.layer_count == 2:
+            fit = fit_two_layer(readings, payload.array, outlier_threshold=payload.outlier_threshold)
+            model_record = {"upper_resistivity_ohm_m": fit.model.rho1_ohm_m,
+                            "lower_resistivity_ohm_m": fit.model.rho2_ohm_m,
+                            "upper_thickness_m": fit.model.h_m}
+            layer_records = to_soil_layers(fit)
+            uncertainty = fit.relative_uncertainty_percent
+            forward_model = "two-layer-image-series"
+        else:
+            fit = fit_n_layer(readings, payload.layer_count, payload.array, outlier_threshold=payload.outlier_threshold)
+            layer_records = soil_layers_record(fit.model)
+            model_record = {"model": "n-layer", "layers": layer_records}
+            uncertainty = fit.relative_uncertainty_percent
+            forward_model = fit.forward_model
+    except (ValueError, ArithmeticError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"model": model_record, "layer_count": payload.layer_count,
+            "soil_layers": layer_records, "array": fit.array,
+            "rms_error_percent": fit.rms_error_percent,
+            "uniform_resistivity_ohm_m": fit.uniform_resistivity_ohm_m,
+            "uniform_rms_error_percent": fit.uniform_rms_error_percent,
+            "relative_uncertainty_percent": uncertainty, "forward_model": forward_model,
+            "residuals_percent": fit.residuals_percent, "excluded": fit.excluded,
+            "warnings": fit.warnings}
 
 
 def owned_project(db, project_id, actor):

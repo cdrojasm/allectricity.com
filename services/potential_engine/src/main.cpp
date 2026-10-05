@@ -14,24 +14,31 @@
 
 namespace {
 constexpr const char* kProtocol = "SPAT-POTENTIAL-3";
-constexpr const char* kSolverVersion = "3.0.0";
+constexpr const char* kSolverVersion = "3.2.0";
 constexpr const char* kMethod =
     "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;"
-    "graded-gauss-legendre-8;lu-partial-pivoting";
+    "graded-gauss-legendre-8";
 constexpr const char* kLayeredMethod =
     "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;"
-    "graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2;lu-partial-pivoting";
+    "graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2";
 constexpr const char* kAssumptions =
     "homogeneous-isotropic-semi-infinite-soil;insulating-air-boundary;quasi-static-dc;"
     "ideal-equipotential-metal-per-group;zero-net-current-for-floating-groups";
 constexpr const char* kLayeredAssumptions =
     "two-layer-horizontally-stratified-isotropic-soil;insulating-air-boundary;quasi-static-dc;"
     "ideal-equipotential-metal-per-group;zero-net-current-for-floating-groups";
+constexpr const char* kNLayerMethod =
+    "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;"
+    "graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;"
+    "a-posteriori-spectral-error-bound;far-image-gauss-2x2";
+constexpr const char* kNLayerAssumptions =
+    "horizontally-stratified-isotropic-soil-1-to-8-layers;bottom-layer-half-space;insulating-air-boundary;"
+    "quasi-static-dc;ideal-equipotential-metal-per-group;zero-net-current-for-floating-groups";
 constexpr const char* kUnits = "length=m;resistivity=ohm_m;current=A;potential=V;resistance=ohm";
 
 // Operational limits. Timing and memory measured by validation/benchmark.py; see README.
 #ifndef SPAT_MAX_SEGMENTS
-#define SPAT_MAX_SEGMENTS 1500
+#define SPAT_MAX_SEGMENTS 4000
 #endif
 constexpr std::size_t kMaxSegments = SPAT_MAX_SEGMENTS;
 constexpr std::size_t kMaxPoints = 100000;
@@ -53,12 +60,32 @@ constexpr int kMaxImageTerms = 2000;
 // limit is about 10 s; homogeneous requests stay far below them.
 constexpr double kMaxMatrixImageWork = 4.0e9;
 constexpr double kMaxPointImageWork = 4.0e9;
+// N-layer kernel limits (see the "N-layer soil" section). The image-work limits above also apply.
+constexpr std::size_t kMaxLayers = 8;
+constexpr double kMaxLayerContrast = 1.0e4;       // max/min resistivity of the stack
+constexpr int kMinKernelDensity = 6;              // exponential images per decade of depth
+constexpr int kMaxKernelDensity = 12;
+constexpr int kMaxKernelTerms = 120;              // fitted images per coefficient function
+constexpr double kKernelDepthFactor = 17.0;       // ln(1e7): reach of the deepest fitted image
+constexpr double kKernelSvdCut = 1.0e-10;         // truncation of the least-squares fit
+constexpr double kKernelZeroWeight = 30.0;        // weight of lambda = 0 (far field) in the fit
+constexpr double kKernelMaxErrorBound = 1.0e-4;   // refuse the request above this bound
+constexpr double kKernelWarnErrorBound = 1.0e-5;  // warn above this bound
+constexpr double kKernelMaxAmplification = 1.0e6; // sum |a_k| / max |f|: cancellation guard
+constexpr double kMaxKernelEvaluations = 1.0e6;   // spectral evaluations to build the kernel
 
 // Numerical acceptance limits.
 constexpr double kMaxBackwardError = 1.0e-10;
 constexpr double kWarnCondition = 1.0e10;
 constexpr double kMaxCondition = 1.0e13;
 constexpr double kMaxRelativeBalanceError = 1.0e-9;
+#ifndef SPAT_DIRECT_SOLVER_MAX_SEGMENTS
+#define SPAT_DIRECT_SOLVER_MAX_SEGMENTS 1500
+#endif
+constexpr std::size_t kDirectSolverMaxSegments = SPAT_DIRECT_SOLVER_MAX_SEGMENTS;
+constexpr int kGmresRestart = 40;
+constexpr int kGmresMaxIterations = 800;
+constexpr double kGmresTolerance = 1.0e-12;
 
 constexpr double kPi = 3.1415926535897932384626433832795;
 constexpr std::array<double, 8> kNodes = {
@@ -252,11 +279,21 @@ double coefficient(const Segment& target, const Segment& source, bool same) {
 //   source and observation in layer 2: rho2 [1/R(t-s) - K/R(t+s-2h) + (1-K^2) sum_{n>=0} K^n/R(t+s+2nh)]
 // with depths s, t > 0 and R(d) = sqrt(r^2 + d^2), all over 4 pi. Every term is the potential of
 // a translated or mirrored copy of the source segment, so the analytic line integral applies to each.
+struct KernelDiagnostics {
+    int density{0}, terms{0}, functions{0}, max_images_per_pair{0}, lambda_samples{0};
+    double b_min{0.0}, b_max{0.0}, error_bound{0.0}, max_amplification{0.0}, spectral_evaluations{0.0};
+};
+
 struct Soil {
     bool layered{false};
+    bool nlayer{false};        // n-layer kernel (also sets `layered`)
     double rho1{}, rho2{}, h{}, k{};
     int terms{0};              // image orders n = 0..terms
     double tail_bound{0.0};    // truncation bound relative to the weakest direct coupling
+    std::vector<double> rhos;          // n-layer: top to bottom, after merging equal neighbours
+    std::vector<double> thicknesses;   // n-layer: the finite layers (rhos.size() - 1 values)
+    std::vector<double> interfaces;    // depths of the interfaces, increasing (two-layer: {h})
+    KernelDiagnostics kernel;
 };
 
 struct Image {
@@ -265,14 +302,19 @@ struct Image {
     double shift;    // added to z
 };
 
-int layer_of(double z, const Soil& soil) { return -z < soil.h ? 0 : 1; }
+// Layer of a point at height z (z <= 0); a point on an interface belongs to the layer below it.
+int layer_of(double z, const Soil& soil) {
+    int layer = 0;
+    for (double depth : soil.interfaces) if (-z >= depth) ++layer;
+    return layer;
+}
 int layer_of(const Segment& s, const Soil& soil) { return layer_of(0.5 * (s.a.z + s.b.z), soil); }
 
 // images[source layer][observation layer]
-using ImageTable = std::array<std::array<std::vector<Image>, 2>, 2>;
+using ImageTable = std::vector<std::vector<std::vector<Image>>>;
 
 ImageTable image_table(const Soil& soil) {
-    ImageTable table;
+    ImageTable table(2, std::vector<std::vector<Image>>(2));
     const double K = soil.k, r = soil.rho2 / soil.rho1;
     auto& upper = table[0][0];
     upper = {{1.0, false, 0.0}, {1.0, true, 0.0}};
@@ -369,12 +411,439 @@ double layered_coefficient(const Segment& target, int target_layer, const Segmen
     return total;
 }
 
+// ---------------------------------------------------------------------------------------------
+// N-layer soil: layers k = 0..N-1 (N <= 8) with resistivity rho_k between depths d_k and d_{k+1}
+// (d_0 = 0, the bottom layer is a half-space), insulating air above z = 0.
+//
+// Spectral form (Sunde 1949, ch. 2; Koefoed 1979, "Geosounding Principles 1", ch. 2-3). With the
+// Lipschitz integral 1/R = int_0^inf exp(-lambda |dz|) J0(lambda r) dlambda, the potential at depth t
+// in layer j of a unit point current at depth s in layer i is (1 / 4 pi) int F(lambda) J0(lambda r)
+// dlambda with
+//   F = delta_ij rho_i exp(-lambda |t - s|) + sum_{p in {u,v}, q in {A,B}} c_pq(lambda) exp(-lambda (sigma_p + tau_q + delta_pq))
+// where sigma_u = s - d_i, sigma_v = d_{i+1} - s (source to the top / bottom of its layer),
+// tau_A = t - d_j, tau_B = d_{j+1} - t, and delta_pq is the thickness the direct ray crosses (factored
+// out analytically, so c_pq stays bounded and never underflows). c_pq follows from the stable
+// generalized reflection / transmission recursion for a static layered medium (Chew, "Waves and Fields
+// in Inhomogeneous Media", 1990, sec. 2.1, with zero frequency): local reflection
+// K_k = (rho_k - rho_{k-1}) / (rho_k + rho_{k-1}) for a wave going down at interface k, -K_k going up,
+// +1 at the insulating surface, potential transmission 1 + K_k down and 1 - K_k up. Every quantity
+// is a Moebius map of exp(-2 lambda h) factors with modulus <= 1, so no exp(+lambda h) appears.
+//
+// Image representation: c_pq(lambda) = c_pq(inf) + sum_k a_k exp(-lambda b_k) with fixed depths
+// b_k on a geometric grid (density images per decade between the thinnest layer and the reach of
+// the slowest multiple reflection), fitted by truncated-SVD least squares on lambda samples (the
+// real-exponential variant of the complex-image method: Chow, Yang & Srivastava, J. Appl. Phys. 71,
+// 1992; Li, Chen, Fan & Lu, IEEE Trans. Power Deliv. 21(3), 2006). Each term is exactly
+// a / sqrt(r^2 + (sigma + tau + delta + b)^2), i.e. a mirrored or translated copy of the source
+// segment, so the analytic line integral and the two-layer quadrature apply unchanged.
+//
+// Error control: for every fitted function the residual e(lambda) is evaluated on a grid 2-4 times
+// denser than the fit and up to 60 / b_min. Since |exp(-lambda Z) J0(lambda r)| <= min(1, sqrt(2 /
+// (pi lambda r))) (Watson, "Theory of Bessel Functions", sec. 13.74), the spatial error at distance
+// R <= R_max is bounded by int |e| w(lambda) dlambda; the bound, relative to the direct coupling
+// min(rho_i, rho_j) / R and summed over the four terms, is reported as kernel_error_bound and the
+// request is refused above kKernelMaxErrorBound.
+// ---------------------------------------------------------------------------------------------
+
+enum Combo { kUA = 0, kUB = 1, kVA = 2, kVB = 3 };
+
+// Depth of the top of layer k.
+double soil_top(const Soil& soil, int k) { return k == 0 ? 0.0 : soil.interfaces[static_cast<std::size_t>(k - 1)]; }
+
+double vector_norm_plain(const std::vector<double>& x) {
+    double value = 0.0;
+    for (double v : x) value = std::hypot(value, v);
+    return value;
+}
+
+struct Spectral {
+    std::array<double, 4> c{};       // scaled coefficients (ohm-m)
+    std::array<double, 4> delta{};   // crossed thickness factored out of each coefficient
+    std::array<bool, 4> present{};
+};
+
+// Scaled coefficients c_pq(lambda) of source layer i seen in layer j; `limit` gives lambda -> inf.
+Spectral spectral(const Soil& soil, int i, int j, double lambda, bool limit) {
+    const auto& rho = soil.rhos;
+    const auto& h = soil.thicknesses;
+    const int n = static_cast<int>(rho.size());
+    std::array<double, kMaxLayers + 1> top{}, e{}, x{}, up{}, down{}, k{};
+    for (int m = 0; m < n; ++m) {
+        top[static_cast<std::size_t>(m + 1)] = m < n - 1 ? top[static_cast<std::size_t>(m)] + h[static_cast<std::size_t>(m)] : 0.0;
+        e[static_cast<std::size_t>(m)] = m < n - 1 && !limit ? std::exp(-lambda * h[static_cast<std::size_t>(m)]) : 0.0;
+        x[static_cast<std::size_t>(m)] = e[static_cast<std::size_t>(m)] * e[static_cast<std::size_t>(m)];
+        if (m > 0) k[static_cast<std::size_t>(m)] = (rho[static_cast<std::size_t>(m)] - rho[static_cast<std::size_t>(m - 1)]) /
+                                                     (rho[static_cast<std::size_t>(m)] + rho[static_cast<std::size_t>(m - 1)]);
+    }
+    const auto at_ = [](auto& array, int index) -> double& { return array[static_cast<std::size_t>(index)]; };
+    // up[m]: generalized reflection of an upgoing wave at the top of layer m (surface included).
+    at_(up, 0) = 1.0;
+    for (int m = 1; m < n; ++m) {
+        const double behind = at_(up, m - 1) * at_(x, m - 1);
+        at_(up, m) = (-at_(k, m) + behind) / (1.0 - at_(k, m) * behind);
+    }
+    // down[m]: generalized reflection of a downgoing wave in layer m-1 at interface m; down[n] = 0.
+    at_(down, n) = 0.0;
+    for (int m = n - 1; m >= 1; --m) {
+        const double behind = (m < n - 1 ? at_(down, m + 1) : 0.0) * at_(x, m);
+        at_(down, m) = (at_(k, m) + behind) / (1.0 + at_(k, m) * behind);
+    }
+    Spectral out;
+    const double r = rho[static_cast<std::size_t>(i)];
+    const bool bounded = i < n - 1;  // the source layer has a bottom interface
+    const double gb = bounded ? at_(down, i + 1) : 0.0, yt = at_(up, i), ei = at_(e, i);
+    const double denominator = 1.0 - yt * gb * ei * ei;
+    const auto set = [&](Combo combo, double value, double delta) {
+        out.c[combo] = value; out.delta[combo] = delta; out.present[combo] = true;
+    };
+    const auto d = [&](int index) { return at_(top, index); };
+    if (j == i) {
+        set(kUA, r * yt / denominator, 0.0);
+        if (bounded) {
+            set(kVB, r * gb / denominator, 0.0);
+            set(kUB, r * gb * yt / denominator, h[static_cast<std::size_t>(i)]);
+            set(kVA, r * yt * gb / denominator, h[static_cast<std::size_t>(i)]);
+        }
+    } else if (j < i) {
+        double product = 1.0;  // transmission up through interfaces i, i-1, ..., j+1
+        for (int m = i; m > j; --m) product *= (1.0 - at_(k, m)) / (1.0 - at_(k, m) * at_(up, m - 1) * at_(x, m - 1));
+        const double from_u = r / denominator * product, from_v = r * gb / denominator * product;
+        set(kUB, from_u, d(i) - d(j + 1));
+        set(kUA, at_(up, j) * from_u, d(i) - d(j));
+        if (bounded) {
+            set(kVB, from_v, d(i + 1) - d(j + 1));
+            set(kVA, at_(up, j) * from_v, d(i + 1) - d(j));
+        }
+    } else {
+        double product = 1.0;  // transmission down through interfaces i+1, ..., j
+        for (int m = i + 1; m <= j; ++m) {
+            const double below = m < n - 1 ? at_(down, m + 1) * at_(x, m) : 0.0;
+            product *= (1.0 + at_(k, m)) / (1.0 + at_(k, m) * below);
+        }
+        const double from_v = r / denominator * product, from_u = r * yt / denominator * product;
+        set(kVA, from_v, d(j) - d(i + 1));
+        set(kUA, from_u, d(j) - d(i));
+        if (j < n - 1) {
+            set(kVB, at_(down, j + 1) * from_v, d(j + 1) - d(i + 1));
+            set(kUB, at_(down, j + 1) * from_u, d(j + 1) - d(i));
+        }
+    }
+    return out;
+}
+
+struct KernelPlan {
+    std::vector<double> b;   // fitted image depths (m), geometric
+    double b_min{}, b_max{};
+};
+
+// Deterministic image grid, mirrored by the Python client for its cost estimate. The deepest image
+// reaches the depth after which the slowest multiple reflection, bounded per round trip of at most
+// 2 d_{N-1} by the stack contrast kappa = (max - min) / (max + min), has decayed below e^-17.
+KernelPlan kernel_plan(const Soil& soil, int density) {
+    KernelPlan plan;
+    const double low = *std::min_element(soil.rhos.begin(), soil.rhos.end());
+    const double high = *std::max_element(soil.rhos.begin(), soil.rhos.end());
+    const double kappa = (high - low) / (high + low);
+    plan.b_min = *std::min_element(soil.thicknesses.begin(), soil.thicknesses.end());
+    plan.b_max = std::max(4.0 * plan.b_min, 2.0 * soil.interfaces.back() * kKernelDepthFactor / (1.0 - kappa));
+    const int terms = static_cast<int>(std::ceil(std::log10(plan.b_max / plan.b_min) * density)) + 1;
+    if (terms > kMaxKernelTerms) {
+        std::ostringstream message;
+        message << "n-layer kernel needs " << terms << " images per coefficient (limit " << kMaxKernelTerms
+                << "); the resistivity contrast or the ratio of total depth to thinnest layer is too high";
+        throw std::runtime_error(message.str());
+    }
+    for (int q = 0; q < terms; ++q)
+        plan.b.push_back(plan.b_min * std::pow(plan.b_max / plan.b_min, static_cast<double>(q) / (terms - 1)));
+    return plan;
+}
+
+std::vector<double> geometric_samples(double low, double high, std::size_t count) {
+    std::vector<double> values(count);
+    for (std::size_t q = 0; q < count; ++q)
+        values[q] = low * std::pow(high / low, static_cast<double>(q) / static_cast<double>(count - 1));
+    return values;
+}
+
+// Pseudo-inverse rows of the weighted exponential basis by one-sided Jacobi SVD (Hestenes 1958;
+// Demmel & Veselic 1992), truncated at kKernelSvdCut relative to the largest singular value.
+// Returns P (terms x samples) with fit coefficients a = P f for samples f.
+std::vector<std::vector<double>> fit_operator(const std::vector<double>& lambda, const std::vector<double>& weight,
+                                              const std::vector<double>& b) {
+    const std::size_t m = lambda.size(), n = b.size();
+    std::vector<std::vector<double>> column(n, std::vector<double>(m)), v(n, std::vector<double>(n, 0.0));
+    for (std::size_t q = 0; q < n; ++q) {
+        v[q][q] = 1.0;
+        for (std::size_t s = 0; s < m; ++s) column[q][s] = weight[s] * std::exp(-lambda[s] * b[q]);
+    }
+    for (int sweep = 0; sweep < 80; ++sweep) {
+        bool rotated = false;
+        for (std::size_t p = 0; p + 1 < n; ++p) {
+            for (std::size_t q = p + 1; q < n; ++q) {
+                double alpha = 0.0, beta = 0.0, gamma = 0.0;
+                for (std::size_t s = 0; s < m; ++s) {
+                    alpha += column[p][s] * column[p][s];
+                    beta += column[q][s] * column[q][s];
+                    gamma += column[p][s] * column[q][s];
+                }
+                if (std::abs(gamma) <= 1e-15 * std::sqrt(alpha * beta)) continue;
+                rotated = true;
+                const double zeta = (beta - alpha) / (2.0 * gamma);
+                const double t = (zeta >= 0.0 ? 1.0 : -1.0) / (std::abs(zeta) + std::sqrt(1.0 + zeta * zeta));
+                const double c = 1.0 / std::sqrt(1.0 + t * t), sn = c * t;
+                for (std::size_t s = 0; s < m; ++s) {
+                    const double a = column[p][s], bq = column[q][s];
+                    column[p][s] = c * a - sn * bq;
+                    column[q][s] = sn * a + c * bq;
+                }
+                for (std::size_t s = 0; s < n; ++s) {
+                    const double a = v[s][p], bq = v[s][q];
+                    v[s][p] = c * a - sn * bq;
+                    v[s][q] = sn * a + c * bq;
+                }
+            }
+        }
+        if (!rotated) break;
+    }
+    std::vector<double> sigma(n);
+    for (std::size_t q = 0; q < n; ++q) sigma[q] = vector_norm_plain(column[q]);
+    const double largest = *std::max_element(sigma.begin(), sigma.end());
+    std::vector<std::vector<double>> pseudo(n, std::vector<double>(m, 0.0));
+    for (std::size_t q = 0; q < n; ++q) {
+        if (!(sigma[q] > kKernelSvdCut * largest)) continue;
+        for (std::size_t s = 0; s < m; ++s) {
+            const double u = column[q][s] / sigma[q] * weight[s] / sigma[q];
+            for (std::size_t row = 0; row < n; ++row) pseudo[row][s] += v[row][q] * u;
+        }
+    }
+    return pseudo;
+}
+
+// Image table of an n-layer soil for the (source, observation) layer pairs in use, with the fit
+// diagnostics stored in soil.kernel. `max_distance` bounds every source-observation distance.
+ImageTable nlayer_table(Soil& soil, const std::vector<bool>& source_layers, const std::vector<bool>& observation_layers,
+                        int density, double max_distance) {
+    const int n = static_cast<int>(soil.rhos.size());
+    ImageTable table(static_cast<std::size_t>(n), std::vector<std::vector<Image>>(static_cast<std::size_t>(n)));
+    const KernelPlan plan = kernel_plan(soil, density);
+    const std::size_t terms = plan.b.size();
+    soil.kernel.density = density;
+    soil.kernel.terms = static_cast<int>(terms);
+    soil.kernel.b_min = plan.b_min;
+    soil.kernel.b_max = plan.b_max;
+
+    // Fit samples: lambda = 0 (far field, weighted) and 3 per image over [0.002 / b_max, 40 / b_min].
+    const double fit_low = 0.002 / plan.b_max, fit_high = 40.0 / plan.b_min;
+    const std::size_t fit_count = static_cast<std::size_t>(
+        3.0 * static_cast<double>(terms) * std::log10(fit_high / fit_low) / std::log10(plan.b_max / plan.b_min)) + 1;
+    std::vector<double> fit_lambda{0.0};
+    for (double value : geometric_samples(fit_low, fit_high, fit_count)) fit_lambda.push_back(value);
+    std::vector<double> fit_weight(fit_lambda.size(), 1.0);
+    fit_weight[0] = kKernelZeroWeight;
+    // Check samples: 60 per decade over [0.001 / b_max, 60 / b_min], plus lambda = 0.
+    const double check_low = 0.001 / plan.b_max, check_high = 60.0 / plan.b_min;
+    const std::size_t check_count = static_cast<std::size_t>(60.0 * std::log10(check_high / check_low)) + 1;
+    std::vector<double> check_lambda{0.0};
+    for (double value : geometric_samples(check_low, check_high, check_count)) check_lambda.push_back(value);
+    soil.kernel.lambda_samples = static_cast<int>(fit_lambda.size() + check_lambda.size());
+
+    std::size_t functions = 0;
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < n; ++j)
+            if (source_layers[static_cast<std::size_t>(i)] && observation_layers[static_cast<std::size_t>(j)])
+                functions += static_cast<std::size_t>((i < n - 1 ? 2 : 1) * (j < n - 1 ? 2 : 1));
+    soil.kernel.spectral_evaluations = static_cast<double>(functions) * static_cast<double>(fit_lambda.size() + check_lambda.size());
+    if (soil.kernel.spectral_evaluations > kMaxKernelEvaluations)
+        throw std::runtime_error("n-layer kernel needs more than 1e6 spectral evaluations");
+
+    const auto pseudo = fit_operator(fit_lambda, fit_weight, plan.b);
+    std::vector<std::vector<double>> check_basis(check_lambda.size(), std::vector<double>(terms));
+    for (std::size_t s = 0; s < check_lambda.size(); ++s)
+        for (std::size_t q = 0; q < terms; ++q) check_basis[s][q] = std::exp(-check_lambda[s] * plan.b[q]);
+
+    // Weights of |e(lambda)| in the spatial error bound at distance R <= max_distance.
+    const double reach = max_distance / std::sqrt(2.0);
+    std::vector<double> bound_weight(check_lambda.size());
+    for (std::size_t s = 0; s < check_lambda.size(); ++s) {
+        const double lambda = check_lambda[s];
+        const double bessel = lambda > 0.0 ? std::min(1.0, std::sqrt(2.0 / (kPi * lambda * reach))) : 1.0;
+        const double vertical = lambda > 0.0 && std::sqrt(2.0) / lambda <= max_distance
+            ? std::sqrt(2.0) / (std::exp(1.0) * lambda) : max_distance * std::exp(-lambda * reach);
+        bound_weight[s] = std::max(max_distance * bessel, vertical);
+    }
+
+    const double rho_ref = soil.rhos[0];
+    for (int i = 0; i < n; ++i) {
+        if (!source_layers[static_cast<std::size_t>(i)]) continue;
+        for (int j = 0; j < n; ++j) {
+            if (!observation_layers[static_cast<std::size_t>(j)]) continue;
+            auto& images = table[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)];
+            if (i == j) images.push_back({soil.rhos[static_cast<std::size_t>(i)] / rho_ref, false, 0.0});
+            const Spectral limit = spectral(soil, i, j, 0.0, true);
+            std::vector<Spectral> fit_values, check_values;
+            for (double lambda : fit_lambda) fit_values.push_back(spectral(soil, i, j, lambda, false));
+            for (double lambda : check_lambda) check_values.push_back(spectral(soil, i, j, lambda, false));
+            double pair_bound = 0.0;
+            for (int combo = 0; combo < 4; ++combo) {
+                if (!limit.present[static_cast<std::size_t>(combo)]) continue;
+                const double c_inf = limit.c[static_cast<std::size_t>(combo)];
+                std::vector<double> coefficients(terms, 0.0);
+                double largest = 0.0;
+                for (std::size_t s = 0; s < fit_lambda.size(); ++s) {
+                    const double f = fit_values[s].c[static_cast<std::size_t>(combo)] - c_inf;
+                    largest = std::max(largest, std::abs(f));
+                    for (std::size_t q = 0; q < terms; ++q) coefficients[q] += pseudo[q][s] * f;
+                }
+                double total = 0.0, previous_error = 0.0, bound = 0.0;
+                for (double a : coefficients) total += std::abs(a);
+                if (largest > 0.0) soil.kernel.max_amplification = std::max(soil.kernel.max_amplification, total / largest);
+                for (std::size_t s = 0; s < check_lambda.size(); ++s) {
+                    double fitted = 0.0;
+                    for (std::size_t q = 0; q < terms; ++q) fitted += coefficients[q] * check_basis[s][q];
+                    const double error = std::abs(check_values[s].c[static_cast<std::size_t>(combo)] - c_inf - fitted) * bound_weight[s];
+                    if (s > 0) bound += 0.5 * (error + previous_error) * (check_lambda[s] - check_lambda[s - 1]);
+                    previous_error = error;
+                }
+                pair_bound += bound;
+                // Images: separation sigma + tau + delta + beta, as a mirrored or translated copy.
+                const double delta = limit.delta[static_cast<std::size_t>(combo)];
+                const double di = soil_top(soil, i), dj = soil_top(soil, j);
+                const double di1 = i < n - 1 ? soil_top(soil, i + 1) : 0.0, dj1 = j < n - 1 ? soil_top(soil, j + 1) : 0.0;
+                const auto add = [&](double weight, double beta) {
+                    const double offset = delta + beta;
+                    switch (combo) {
+                        case kUA: images.push_back({weight / rho_ref, true, offset - di - dj}); break;
+                        case kUB: images.push_back({weight / rho_ref, false, di - dj1 - offset}); break;
+                        case kVA: images.push_back({weight / rho_ref, false, di1 - dj + offset}); break;
+                        default: images.push_back({weight / rho_ref, true, -(di1 + dj1 + offset)}); break;
+                    }
+                };
+                add(c_inf, 0.0);
+                for (std::size_t q = 0; q < terms; ++q) add(coefficients[q], plan.b[q]);
+                ++soil.kernel.functions;
+            }
+            pair_bound /= std::min(soil.rhos[static_cast<std::size_t>(i)], soil.rhos[static_cast<std::size_t>(j)]);
+            soil.kernel.error_bound = std::max(soil.kernel.error_bound, pair_bound);
+            soil.kernel.max_images_per_pair = std::max(soil.kernel.max_images_per_pair, static_cast<int>(images.size()));
+        }
+    }
+    if (!(soil.kernel.max_amplification <= kKernelMaxAmplification))
+        throw std::runtime_error("n-layer kernel fit is numerically unstable (coefficient amplification above 1e6)");
+    if (!(soil.kernel.error_bound <= kKernelMaxErrorBound)) {
+        std::ostringstream message;
+        message << "n-layer kernel did not converge: relative error bound " << soil.kernel.error_bound
+                << " exceeds " << kKernelMaxErrorBound << "; reduce the resistivity contrast or the extent, or raise the kernel density";
+        throw std::runtime_error(message.str());
+    }
+    return table;
+}
+
 struct Lu {
     std::vector<std::vector<double>> a;
     std::vector<std::size_t> perm;
     double min_pivot{std::numeric_limits<double>::infinity()};
     double max_pivot{};
 };
+
+struct IterativeSolution {
+    std::vector<double> x;
+    int iterations{};
+};
+
+double vector_norm(const std::vector<double>& x) {
+    double value = 0.0;
+    for (double v : x) value = std::hypot(value, v);
+    return value;
+}
+
+IterativeSolution gmres(const std::vector<std::vector<double>>& a, const std::vector<double>& b,
+                        const std::vector<double>& row_scale) {
+    const std::size_t n = b.size();
+    const int restart = std::min<int>(kGmresRestart, static_cast<int>(n));
+    std::vector<double> x(n, 0.0), scaled_b(n);
+    for (std::size_t i = 0; i < n; ++i) scaled_b[i] = row_scale[i] * b[i];
+    const double rhs_norm = vector_norm(scaled_b);
+    if (rhs_norm == 0.0) return {std::move(x), 0};
+    int iterations = 0;
+    while (iterations < kGmresMaxIterations) {
+        std::vector<double> residual = scaled_b;
+        for (std::size_t i = 0; i < n; ++i) {
+            double ax = 0.0;
+            for (std::size_t j = 0; j < n; ++j) ax += a[i][j] * x[j];
+            residual[i] -= row_scale[i] * ax;
+        }
+        const double beta = vector_norm(residual);
+        if (beta <= kGmresTolerance * rhs_norm) return {std::move(x), iterations};
+
+        std::vector<std::vector<double>> basis(static_cast<std::size_t>(restart + 1), std::vector<double>(n));
+        for (std::size_t i = 0; i < n; ++i) basis[0][i] = residual[i] / beta;
+        std::vector<std::vector<double>> h(static_cast<std::size_t>(restart + 1), std::vector<double>(static_cast<std::size_t>(restart), 0.0));
+        std::vector<double> cosine(static_cast<std::size_t>(restart)), sine(static_cast<std::size_t>(restart));
+        std::vector<double> g(static_cast<std::size_t>(restart + 1), 0.0);
+        g[0] = beta;
+        int used = 0;
+        bool converged = false;
+        for (int j = 0; j < restart && iterations < kGmresMaxIterations; ++j, ++iterations) {
+            std::vector<double> w(n, 0.0);
+            for (std::size_t i = 0; i < n; ++i) {
+                double value = 0.0;
+                for (std::size_t k = 0; k < n; ++k) value += a[i][k] * basis[static_cast<std::size_t>(j)][k];
+                w[i] = row_scale[i] * value;
+            }
+            for (int i = 0; i <= j; ++i) {
+                double projection = 0.0;
+                for (std::size_t k = 0; k < n; ++k) projection += w[k] * basis[static_cast<std::size_t>(i)][k];
+                h[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)] = projection;
+                for (std::size_t k = 0; k < n; ++k) w[k] -= projection * basis[static_cast<std::size_t>(i)][k];
+            }
+            const double next_norm = vector_norm(w);
+            h[static_cast<std::size_t>(j + 1)][static_cast<std::size_t>(j)] = next_norm;
+            if (next_norm > 0.0)
+                for (std::size_t k = 0; k < n; ++k) basis[static_cast<std::size_t>(j + 1)][k] = w[k] / next_norm;
+            for (int i = 0; i < j; ++i) {
+                const double upper = h[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)];
+                const double lower = h[static_cast<std::size_t>(i + 1)][static_cast<std::size_t>(j)];
+                h[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)] = cosine[static_cast<std::size_t>(i)] * upper + sine[static_cast<std::size_t>(i)] * lower;
+                h[static_cast<std::size_t>(i + 1)][static_cast<std::size_t>(j)] = -sine[static_cast<std::size_t>(i)] * upper + cosine[static_cast<std::size_t>(i)] * lower;
+            }
+            const double diagonal = h[static_cast<std::size_t>(j)][static_cast<std::size_t>(j)];
+            const double subdiagonal = h[static_cast<std::size_t>(j + 1)][static_cast<std::size_t>(j)];
+            const double denominator = std::hypot(diagonal, subdiagonal);
+            cosine[static_cast<std::size_t>(j)] = denominator == 0.0 ? 1.0 : diagonal / denominator;
+            sine[static_cast<std::size_t>(j)] = denominator == 0.0 ? 0.0 : subdiagonal / denominator;
+            h[static_cast<std::size_t>(j)][static_cast<std::size_t>(j)] = denominator;
+            h[static_cast<std::size_t>(j + 1)][static_cast<std::size_t>(j)] = 0.0;
+            g[static_cast<std::size_t>(j + 1)] = -sine[static_cast<std::size_t>(j)] * g[static_cast<std::size_t>(j)];
+            g[static_cast<std::size_t>(j)] *= cosine[static_cast<std::size_t>(j)];
+            used = j + 1;
+            if (std::abs(g[static_cast<std::size_t>(j + 1)]) <= kGmresTolerance * rhs_norm || denominator == 0.0) {
+                converged = true;
+                ++iterations;
+                break;
+            }
+        }
+        std::vector<double> y(static_cast<std::size_t>(used), 0.0);
+        for (int i = used; i-- > 0;) {
+            double value = g[static_cast<std::size_t>(i)];
+            for (int j = i + 1; j < used; ++j) value -= h[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)] * y[static_cast<std::size_t>(j)];
+            const double diagonal = h[static_cast<std::size_t>(i)][static_cast<std::size_t>(i)];
+            if (std::abs(diagonal) < 1e-30) throw std::runtime_error("iterative solver encountered a singular Krylov system");
+            y[static_cast<std::size_t>(i)] = value / diagonal;
+        }
+        for (int j = 0; j < used; ++j)
+            for (std::size_t i = 0; i < n; ++i) x[i] += basis[static_cast<std::size_t>(j)][i] * y[static_cast<std::size_t>(j)];
+        if (converged) {
+            std::vector<double> check = scaled_b;
+            for (std::size_t i = 0; i < n; ++i) {
+                double ax = 0.0;
+                for (std::size_t j = 0; j < n; ++j) ax += a[i][j] * x[j];
+                check[i] -= row_scale[i] * ax;
+            }
+            if (vector_norm(check) <= kGmresTolerance * rhs_norm) return {std::move(x), iterations};
+        }
+    }
+    throw std::runtime_error("iterative solver did not converge within 800 GMRES iterations");
+}
 
 Lu factor(std::vector<std::vector<double>> a) {
     const std::size_t n = a.size();
@@ -531,6 +1000,8 @@ void run_request() {
     auto header = fields(line);
     Soil soil;
     std::vector<std::string> warnings;
+    int kernel_density = 0;
+    std::vector<double> requested_layers, requested_thicknesses;  // n-layer request as given
     if (header.size() == 3 && header[0] == "homogeneous") {
         soil.rho1 = soil.rho2 = number(header[1], "soil resistivity");
     } else if (header.size() == 5 && header[0] == "two-layer") {
@@ -540,10 +1011,64 @@ void run_request() {
         if (soil.h < kMinLayerThicknessM || soil.h > kMaxDepthM)
             throw std::runtime_error("upper-layer thickness must be between 0.01 and 1000 m");
         soil.layered = soil.rho1 != soil.rho2;
+        soil.interfaces = {soil.h};
         if (!soil.layered) warnings.push_back("equal-layers\ttwo-layer soil with equal resistivities solved as homogeneous");
+    } else if (header.size() >= 2 && header[0] == "n-layer") {
+        const std::size_t count = count_value(header[1], "layer count", kMaxLayers);
+        if (count == 0) throw std::runtime_error("invalid layer count (between 1 and 8 layers)");
+        if (header.size() != 2 * count + 4)
+            throw std::runtime_error("n-layer soil line must be 'n-layer <count> <rho_1> <thickness_1> ... "
+                                     "<rho_count> inf <kernel_density> <segments>'");
+        std::vector<double> rhos, thicknesses;
+        for (std::size_t layer = 0; layer < count; ++layer) {
+            const double value = number(header[2 + 2 * layer], "layer resistivity");
+            if (value <= 0 || value > kMaxResistivityOhmM)
+                throw std::runtime_error("soil layer " + std::to_string(layer + 1) + " resistivity must be in (0, 1e6] ohm-m");
+            rhos.push_back(value);
+            const std::string& thickness = header[3 + 2 * layer];
+            if (layer + 1 == count) {
+                if (thickness != "inf") throw std::runtime_error("the bottom soil layer must be a half-space (thickness 'inf')");
+            } else {
+                if (thickness == "inf") throw std::runtime_error("only the bottom soil layer may be a half-space");
+                const double value_m = number(thickness, "layer thickness");
+                if (value_m < kMinLayerThicknessM || value_m > kMaxDepthM)
+                    throw std::runtime_error("soil layer " + std::to_string(layer + 1) + " thickness must be between 0.01 and 1000 m");
+                thicknesses.push_back(value_m);
+            }
+        }
+        const double density = number(header[2 * count + 2], "kernel density");
+        if (std::floor(density) != density || density < kMinKernelDensity || density > kMaxKernelDensity)
+            throw std::runtime_error("kernel density must be an integer between 6 and 12 images per decade");
+        kernel_density = static_cast<int>(density);
+        const auto [low, high] = std::minmax_element(rhos.begin(), rhos.end());
+        if (*high / *low > kMaxLayerContrast)
+            throw std::runtime_error("n-layer resistivity contrast (max/min) exceeds 1e4; outside the validated kernel range");
+        // Adjacent layers with the same resistivity are one physical layer: merge them exactly.
+        soil.rhos = {rhos[0]};
+        double depth = 0.0, merged_thickness = 0.0;
+        for (std::size_t layer = 0; layer + 1 < count; ++layer) {
+            depth += thicknesses[layer];
+            merged_thickness += thicknesses[layer];
+            if (rhos[layer + 1] != rhos[layer]) {
+                soil.rhos.push_back(rhos[layer + 1]);
+                soil.thicknesses.push_back(merged_thickness);
+                soil.interfaces.push_back(depth);
+                merged_thickness = 0.0;
+            }
+        }
+        if (soil.rhos.size() < count)
+            warnings.push_back("equal-layers\tadjacent layers with equal resistivity merged into " +
+                               std::to_string(soil.rhos.size()) + " layer(s)");
+        soil.rho1 = soil.rhos[0];
+        soil.rho2 = soil.rhos.size() > 1 ? soil.rhos[1] : soil.rhos[0];
+        soil.nlayer = soil.rhos.size() > 1;
+        soil.layered = soil.nlayer;
+        requested_layers = std::move(rhos);
+        requested_thicknesses = std::move(thicknesses);
     } else {
-        throw std::runtime_error("soil line must be 'homogeneous <rho> <segments>' or "
-                                 "'two-layer <rho_upper> <rho_lower> <upper_thickness> <segments>'");
+        throw std::runtime_error("soil line must be 'homogeneous <rho> <segments>', "
+                                 "'two-layer <rho_upper> <rho_lower> <upper_thickness> <segments>' or "
+                                 "'n-layer <count> <rho_1> <thickness_1> ... <rho_count> inf <kernel_density> <segments>'");
     }
     for (double value : {soil.rho1, soil.rho2})
         if (value <= 0 || value > kMaxResistivityOhmM) throw std::runtime_error("soil resistivity must be in (0, 1e6] ohm-m");
@@ -599,6 +1124,7 @@ void run_request() {
     validate_geometry(segments);
     ImageTable table;
     std::vector<int> layers(segments.size(), 0);
+    double matrix_image_work = 0.0, point_image_work = 0.0;
     if (soil.layered) {
         double max_depth = 0.0, low_x = 0.0, high_x = 0.0, low_y = 0.0, high_y = 0.0;
         bool first = true;
@@ -607,34 +1133,60 @@ void run_request() {
             low_x = std::min(low_x, p.x); high_x = std::max(high_x, p.x);
             low_y = std::min(low_y, p.y); high_y = std::max(high_y, p.y);
         };
-        const double tolerance = 1e-9 * std::max(1.0, soil.h);
         for (std::size_t i = 0; i < segments.size(); ++i) {
             const auto& s = segments[i];
             const double top = std::min(-s.a.z, -s.b.z), bottom = std::max(-s.a.z, -s.b.z);
-            if (top < soil.h - tolerance && bottom > soil.h + tolerance)
-                throw std::runtime_error("segment " + s.id + " crosses the soil interface; split it at the interface "
-                                         "depth (the Python client does this automatically)");
+            for (double depth : soil.interfaces) {
+                const double tolerance = 1e-9 * std::max(1.0, depth);
+                if (top < depth - tolerance && bottom > depth + tolerance) {
+                    std::ostringstream message;
+                    message << "segment " << s.id << " crosses the soil interface at " << depth
+                            << " m; split it at the interface depth (the Python client does this automatically)";
+                    throw std::runtime_error(message.str());
+                }
+            }
             max_depth = std::max(max_depth, bottom);
             extend(s.a); extend(s.b);
             layers[i] = layer_of(s, soil);
         }
-        for (const auto& point : points) { extend(point.p); max_depth = std::max(max_depth, std::abs(point.p.z)); }
+        for (const auto& point : points) {
+            if (soil.nlayer && point.p.z != 0.0)
+                throw std::runtime_error("n-layer potential query points must lie on the surface (z = 0); point " + point.id);
+            extend(point.p); max_depth = std::max(max_depth, std::abs(point.p.z));
+        }
         const double extent = std::max(1.0, std::hypot(high_x - low_x, high_y - low_y) + 2.0 * max_depth);
-        choose_image_terms(soil, max_depth, extent);
-        table = image_table(soil);
-        double per_layer[2] = {0.0, 0.0};
-        for (int layer : layers) per_layer[layer] += 1.0;
+        const std::size_t layer_count = soil.nlayer ? soil.rhos.size() : 2;
+        std::vector<double> per_layer(layer_count, 0.0);
+        for (int layer : layers) per_layer[static_cast<std::size_t>(layer)] += 1.0;
+        if (soil.nlayer) {
+            std::vector<bool> sources(layer_count, false), observers(layer_count, false);
+            for (std::size_t layer = 0; layer < layer_count; ++layer) sources[layer] = observers[layer] = per_layer[layer] > 0.0;
+            if (!points.empty()) observers[0] = true;
+            // Every image lies within 2 d_{N-1} plus the deepest fitted image of the pair's direct path.
+            table = nlayer_table(soil, sources, observers, kernel_density, extent + 2.0 * soil.interfaces.back());
+            if (soil.kernel.error_bound > kKernelWarnErrorBound) {
+                std::ostringstream message;
+                message << "kernel-error\tn-layer kernel relative error bound " << soil.kernel.error_bound << " above 1e-5";
+                warnings.push_back(message.str());
+            }
+        } else {
+            choose_image_terms(soil, max_depth, extent);
+            table = image_table(soil);
+        }
         double matrix_work = 0.0, point_work = 0.0;
-        for (int target = 0; target < 2; ++target)
-            for (int source = 0; source < 2; ++source)
+        for (std::size_t target = 0; target < layer_count; ++target)
+            for (std::size_t source = 0; source < layer_count; ++source)
                 matrix_work += per_layer[target] * per_layer[source] * static_cast<double>(table[source][target].size());
-        for (int source = 0; source < 2; ++source)
+        for (std::size_t source = 0; source < layer_count; ++source)
             point_work += static_cast<double>(points.size()) * per_layer[source] * static_cast<double>(table[source][0].size());
+        const std::string label = soil.nlayer ? "n-layer" : "two-layer";
         if (matrix_work > kMaxMatrixImageWork)
-            throw std::runtime_error("two-layer system needs more than 4e9 image evaluations; use fewer segments");
+            throw std::runtime_error(label + " system needs more than 4e9 image evaluations; use fewer segments");
         if (point_work > kMaxPointImageWork)
-            throw std::runtime_error("two-layer surface query needs more than 4e9 image evaluations; split the "
+            throw std::runtime_error(label + " surface query needs more than 4e9 image evaluations; split the "
                                      "points into smaller batches");
+        matrix_image_work = matrix_work;
+        point_image_work = point_work;
     }
 
     double total_injection = 0.0;
@@ -658,9 +1210,27 @@ void run_request() {
     for (std::size_t j = 0; j < n; ++j) matrix[n + group_index.at(segments[j].group)][j] = 1.0;
     for (std::size_t gi = 0; gi < g; ++gi) rhs[n + gi] = groups[group_ids[gi]].injected_current;
 
-    const Lu lu = factor(matrix);
-    const auto solution = lu_solve(lu, rhs);
-    const double condition = condition_1norm(matrix, lu);
+    std::vector<double> row_scale(size, 1.0);
+    for (std::size_t i = 0; i < size; ++i) {
+        double row_sum = 0.0;
+        for (double value : matrix[i]) row_sum += std::abs(value);
+        if (row_sum > 0.0) row_scale[i] = 1.0 / row_sum;
+    }
+    std::vector<double> solution;
+    double condition = -1.0, pivot_ratio = -1.0;
+    int solver_iterations = 0;
+    const bool iterative_solver = n > kDirectSolverMaxSegments;
+    if (iterative_solver) {
+        auto solved = gmres(matrix, rhs, row_scale);
+        solution = std::move(solved.x);
+        solver_iterations = solved.iterations;
+        warnings.push_back("iterative-solver\tGMRES with row equilibration; 1-norm condition and LU pivot ratio are not estimated");
+    } else {
+        const Lu lu = factor(matrix);
+        solution = lu_solve(lu, rhs);
+        condition = condition_1norm(matrix, lu);
+        pivot_ratio = lu.min_pivot / lu.max_pivot;
+    }
     double residual = 0.0, norm_a = 0.0, norm_x = 0.0, norm_b = 0.0;
     for (std::size_t i = 0; i < size; ++i) {
         double row_value = -rhs[i], row_norm = 0.0;
@@ -674,11 +1244,11 @@ void run_request() {
     const double backward_error = scale > 0.0 ? residual / scale : 0.0;
     for (double v : solution)
         if (!std::isfinite(v)) throw std::runtime_error("solver produced a non-finite result");
-    if (!std::isfinite(condition) || condition > kMaxCondition)
+    if (!iterative_solver && (!std::isfinite(condition) || condition > kMaxCondition))
         throw std::runtime_error("ill-conditioned electrode system (1-norm condition estimate above 1e13)");
     if (backward_error > kMaxBackwardError)
         throw std::runtime_error("solver residual above acceptance limit");
-    if (condition > kWarnCondition) warnings.push_back("ill-conditioned\t1-norm condition estimate above 1e10");
+    if (!iterative_solver && condition > kWarnCondition) warnings.push_back("ill-conditioned\t1-norm condition estimate above 1e10");
 
     const double factor_v = rho / (4.0 * kPi);
     double max_balance_error = 0.0;
@@ -703,10 +1273,30 @@ void run_request() {
     std::cout << std::setprecision(12) << kProtocol << "\tOK\n";
     std::cout << "META\tprotocol\t" << kProtocol << '\n'
               << "META\tsolver_version\t" << kSolverVersion << '\n'
-              << "META\tmethod\t" << (soil.layered ? kLayeredMethod : kMethod) << '\n'
-              << "META\tassumptions\t" << (soil.layered ? kLayeredAssumptions : kAssumptions) << '\n'
+              << "META\tmethod\t" << (soil.nlayer ? kNLayerMethod : soil.layered ? kLayeredMethod : kMethod)
+              << (iterative_solver ? ";gmres-row-equilibrated" : ";lu-partial-pivoting") << '\n'
+              << "META\tassumptions\t"
+              << (!requested_layers.empty() ? kNLayerAssumptions : soil.layered ? kLayeredAssumptions : kAssumptions) << '\n'
               << "META\tunits\t" << kUnits << '\n';
-    if (soil.layered)
+    if (!requested_layers.empty()) {
+        const auto stack = [](const std::vector<double>& rhos, const std::vector<double>& thicknesses) {
+            std::ostringstream text;
+            text << std::setprecision(12);
+            for (std::size_t layer = 0; layer < rhos.size(); ++layer) {
+                if (layer) text << ';';
+                text << rhos[layer] << ':';
+                if (layer < thicknesses.size()) text << thicknesses[layer]; else text << "inf";
+            }
+            return text.str();
+        };
+        std::cout << "META\tsoil_model\tn-layer\n"
+                  << "META\tsoil_layer_count\t" << requested_layers.size() << '\n'
+                  << "META\tsoil_layers_resistivity_ohm_m_thickness_m\t" << stack(requested_layers, requested_thicknesses) << '\n'
+                  << "META\tsoil_solved_layers\t" << stack(soil.nlayer ? soil.rhos : std::vector<double>{soil.rho1}, soil.thicknesses) << '\n'
+                  << "META\tkernel_limits\tmax_layers=8;max_contrast=1e4;kernel_density=6..12;max_images_per_function=120;"
+                     "max_error_bound=1e-4;max_amplification=1e6;max_spectral_evaluations=1e6;"
+                     "max_matrix_image_work=4e9;max_point_image_work=4e9;min_thickness_m=0.01;max_thickness_m=1000\n";
+    } else if (soil.layered)
         std::cout << "META\tsoil_model\ttwo-layer\n"
                   << "META\tsoil_upper_resistivity_ohm_m\t" << soil.rho1 << '\n'
                   << "META\tsoil_lower_resistivity_ohm_m\t" << soil.rho2 << '\n'
@@ -720,10 +1310,25 @@ void run_request() {
               << "META\tpoint_count\t" << points.size() << '\n';
     std::cout << "DIAG\tbackward_error\t" << backward_error << '\n'
               << "DIAG\tcondition_1norm_estimate\t" << condition << '\n'
-              << "DIAG\tpivot_ratio\t" << lu.min_pivot / lu.max_pivot << '\n'
-              << "DIAG\tmax_relative_balance_error\t" << max_balance_error << '\n'
-              << "DIAG\timage_terms\t" << soil.terms << '\n'
-              << "DIAG\timage_series_tail_bound\t" << soil.tail_bound << '\n';
+              << "DIAG\tpivot_ratio\t" << pivot_ratio << '\n'
+              << "DIAG\tsolver_iterations\t" << solver_iterations << '\n'
+              << "DIAG\tmax_relative_balance_error\t" << max_balance_error << '\n';
+    if (soil.nlayer)
+        std::cout << "DIAG\tkernel_density\t" << soil.kernel.density << '\n'
+                  << "DIAG\tkernel_terms\t" << soil.kernel.terms << '\n'
+                  << "DIAG\tkernel_functions\t" << soil.kernel.functions << '\n'
+                  << "DIAG\tkernel_images_per_pair_max\t" << soil.kernel.max_images_per_pair << '\n'
+                  << "DIAG\tkernel_lambda_samples\t" << soil.kernel.lambda_samples << '\n'
+                  << "DIAG\tkernel_spectral_evaluations\t" << soil.kernel.spectral_evaluations << '\n'
+                  << "DIAG\tkernel_image_depth_min_m\t" << soil.kernel.b_min << '\n'
+                  << "DIAG\tkernel_image_depth_max_m\t" << soil.kernel.b_max << '\n'
+                  << "DIAG\tkernel_error_bound\t" << soil.kernel.error_bound << '\n'
+                  << "DIAG\tkernel_max_amplification\t" << soil.kernel.max_amplification << '\n'
+                  << "DIAG\tmatrix_image_work\t" << matrix_image_work << '\n'
+                  << "DIAG\tpoint_image_work\t" << point_image_work << '\n';
+    else
+        std::cout << "DIAG\timage_terms\t" << soil.terms << '\n'
+                  << "DIAG\timage_series_tail_bound\t" << soil.tail_bound << '\n';
     for (const auto& warning : warnings) std::cout << "WARNING\t" << warning << '\n';
     for (std::size_t i = 0; i < n; ++i) std::cout << "SEGMENT\t" << segments[i].id << '\t' << solution[i] << '\n';
     for (const auto& id : group_ids) {

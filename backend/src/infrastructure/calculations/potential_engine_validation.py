@@ -14,12 +14,14 @@ from typing import Any
 from src.infrastructure.calculations.potential_engine_client import (
     ElectrodeSegment,
     HomogeneousSoil,
+    LayerStackSoil,
     PotentialEngineClient,
     PotentialPoint,
     Segmentation,
     SoilModel,
     TwoLayerSoil,
     discretize,
+    interface_depths,
     point_batch_size,
 )
 
@@ -33,7 +35,10 @@ def load_cases(path: str | Path = DEFAULT_CASES_PATH) -> dict[str, Any]:
 
 
 def case_soil(case: dict[str, Any]) -> SoilModel:
-    """Soil model of a case: `soil` (two-layer) or the homogeneous `soil_resistivity_ohm_m`."""
+    """Soil model of a case: `soil_layers` (n-layer stack, top to bottom, last thickness null),
+    `soil` (two-layer) or the homogeneous `soil_resistivity_ohm_m`."""
+    if case.get("soil_layers"):
+        return LayerStackSoil(tuple((layer["resistivity_ohm_m"], layer["thickness_m"]) for layer in case["soil_layers"]))
     soil = case.get("soil")
     if soil:
         return TwoLayerSoil(soil["upper_resistivity_ohm_m"], soil["lower_resistivity_ohm_m"], soil["upper_thickness_m"])
@@ -41,15 +46,17 @@ def case_soil(case: dict[str, Any]) -> SoilModel:
 
 
 def _split(prefix: str, group: str, kind: str, start, end, radius: float, max_length_m: float,
-           interface_z: float | None = None) -> list[ElectrodeSegment]:
-    """Discretise one straight conductor; with `interface_z`, cut it there first."""
-    if interface_z is not None and min(start[2], end[2]) < interface_z < max(start[2], end[2]):
-        t = (interface_z - start[2]) / (end[2] - start[2])
-        cut = (start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t, interface_z)
+           interface_z: float | list[float] | None = None) -> list[ElectrodeSegment]:
+    """Discretise one straight conductor; with `interface_z` (one height or several), cut it there first."""
+    heights = [] if interface_z is None else [interface_z] if isinstance(interface_z, (int, float)) else interface_z
+    crossing = next((z for z in heights if min(start[2], end[2]) < z < max(start[2], end[2])), None)
+    if crossing is not None:
+        t = (crossing - start[2]) / (end[2] - start[2])
+        cut = (start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t, crossing)
         if min(dist(start, cut), dist(cut, end)) < 5.0 * radius:
             raise ValueError(f"conductor {prefix} crosses the soil interface within 5 radii of its end")
-        return (_split(f"{prefix}a", group, kind, start, cut, radius, max_length_m)
-                + _split(f"{prefix}b", group, kind, cut, end, radius, max_length_m))
+        return (_split(f"{prefix}a", group, kind, start, cut, radius, max_length_m, heights)
+                + _split(f"{prefix}b", group, kind, cut, end, radius, max_length_m, heights))
     pieces = max(1, ceil(dist(start, end) / max_length_m - 1e-9))
     return [
         ElectrodeSegment(
@@ -143,8 +150,7 @@ def case_segments(case: dict[str, Any], discretization_m: float | None = None,
     """
     step = float(discretization_m or case["discretization_m"])
     if (segmentation or case.get("segmentation", "uniform")) == "graded":
-        soil = case_soil(case)
-        interface_z = -soil.upper_thickness_m if isinstance(soil, TwoLayerSoil) else None
+        interface_z = [-depth for depth in interface_depths(case_soil(case))] or None
         return discretize(_case_pieces(case, float("inf")), Segmentation.for_discretization("graded", step), interface_z)
     return _case_pieces(case, step)
 
@@ -155,11 +161,10 @@ def _case_pieces(case: dict[str, Any], step: float) -> list[ElectrodeSegment]:
     Supported geometry: explicit `conductors`; a `grid` of x/y lines (optionally L-shaped with
     `notch_m`, with `diagonals_m` and `perimeter_rods` at every or every other perimeter node);
     explicit `rods`; and `fences` of posts (plus an optional buried ring) offset from the outline.
-    Grid conductors are cut at every crossing and, in two-layer soil, every conductor is cut at
-    the interface so no segment straddles it.
+    Grid conductors are cut at every crossing and, in layered soil, every conductor is cut at
+    each interface so no segment straddles one.
     """
-    soil = case_soil(case)
-    interface_z = -soil.upper_thickness_m if isinstance(soil, TwoLayerSoil) else None
+    interface_z = [-depth for depth in interface_depths(case_soil(case))] or None
     segments: list[ElectrodeSegment] = []
     for index, conductor in enumerate(case.get("conductors", [])):
         segments += _split(f"c{index}", conductor["group"], conductor["kind"], conductor["start_m"],
@@ -256,15 +261,19 @@ def evaluate_case(
     discretization_m: float | None = None,
     raster_spacing_m: float | None = None,
     segmentation: str | None = None,
+    soil: SoilModel | None = None,
 ) -> dict[str, Any]:
     """Run one case and return each check's computed value plus the engine diagnostics.
+
+    `soil` replaces the case's soil model (same geometry), e.g. to solve a two-layer case with the
+    n-layer kernel.
 
     Surface potentials are evaluated in up to three passes (each re-solves the same electrode
     system): fixed points and area rasters; refinement around the worst touch points and 16
     step directions around the strongest step candidates; and a refined step search.
     """
     segments = case_segments(case, discretization_m, segmentation)
-    soil = case_soil(case)
+    soil = soil or case_soil(case)
     exposed = [s.start_m[:2] for s in segments if s.start_m[2] > -FOOT_RADIUS_M] + \
               [s.end_m[:2] for s in segments if s.end_m[2] > -FOOT_RADIUS_M]
 
