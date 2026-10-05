@@ -19,9 +19,9 @@ from src.infrastructure.calculations.potential_engine_validation import (  # noq
 )
 
 CONVERGENCE_CASES = {
-    "ieee80_annex_h_grid1": [3.5, 1.75, 1.0, 0.7],
-    "ieee80_annex_h_grid2": [3.5, 1.75, 1.0, 0.7],
-    "ieee80_annex_h_grid3": [3.5, 1.75, 1.0, 0.7],
+    "ieee80_annex_h_grid1": [4.0, 2.0, 1.0, 0.5],
+    "ieee80_annex_h_grid2": [4.0, 2.0, 1.0, 0.5],
+    "ieee80_annex_h_grid3": [4.0, 2.0, 1.0, 0.5],
 }
 
 
@@ -80,7 +80,8 @@ def build(client: PotentialEngineClient) -> str:
     by_id = {case["id"]: case for case in cases["cases"]}
     for case_id, steps in CONVERGENCE_CASES.items():
         report = convergence(client, by_id[case_id], steps)
-        lines += [f"**{case_id}**", "", "| Segmento | Segmentos | " + " | ".join(report["quantities"]) + " |",
+        lines += [f"**{case_id}** (segmentación {report['segmentation']}; d = longitud de refinamiento)", "",
+                  "| d | Segmentos | " + " | ".join(report["quantities"]) + " |",
                   "|---|---|" + "---|" * len(report["quantities"])]
         for row in report["segment_sweep"]:
             changes = row["change_rel"] or [None] * len(row["values"])

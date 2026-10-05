@@ -26,9 +26,9 @@
       "version": "IEEE Std 80-2013/Cor 1-2015; values transcribed from github.com/jacho35/protectionpro testing/earth-grid-validation/validate.py at commit 557027e415936e9fb1738997f1cccd49767988de (2026-10-04)"
     },
     "spat_convergence_2026_10_04": {
-      "citation": "Internal convergence study of this engine: IEEE 80 Annex H Grid 1 with 1, 0.5 and 0.25 m segments (840-3360 segments) and Richardson extrapolation to zero segment length",
-      "method": "Galerkin method of moments, solver 2.0.0; cross-checked with a midpoint-collocation variant",
-      "version": "solver 2.0.0, 2026-10-04; not an independent reference"
+      "citation": "Internal convergence study of this engine: IEEE 80 Annex H Grids 1, 2 and 3 with uniform 1, 0.5 and 0.25 m segments (840-3980 segments) and Richardson extrapolation to zero segment length (Grid 1 S1 91.24 V, order 2.57; Grid 2 S1 69.78 V, order 1.91; Grid 3 S1 100.47 V, order 1.99)",
+      "method": "Galerkin method of moments, solver 2.0.0 (Grid 1) and 3.0.0 (Grids 2-3); Grid 1 cross-checked with a midpoint-collocation variant",
+      "version": "solver 2.0.0/3.0.0, 2026-10-04; not an independent reference"
     },
     "ieee80_2013_annex_b": {
       "citation": "IEEE Std 80-2013, Annex B, Example 1 (square grid without rods): computer result from EPRI TR-100622",
@@ -119,6 +119,7 @@
       "description": "IEEE 80 Annex H Grid 1: 70 m x 70 m, 6 x 6 conductors at 14 m, 2/0 Cu (radius 5.25 mm) at 0.5 m, uniform 140 ohm-m, no rods, I_G 744.8 A",
       "soil_resistivity_ohm_m": 140.0,
       "discretization_m": 1.0,
+      "segmentation": "graded",
       "grid": {"group": "grid", "x_lines_m": [0, 14, 28, 42, 56, 70], "y_lines_m": [0, 14, 28, 42, 56, 70], "depth_m": 0.5, "radius_m": 0.00525},
       "injections_a": {"grid": 744.8},
       "checks": [
@@ -128,7 +129,7 @@
         {"quantity": "step_v", "points_m": [[0, 0], [-0.70710678, -0.70710678]], "label": "S1 grid corner, 1 m outward diagonal", "reference": {"min": 87.2, "max": 89.3}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h",
          "note": "Known deviation of about +2 %: the engine converges to 91.24 V (Richardson extrapolation, observed order 2.6, from 1, 0.5 and 0.25 m segments; Galerkin and collocation agree within 0.3 %). With 3.5-7 m segments it reproduces 86-89 V, so the published range is most likely under-resolved at the corner, where leakage current concentrates. Not an engine defect; pending confirmation of the programs' segmentation (IEEE 80-2013 Table H.5) or a fine-segment run in a commercial tool."},
         {"quantity": "step_v", "points_m": [[0, 0], [-0.70710678, -0.70710678]], "label": "S1 regression against converged value", "reference": {"value": 91.24}, "tolerance_rel": 0.005, "source": "spat_convergence_2026_10_04",
-         "note": "Self-consistency check, not independent validation: detects solver changes that move the converged corner step voltage. At the case's 1 m segments the engine is 0.3 % below the extrapolated value."}
+         "note": "Self-consistency check, not independent validation: detects solver or segmentation changes that move the converged corner step voltage. With the case's graded segments (452) the engine is within 0.02 % of the extrapolated value; uniform 1 m pieces (840) are 0.3 % below."}
       ]
     },
     {
@@ -136,6 +137,7 @@
       "description": "IEEE 80 Annex H Grid 2: Grid 1 plus 20 perimeter rods, 7.5 m long, 5/8 in (radius 7.95 mm), uniform 140 ohm-m, I_G 744.8 A",
       "soil_resistivity_ohm_m": 140.0,
       "discretization_m": 1.0,
+      "segmentation": "graded",
       "grid": {"group": "grid", "x_lines_m": [0, 14, 28, 42, 56, 70], "y_lines_m": [0, 14, 28, 42, 56, 70], "depth_m": 0.5, "radius_m": 0.00525,
                "perimeter_rods": {"length_m": 7.5, "radius_m": 0.00795}},
       "injections_a": {"grid": 744.8},
@@ -143,7 +145,10 @@
         {"quantity": "resistance_ohm", "group": "grid", "reference": {"min": 0.917, "max": 0.92}, "tolerance_rel": 0.025, "source": "ieee80_2013_annex_h"},
         {"quantity": "touch_v", "group": "grid", "point_m": [7, 7], "label": "T1 corner-mesh centre", "reference": {"min": 145.4, "max": 150.2}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h"},
         {"quantity": "max_touch_v", "group": "grid", "area_m": [0, 0, 70, 70], "spacing_m": 0.5, "label": "T3 worst touch inside the grid", "reference": {"min": 149.6, "max": 154.0}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h"},
-        {"quantity": "step_v", "points_m": [[0, 0], [-0.70710678, -0.70710678]], "label": "S1 grid corner, 1 m outward diagonal", "reference": {"min": 70.7, "max": 79.3}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h"}
+        {"quantity": "step_v", "points_m": [[0, 0], [-0.70710678, -0.70710678]], "label": "S1 grid corner, 1 m outward diagonal", "reference": {"min": 70.7, "max": 79.3}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h",
+         "note": "The converged value (69.78 V, see the regression check) lies about 1.3 % below the published range. Uniform segments give 78.1 V at 7 m and 70.9 V at 1 m, so, as for Grid 1 S1, the published spread most likely reflects corner under-resolution in the programs. Within tolerance."},
+        {"quantity": "step_v", "points_m": [[0, 0], [-0.70710678, -0.70710678]], "label": "S1 regression against converged value", "reference": {"value": 69.78}, "tolerance_rel": 0.005, "source": "spat_convergence_2026_10_04",
+         "note": "Self-consistency check, not independent validation. With the case's graded segments (612) the engine is about 0.25 % above the extrapolated value; uniform 1 m pieces (1000) are 1.6 % above."}
       ]
     },
     {
@@ -168,6 +173,7 @@
         "upper_thickness_m": 6.096
       },
       "discretization_m": 1.0,
+      "segmentation": "graded",
       "grid": {
         "group": "grid",
         "x_lines_m": [
@@ -200,7 +206,10 @@
           {"quantity": "resistance_ohm", "group": "grid", "reference": {"min": 0.97, "max": 0.972}, "tolerance_rel": 0.025, "source": "ieee80_2013_annex_h_layered"},
           {"quantity": "touch_v", "group": "grid", "point_m": [7, 7], "label": "T1 corner-mesh centre", "reference": {"min": 261.0, "max": 268.5}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"},
           {"quantity": "max_touch_v", "group": "grid", "area_m": [0, 0, 70, 70], "spacing_m": 0.5, "label": "T3 worst touch inside the grid", "reference": {"min": 262.5, "max": 269.7}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"},
-          {"quantity": "step_v", "points_m": [[0, 0], [-0.70710678, -0.70710678]], "label": "S1 grid corner, 1 m outward diagonal", "reference": {"min": 101.9, "max": 117.0}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"}
+          {"quantity": "step_v", "points_m": [[0, 0], [-0.70710678, -0.70710678]], "label": "S1 grid corner, 1 m outward diagonal", "reference": {"min": 101.9, "max": 117.0}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered",
+           "note": "The converged value (100.47 V, see the regression check) lies about 1.4 % below the published range, the same corner under-resolution pattern as Grids 1 and 2 (uniform 3.5 m segments give 109.6 V, inside the range). Within tolerance."},
+          {"quantity": "step_v", "points_m": [[0, 0], [-0.70710678, -0.70710678]], "label": "S1 regression against converged value", "reference": {"value": 100.47}, "tolerance_rel": 0.005, "source": "spat_convergence_2026_10_04",
+           "note": "Self-consistency check, not independent validation. With the case's graded segments (692) the engine is about 0.25 % above the extrapolated value; uniform 1 m pieces (1000) are 1.8 % above."}
       ]
     },
     {

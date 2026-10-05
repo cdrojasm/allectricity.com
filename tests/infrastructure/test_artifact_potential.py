@@ -34,13 +34,14 @@ def engine():
 def test_annex_h_grid1_artifact_matches_reference(engine):
     outcome = calculate(ANNEX_H_GRID1, PARAMETERS, engine)
     result = outcome["result"]
-    assert result["segment_count"] == 840
+    # Graded by default: 452 segments instead of 840 uniform 1 m pieces.
+    assert result["segmentation"] == "graded" and result["segment_count"] == 452
     assert math.isclose(result["grid_resistance_ohm"], 1.0002, rel_tol=1e-3)
     assert math.isclose(result["gpr_v"], 744.8 * result["grid_resistance_ohm"], rel_tol=1e-9)
     # Annex H T3 worst touch 202.7-209.0 V; the converged engine value is 203.4 V.
     assert 202.7 <= result["max_touch_v"]["value"] <= 209.0
-    # The worst 1 m step is at least the diagonal corner step S1 (91.0 V at 1 m segments).
-    assert 90.9 <= result["max_step_v"]["value"] <= 95.0
+    # The worst 1 m step is at least the converged diagonal corner step S1 (91.24 V).
+    assert 91.0 <= result["max_step_v"]["value"] <= 95.0
     assert math.isclose(math.dist(result["max_step_v"]["from_m"], result["max_step_v"]["to_m"]), 1.0, rel_tol=1e-9)
     assert result["diagnostics"]["backward_error"] < 1e-12
     assert outcome["trace"]["parameters"] == PARAMETERS
@@ -116,7 +117,32 @@ def test_identical_layers_count_as_homogeneous(engine):
 
 def test_grid_over_segment_limit_is_rejected(engine):
     with pytest.raises(UnsupportedModelError, match="segmentos"):
-        calculate(ANNEX_H_GRID1, {**PARAMETERS, "discretization_m": 0.2}, engine)
+        calculate(ANNEX_H_GRID1, {**PARAMETERS, "discretization_m": 0.2, "segmentation": "uniform"}, engine)
+
+
+def test_uniform_segmentation_is_still_available(engine):
+    result = calculate(ANNEX_H_GRID1, {**PARAMETERS, "surface_spacing_m": 1.0, "segmentation": "uniform"}, engine)["result"]
+    assert result["segmentation"] == "uniform" and result["segment_count"] == 840
+
+
+def test_numerical_uncertainty_brackets_the_converged_values(engine):
+    parameters = {**PARAMETERS, "surface_spacing_m": 1.0, "estimate_uncertainty": True}
+    outcome = calculate(ANNEX_H_GRID1, parameters, engine)
+    uncertainty = outcome["result"]["numerical_uncertainty"]
+    assert uncertainty["status"] == "estimado" and uncertainty["discretizations_m"] == [4.0, 2.0, 1.0]
+    assert outcome["trace"]["numerical_uncertainty"] == uncertainty
+    assert len(outcome["trace"]["request_sha256_batches"]) >= 6
+    converged_resistance = 1.00011
+    for entry in uncertainty["quantities"].values():
+        assert entry["method"] in {"richardson-gci", "diferencia-entre-refinamientos", "sin-cambio-entre-refinamientos"}
+        assert entry["value"] == entry["levels"][-1] and entry["error_estimate"] >= 0
+    # The estimated error band contains the converged resistance (Richardson on uniform 1/0.5/0.25 m).
+    r = uncertainty["quantities"]["grid_resistance_ohm"]
+    assert r["method"] == "richardson-gci"
+    assert abs(r["value"] - converged_resistance) <= r["error_estimate"]
+    # The reported values are those of the requested (finest) run.
+    assert r["value"] == outcome["result"]["grid_resistance_ohm"]
+    assert uncertainty["quantities"]["max_step_v"]["value"] == outcome["result"]["max_step_v"]["value"]
 
 
 def _artifact(client, tokens, snapshot):
@@ -141,7 +167,8 @@ def test_calculation_lifecycle_through_api(env, engine, monkeypatch):  # noqa: F
     assert calculation["status"] == "pending" and queued == [([calculation["id"]], calculation["id"])]
     assert calculation["parameters"] == {**PARAMETERS, "surface_spacing_m": 1.0,
                                          "safety_standards": ["IEEE 80-2013", "RETIE 2013"], "fault_split": None,
-                                         "x_over_r": None, "system_frequency_hz": 60.0}
+                                         "x_over_r": None, "system_frequency_hz": 60.0,
+                                         "segmentation": "graded", "estimate_uncertainty": False}
 
     run_potential_calculation(services.store, calculation["id"], engine)
     run_potential_calculation(services.store, calculation["id"], engine)  # redelivery is a no-op

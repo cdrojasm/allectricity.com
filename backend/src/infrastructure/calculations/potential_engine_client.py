@@ -161,6 +161,150 @@ def split_at_interface(segments: list[ElectrodeSegment], soil: SoilModel) -> lis
     return result
 
 
+@dataclass(frozen=True)
+class Segmentation:
+    """How each conductor between two nodes is cut into engine segments.
+
+    `uniform`: equal pieces of at most `max_length_m`.
+    `graded`: pieces start at `node_length_m` next to critical nodes (free ends, corners, T and other
+    irregular junctions, rod joints and the soil interface, where leakage current concentrates) and
+    at `crossing_length_m` next to plain four-way crossings (`None`: no refinement there), then grow
+    geometrically by `ratio` up to `max_length_m`. A remainder shorter than the smallest piece is
+    merged into its neighbour, so a piece can exceed `max_length_m` by less than `node_length_m`.
+    """
+
+    mode: str = "uniform"
+    max_length_m: float = 1.0
+    node_length_m: float = 0.25
+    crossing_length_m: float | None = 1.0
+    ratio: float = 2.0
+
+    def __post_init__(self) -> None:
+        if self.mode not in ("uniform", "graded"):
+            raise ValueError("segmentation mode must be 'uniform' or 'graded'")
+        lengths = [self.max_length_m, self.node_length_m] + ([self.crossing_length_m] if self.crossing_length_m else [])
+        if not all(math.isfinite(v) and v > 0 for v in lengths) or not 1.0 < self.ratio <= 4.0:
+            raise ValueError("segmentation lengths must be positive and the ratio in (1, 4]")
+
+    @classmethod
+    def for_discretization(cls, mode: str, discretization_m: float) -> Segmentation:
+        """Segmentation family driven by one refinement length `d`.
+
+        `uniform`: pieces of at most `d`. `graded`: 0.25·d next to critical nodes, d next to plain
+        crossings, ratio 2, at most 7·d. With d = 1 m the graded family matches the converged corner
+        step voltage of IEEE 80 Annex H Grid 1 (91.24 V) within 0.01 % with 452 segments, where
+        uniform 1 m pieces need 840 segments and remain 0.29 % low (validation/segmentation_study.py).
+        """
+        if mode == "uniform":
+            return cls("uniform", discretization_m)
+        return cls("graded", 7.0 * discretization_m, 0.25 * discretization_m, discretization_m, 2.0)
+
+    def scaled(self, factor: float) -> Segmentation:
+        """The same segmentation with every length multiplied by `factor` (for refinement studies)."""
+        return Segmentation(self.mode, self.max_length_m * factor, self.node_length_m * factor,
+                            None if self.crossing_length_m is None else self.crossing_length_m * factor, self.ratio)
+
+    def record(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def graded_lengths(length: float, max_length: float, start_length: float | None, end_length: float | None,
+                   ratio: float) -> list[float]:
+    """Piece lengths along one conductor, growing geometrically from each refined end."""
+    def ramp(first: float | None, limit: float) -> list[float]:
+        pieces, size, total = [], first, 0.0
+        while size is not None and size < max_length and total + size <= limit:
+            pieces.append(size)
+            total += size
+            size *= ratio
+        return pieces
+
+    both = start_length is not None and end_length is not None
+    head = ramp(start_length, length / 2 if both else length)
+    tail = ramp(end_length, length / 2 if both else length)
+    middle = length - sum(head) - sum(tail)
+    body: list[float] = []
+    if middle > 1e-12 * length:
+        count = max(1, ceil(middle / max_length - 1e-9))
+        smallest = min([p for p in (start_length, end_length) if p is not None], default=0.0)
+        if count == 1 and middle < smallest and (head or tail):
+            # Too short to stand alone: merge into the shorter neighbouring ramp piece.
+            if head and (not tail or head[-1] <= tail[-1]):
+                head[-1] += middle
+            else:
+                tail[-1] += middle
+        else:
+            body = [middle / count] * count
+    return head + body + tail[::-1]
+
+
+def _node_key(point: tuple[float, float, float]) -> tuple[float, float, float]:
+    return tuple(round(c, 6) for c in point)
+
+
+def discretize(pieces: list[ElectrodeSegment], segmentation: Segmentation,
+               interface_z: float | None = None) -> list[ElectrodeSegment]:
+    """Cut node-to-node conductor pieces into segments following `segmentation`.
+
+    Pieces must already end at every junction (crossings, rod joints, soil interface at
+    `interface_z`). Node types are inferred from the pieces that meet there: free ends, corners,
+    rod joints, irregular junctions and points on the soil interface are critical; four horizontal
+    pieces form a plain crossing; two collinear pieces elsewhere are a plain split and not refined.
+    """
+    if segmentation.mode == "uniform":
+        result: list[ElectrodeSegment] = []
+        for piece in pieces:
+            result += _cut(piece, [], segmentation.max_length_m)
+        return result
+    meeting: dict[tuple[float, float, float], list[tuple[float, float, float]]] = {}
+    for piece in pieces:
+        length = _distance(piece.start_m, piece.end_m)
+        direction = tuple((b - a) / length for a, b in zip(piece.start_m, piece.end_m))
+        meeting.setdefault(_node_key(piece.start_m), []).append(direction)
+        meeting.setdefault(_node_key(piece.end_m), []).append(tuple(-c for c in direction))
+
+    def refinement(point: tuple[float, float, float]) -> float | None:
+        directions = meeting[_node_key(point)]
+        horizontal = all(abs(d[2]) < 1e-9 for d in directions)
+        on_interface = interface_z is not None and abs(point[2] - interface_z) < 1e-6
+        if len(directions) == 2 and sum(a * b for a, b in zip(*directions)) < -1 + 1e-9 and not on_interface:
+            return None
+        if horizontal and len(directions) == 4:
+            return segmentation.crossing_length_m
+        return segmentation.node_length_m
+
+    result = []
+    for piece in pieces:
+        floor = MIN_LENGTH_TO_RADIUS * piece.radius_m
+        start, end = refinement(piece.start_m), refinement(piece.end_m)
+        lengths = graded_lengths(_distance(piece.start_m, piece.end_m), segmentation.max_length_m,
+                                 None if start is None else max(start, floor), None if end is None else max(end, floor),
+                                 segmentation.ratio)
+        result += _cut(piece, lengths, segmentation.max_length_m)
+    return result
+
+
+def _cut(piece: ElectrodeSegment, lengths: list[float], max_length: float) -> list[ElectrodeSegment]:
+    total = _distance(piece.start_m, piece.end_m)
+    if not lengths:
+        count = max(1, ceil(total / max_length - 1e-9))
+        lengths = [total / count] * count
+    positions, accumulated = [0.0], 0.0
+    for length in lengths:
+        accumulated += length
+        positions.append(accumulated / total)
+    positions[-1] = 1.0
+    return [
+        ElectrodeSegment(
+            f"{piece.id}.{k}", piece.group, piece.kind,
+            tuple(a + (b - a) * positions[k] for a, b in zip(piece.start_m, piece.end_m)),
+            tuple(a + (b - a) * positions[k + 1] for a, b in zip(piece.start_m, piece.end_m)),
+            piece.radius_m,
+        )
+        for k in range(len(positions) - 1)
+    ]
+
+
 class PotentialEngineError(RuntimeError):
     pass
 
@@ -461,12 +605,27 @@ def rectangular_grid_segments(
     rod_length_m: float = 2.4,
     discretization_m: float | None = None,
     interface_depth_m: float | None = None,
+    segmentation: str = "uniform",
 ) -> list[ElectrodeSegment]:
     """Create a centered rectangular mesh and perimeter ground rods as line elements.
 
     With `interface_depth_m` (two-layer soil), rods crossing that depth are cut there before
-    discretisation so that no segment straddles the interface.
+    discretisation so that no segment straddles the interface. `segmentation="graded"` cuts the
+    mesh at every crossing and grades each piece with `Segmentation.for_discretization`.
     """
+    if segmentation == "graded":
+        # Uniform pieces one conductor spacing long end exactly at the crossings (and the interface).
+        pieces = rectangular_grid_segments(
+            length_m=length_m, width_m=width_m, conductor_spacing_m=conductor_spacing_m,
+            burial_depth_m=burial_depth_m, conductor_radius_m=conductor_radius_m, group=group,
+            rods_count=rods_count, rod_length_m=rod_length_m, discretization_m=conductor_spacing_m,
+            interface_depth_m=interface_depth_m,
+        )
+        step = float(discretization_m or conductor_spacing_m)
+        return discretize(pieces, Segmentation.for_discretization("graded", step),
+                          None if interface_depth_m is None else -float(interface_depth_m))
+    if segmentation != "uniform":
+        raise ValueError("segmentation must be 'uniform' or 'graded'")
     values = (length_m, width_m, conductor_spacing_m, burial_depth_m,
               conductor_radius_m, rod_length_m)
     if any(float(value) <= 0 for value in values) or rods_count < 0:

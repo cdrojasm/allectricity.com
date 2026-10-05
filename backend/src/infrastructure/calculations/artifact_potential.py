@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from math import cos, pi, sin
-from time import time
+from math import cos, log2, pi, sin
+from time import monotonic, time
 from typing import Any
 
 from src.infrastructure.calculations import safety_criteria
@@ -27,6 +27,10 @@ STEP_DISTANCE_M = 1.0
 SURFACE_MARGIN_M = 3.0
 STEP_CANDIDATES = 20
 STEP_DIRECTIONS = 16
+# Graded segments reach the converged corner step of IEEE 80 Annex H Grids 1-3 with 40-55 % fewer
+# segments than uniform 1 m pieces, and closer to it (validation/segmentation_study.py).
+DEFAULT_SEGMENTATION = "graded"
+GCI_SAFETY_FACTOR = 1.25
 # A calculation left "running" longer than this is assumed lost (worker crash) and may run again.
 STALE_RUNNING_S = 900
 MODEL_WARNINGS = [
@@ -109,27 +113,118 @@ def _solve(client, soil, segments, current, points, origin=INJECTION_ORIGIN):
     return first, potentials, hashes
 
 
-def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: PotentialEngineClient) -> dict[str, Any]:
-    """Return `{"result": ..., "trace": ...}` for an artifact snapshot and calculation parameters."""
-    geometry, fault = snapshot["geometry"], snapshot["fault"]
-    soil = soil_model(snapshot["soil_layers"])
-    step = float(parameters["discretization_m"])
-    segments = rectangular_grid_segments(
+def _segments(geometry: dict[str, Any], parameters: dict[str, Any], soil: SoilModel, scale: float = 1.0):
+    step = float(parameters["discretization_m"]) * scale
+    return rectangular_grid_segments(
         length_m=geometry["length_m"], width_m=geometry["width_m"],
         conductor_spacing_m=geometry["conductor_spacing_m"], burial_depth_m=geometry["burial_depth_m"],
         conductor_radius_m=parameters["conductor_radius_m"], group=GROUP,
         rods_count=geometry.get("rods_count", 0), rod_length_m=geometry.get("rod_length_m", 2.4),
         discretization_m=step,
         interface_depth_m=soil.upper_thickness_m if isinstance(soil, TwoLayerSoil) else None,
+        segmentation=parameters.get("segmentation", DEFAULT_SEGMENTATION),
     )
+
+
+def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: PotentialEngineClient) -> dict[str, Any]:
+    """Return `{"result": ..., "trace": ...}` for an artifact snapshot and calculation parameters."""
+    geometry, fault = snapshot["geometry"], snapshot["fault"]
+    soil = soil_model(snapshot["soil_layers"])
+    segments = _segments(geometry, parameters, soil)
     if len(segments) > MAX_SEGMENTS:
         raise UnsupportedModelError(
-            f"La malla necesita {len(segments)} segmentos con discretización de {step:g} m y el límite es "
-            f"{MAX_SEGMENTS}. Una discretización mayor reduce la precisión de las tensiones de paso."
+            f"La malla necesita {len(segments)} segmentos con discretización de "
+            f"{float(parameters['discretization_m']):g} m y el límite es {MAX_SEGMENTS}. Una discretización "
+            "mayor reduce la precisión de las tensiones de paso."
         )
     current, origin, fault_breakdown = _fault_current(fault, parameters, client, soil, segments)
+    field = _field(client, geometry, soil, segments, current, origin, float(parameters["surface_spacing_m"]))
+    first, group = field["first"], field["first"]["groups"][GROUP]
+    result = {
+        "soil": soil_record(soil),
+        "injected_current_a": current,
+        "grid_resistance_ohm": group["resistance_to_remote_earth_ohm"],
+        "gpr_v": field["gpr_v"],
+        "max_touch_v": field["max_touch_v"],
+        "max_step_v": field["max_step_v"],
+        "segment_count": len(segments),
+        "segmentation": parameters.get("segmentation", DEFAULT_SEGMENTATION),
+        "surface_point_count": field["point_count"],
+        "diagnostics": first["diagnostics"],
+        "engine_warnings": first["warnings"],
+        "model_warnings": MODEL_WARNINGS if fault_breakdown is None else MODEL_WARNINGS[1:],
+        "fault_current": fault_breakdown,
+    }
+    hashes = field["hashes"]
+    if parameters.get("estimate_uncertainty"):
+        result["numerical_uncertainty"], extra = _uncertainty(client, geometry, parameters, soil, current, origin, field)
+        hashes = hashes + extra
+    # IEEE 80 Cs uses the resistivity of the soil directly beneath the surface layer.
+    upper_rho = soil.resistivity_ohm_m if isinstance(soil, HomogeneousSoil) else soil.upper_resistivity_ohm_m
+    result["safety"] = _safety(result, fault, upper_rho, parameters)
+    trace = {**first["trace"], "parameters": parameters, "request_sha256_batches": hashes,
+             "fault_current": fault_breakdown, "numerical_uncertainty": result.get("numerical_uncertainty")}
+    return {"result": result, "trace": trace}
+
+
+def _uncertainty(client, geometry, parameters, soil, current, origin, finest):
+    """Discretisation error of R, GPR, worst touch and worst step from the requested run and two coarser ones.
+
+    Levels use 4d, 2d and d (the reported run), so the estimate never needs more segments or image
+    evaluations than the requested calculation. With differences e1 = f(2d) - f(4d) and
+    e2 = f(d) - f(2d) of the same sign and shrinking, the observed order is p = log2(e1/e2) and,
+    for 0.5 <= p <= 4, the error estimate of f(d) is the grid convergence index
+    1.25·|e2| / (2^p - 1) (Richardson extrapolation with Roache's safety factor for three grids,
+    P. J. Roache, J. Fluids Eng. 116, 1994); otherwise the conservative bound |e2| is reported.
+    The same injected current is used at every level.
+    """
+    started = monotonic()
+    levels, hashes = [], []
+    try:
+        for scale in (4.0, 2.0):
+            segments = _segments(geometry, parameters, soil, scale)
+            run = _field(client, geometry, soil, segments, current, origin, float(parameters["surface_spacing_m"]))
+            levels.append((scale, len(segments), run))
+            hashes += run["hashes"]
+    except (ValueError, PotentialEngineError) as exc:
+        return {"status": "no estimable", "reason": str(exc)}, hashes
+    levels.append((1.0, None, finest))
+
+    def value(run: dict[str, Any], quantity: str) -> float:
+        if quantity == "grid_resistance_ohm":
+            return run["first"]["groups"][GROUP]["resistance_to_remote_earth_ohm"]
+        if quantity == "gpr_v":
+            return run["gpr_v"]
+        return run[quantity]["value"]
+
+    quantities = {}
+    for quantity in ("grid_resistance_ohm", "gpr_v", "max_touch_v", "max_step_v"):
+        coarse, middle, fine = (value(run, quantity) for _, _, run in levels)
+        e1, e2 = middle - coarse, fine - middle
+        estimate, method, order = abs(e2), "diferencia-entre-refinamientos", None
+        if e2 == 0.0:
+            estimate, method = 0.0, "sin-cambio-entre-refinamientos"
+        elif e1 * e2 > 0 and abs(e2) < abs(e1):
+            observed = log2(e1 / e2)
+            if 0.5 <= observed <= 4.0:
+                estimate, method, order = GCI_SAFETY_FACTOR * abs(e2) / (2 ** observed - 1), "richardson-gci", observed
+        quantities[quantity] = {
+            "value": fine, "error_estimate": estimate,
+            "relative_error_estimate": estimate / abs(fine) if fine else None,
+            "method": method, "observed_order": order, "levels": [coarse, middle, fine],
+        }
+    return {
+        "status": "estimado",
+        "discretizations_m": [float(parameters["discretization_m"]) * scale for scale, _, _ in levels],
+        "segment_counts": [count for _, count, _ in levels[:2]] + [None],
+        "extra_seconds": round(monotonic() - started, 3),
+        "quantities": quantities,
+    }, hashes
+
+
+def _field(client, geometry, soil, segments, current, origin, spacing) -> dict[str, Any]:
+    """Surface search for GPR, the worst touch inside the grid and the worst 1 m step."""
     half_x, half_y = geometry["length_m"] / 2, geometry["width_m"] / 2
-    spacing = float(parameters["surface_spacing_m"])
     nx = round(2 * (half_x + SURFACE_MARGIN_M) / spacing)
     ny = round(2 * (half_y + SURFACE_MARGIN_M) / spacing)
     raster = {
@@ -165,28 +260,14 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
             difference = abs(v[pid] - probe_v[f"p{c}_{d}"])
             if difference > step_value:
                 step_value, step_from, step_to = difference, raster[pid][:2], probes[f"p{c}_{d}"][:2]
-
-    group = first["groups"][GROUP]
-    result = {
-        "soil": soil_record(soil),
-        "injected_current_a": current,
-        "grid_resistance_ohm": group["resistance_to_remote_earth_ohm"],
+    return {
+        "first": first,
         "gpr_v": gpr,
         "max_touch_v": {"value": gpr - v[touch_id], "x_m": raster[touch_id][0], "y_m": raster[touch_id][1]},
         "max_step_v": {"value": step_value, "from_m": step_from, "to_m": step_to},
-        "segment_count": len(segments),
-        "surface_point_count": len(raster) + len(probes),
-        "diagnostics": first["diagnostics"],
-        "engine_warnings": first["warnings"],
-        "model_warnings": MODEL_WARNINGS if fault_breakdown is None else MODEL_WARNINGS[1:],
-        "fault_current": fault_breakdown,
+        "point_count": len(raster) + len(probes),
+        "hashes": hashes + probe_hashes,
     }
-    # IEEE 80 Cs uses the resistivity of the soil directly beneath the surface layer.
-    upper_rho = soil.resistivity_ohm_m if isinstance(soil, HomogeneousSoil) else soil.upper_resistivity_ohm_m
-    result["safety"] = _safety(result, fault, upper_rho, parameters)
-    trace = {**first["trace"], "parameters": parameters, "request_sha256_batches": hashes + probe_hashes,
-             "fault_current": fault_breakdown}
-    return {"result": result, "trace": trace}
 
 
 def _safety(result: dict[str, Any], fault: dict[str, Any], rho: float, parameters: dict[str, Any]) -> list[dict[str, Any]]:

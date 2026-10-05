@@ -10,12 +10,16 @@ from src.infrastructure.calculations.potential_engine_client import (
     PotentialEngineClient,
     PotentialEngineError,
     PotentialPoint,
+    Segmentation,
     TwoLayerSoil,
+    discretize,
+    graded_lengths,
     split_at_interface,
     validate_request,
 )
 from src.infrastructure.calculations.potential_engine_validation import (
     case_segments,
+    case_soil,
     convergence,
     evaluate_case,
     load_cases,
@@ -58,13 +62,75 @@ def test_reference_cases_record_provenance():
 
 def test_grid_discretization_converges(client):
     case = next(case for case in CASES["cases"] if case["id"] == "ieee80_annex_h_grid1")
-    report = convergence(client, case, discretizations_m=[3.5, 1.75, 1.0], raster_spacings_m=[1.0, 0.5])
+    report = convergence(client, case, discretizations_m=[3.5, 1.75, 1.0], raster_spacings_m=[1.0, 0.5],
+                         segmentation="uniform")
     changes = [row["change_rel"] for row in report["segment_sweep"][1:]]
     for quantity in range(len(case["checks"])):
         assert changes[-1][quantity] < changes[0][quantity], report["quantities"][quantity]
     resistance, touch, worst_touch, step = changes[-1][:4]
     assert resistance < 0.005 and touch < 0.01 and worst_touch < 0.01 and step < 0.02
     assert max(report["raster_sweep"][-1]["change_rel"]) < 0.01
+
+
+def _corner_step(client, case, segments):
+    s = math.sqrt(0.5)
+    result = client.calculate(soil=case_soil(case), segments=segments, injections_a=case["injections_a"],
+                              points=[PotentialPoint("c", (0, 0, 0)), PotentialPoint("d", (-s, -s, 0))])
+    return result["potentials_v"]["c"] - result["potentials_v"]["d"]
+
+
+def test_graded_segmentation_matches_converged_corner_step_with_fewer_segments(client):
+    """Backlog acceptance: Grid 1 converged S1 (91.24 V) with < 500 segments; Grids 2-3 converge faster."""
+    converged = {"ieee80_annex_h_grid1": 91.24, "ieee80_annex_h_grid2": 69.78, "ieee80_annex_h_grid3": 100.47}
+    for case_id, reference in converged.items():
+        case = next(case for case in CASES["cases"] if case["id"] == case_id)
+        graded = case_segments(case, 1.0, "graded")
+        uniform = case_segments(case, 0.7, "uniform")
+        graded_error = abs(_corner_step(client, case, graded) / reference - 1)
+        uniform_error = abs(_corner_step(client, case, uniform) / reference - 1)
+        assert len(graded) < 0.6 * len(uniform), case_id
+        assert graded_error < uniform_error / 2, (case_id, graded_error, uniform_error)
+        if case_id == "ieee80_annex_h_grid1":
+            assert len(graded) < 500 and graded_error < 0.001
+
+
+def test_graded_lengths_grow_geometrically_and_cover_the_piece():
+    lengths = graded_lengths(14.0, 7.0, 0.25, 1.0, 2.0)
+    assert math.isclose(sum(lengths), 14.0) and lengths[0] == 0.25 and lengths[-1] == 1.0
+    assert all(b / a <= 2.0 + 1e-9 for a, b in zip(lengths[:5], lengths[1:5]))
+    assert max(lengths) <= 7.0
+    assert graded_lengths(0.3, 7.0, 0.25, 0.25, 2.0) == [0.3]
+    assert math.isclose(sum(graded_lengths(1.4, 7.0, 0.25, None, 2.0)), 1.4)
+    assert graded_lengths(10.0, 3.0, None, None, 2.0) == [2.5] * 4
+
+
+def test_discretize_refines_critical_nodes_only():
+    z = -0.5
+    # An L corner at the origin, a free end at (10, 0), a straight split at (5, 0) and a rod joint at (0, 10).
+    pieces = [
+        ElectrodeSegment("a", "g", "grid", (0, 0, z), (5, 0, z), 0.005),
+        ElectrodeSegment("b", "g", "grid", (5, 0, z), (10, 0, z), 0.005),
+        ElectrodeSegment("c", "g", "grid", (0, 0, z), (0, 10, z), 0.005),
+        ElectrodeSegment("r", "g", "rod", (0, 10, z), (0, 10, z - 3), 0.008),
+    ]
+    segments = discretize(pieces, Segmentation.for_discretization("graded", 1.0))
+    by_piece = {key: [s for s in segments if s.id.startswith(key + ".")] for key in "abcr"}
+    length = lambda s: math.dist(s.start_m, s.end_m)  # noqa: E731
+    assert math.isclose(length(by_piece["a"][0]), 0.25) and length(by_piece["a"][-1]) > 0.25  # corner, split
+    assert math.isclose(length(by_piece["b"][-1]), 0.25) and length(by_piece["b"][0]) > 0.25  # split, free end
+    assert math.isclose(length(by_piece["r"][0]), 0.25) and math.isclose(length(by_piece["r"][-1]), 0.25)
+    assert math.isclose(sum(map(length, segments)), 23.0)
+    assert [s.id for s in discretize(pieces[:1], Segmentation("uniform", 2.0))] == ["a.0", "a.1", "a.2"]
+
+
+def test_graded_segmentation_keeps_a_node_at_the_soil_interface():
+    case = next(case for case in CASES["cases"] if case["id"] == "ieee80_annex_h_grid3")
+    segments = case_segments(case, 1.0, "graded")
+    rod_ends = {round(z, 9) for s in segments if s.kind == "rod" for z in (s.start_m[2], s.end_m[2])}
+    assert -6.096 in rod_ends
+    assert all(max(s.start_m[2], s.end_m[2]) <= -6.096 + 1e-9 or min(s.start_m[2], s.end_m[2]) >= -6.096 - 1e-9
+               for s in segments)
+    assert min(math.dist(s.start_m, s.end_m) / s.radius_m for s in segments) >= 5
 
 
 def test_result_carries_diagnostics_and_trace(client):

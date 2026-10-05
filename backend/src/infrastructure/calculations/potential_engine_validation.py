@@ -16,8 +16,10 @@ from src.infrastructure.calculations.potential_engine_client import (
     HomogeneousSoil,
     PotentialEngineClient,
     PotentialPoint,
+    Segmentation,
     SoilModel,
     TwoLayerSoil,
+    discretize,
     point_batch_size,
 )
 
@@ -132,8 +134,23 @@ def _walk(polygon, spacing_m: float) -> list[tuple[float, float]]:
     return points
 
 
-def case_segments(case: dict[str, Any], discretization_m: float | None = None) -> list[ElectrodeSegment]:
-    """Discretise a case's conductors.
+def case_segments(case: dict[str, Any], discretization_m: float | None = None,
+                  segmentation: str | None = None) -> list[ElectrodeSegment]:
+    """Discretise a case's conductors with `segmentation` (default: the case's, else `uniform`).
+
+    `graded` first cuts the geometry into node-to-node pieces and then grades each piece with
+    `Segmentation.for_discretization("graded", discretization_m)`.
+    """
+    step = float(discretization_m or case["discretization_m"])
+    if (segmentation or case.get("segmentation", "uniform")) == "graded":
+        soil = case_soil(case)
+        interface_z = -soil.upper_thickness_m if isinstance(soil, TwoLayerSoil) else None
+        return discretize(_case_pieces(case, float("inf")), Segmentation.for_discretization("graded", step), interface_z)
+    return _case_pieces(case, step)
+
+
+def _case_pieces(case: dict[str, Any], step: float) -> list[ElectrodeSegment]:
+    """Uniformly discretise a case's conductors; `step` = inf gives one piece per node-to-node conductor.
 
     Supported geometry: explicit `conductors`; a `grid` of x/y lines (optionally L-shaped with
     `notch_m`, with `diagonals_m` and `perimeter_rods` at every or every other perimeter node);
@@ -141,7 +158,6 @@ def case_segments(case: dict[str, Any], discretization_m: float | None = None) -
     Grid conductors are cut at every crossing and, in two-layer soil, every conductor is cut at
     the interface so no segment straddles it.
     """
-    step = float(discretization_m or case["discretization_m"])
     soil = case_soil(case)
     interface_z = -soil.upper_thickness_m if isinstance(soil, TwoLayerSoil) else None
     segments: list[ElectrodeSegment] = []
@@ -239,6 +255,7 @@ def evaluate_case(
     case: dict[str, Any],
     discretization_m: float | None = None,
     raster_spacing_m: float | None = None,
+    segmentation: str | None = None,
 ) -> dict[str, Any]:
     """Run one case and return each check's computed value plus the engine diagnostics.
 
@@ -246,7 +263,7 @@ def evaluate_case(
     system): fixed points and area rasters; refinement around the worst touch points and 16
     step directions around the strongest step candidates; and a refined step search.
     """
-    segments = case_segments(case, discretization_m)
+    segments = case_segments(case, discretization_m, segmentation)
     soil = case_soil(case)
     exposed = [s.start_m[:2] for s in segments if s.start_m[2] > -FOOT_RADIUS_M] + \
               [s.end_m[:2] for s in segments if s.end_m[2] > -FOOT_RADIUS_M]
@@ -412,6 +429,7 @@ def convergence(
     case: dict[str, Any],
     discretizations_m: list[float],
     raster_spacings_m: list[float] | None = None,
+    segmentation: str | None = None,
 ) -> dict[str, Any]:
     """Re-run a case with refined segments, then refined surface rasters, reporting relative changes.
 
@@ -432,10 +450,12 @@ def convergence(
         return rows
 
     labels = [check.get("label", check["quantity"]) for check in case["checks"]]
-    segment_runs = [(step, evaluate_case(client, case, discretization_m=step)) for step in discretizations_m]
-    report = {"case": case["id"], "quantities": labels, "segment_sweep": sweep(segment_runs, "discretization_m")}
+    segment_runs = [(step, evaluate_case(client, case, step, segmentation=segmentation)) for step in discretizations_m]
+    report = {"case": case["id"], "quantities": labels, "segment_sweep": sweep(segment_runs, "discretization_m"),
+              "segmentation": segmentation or case.get("segmentation", "uniform")}
     if raster_spacings_m:
         finest_step = discretizations_m[-1]
-        raster_runs = [(spacing, evaluate_case(client, case, finest_step, spacing)) for spacing in raster_spacings_m]
+        raster_runs = [(spacing, evaluate_case(client, case, finest_step, spacing, segmentation))
+                       for spacing in raster_spacings_m]
         report["raster_sweep"] = sweep(raster_runs, "raster_spacing_m")
     return report

@@ -120,7 +120,12 @@ class PotentialCalculationRequest(BaseModel):
     """Engine parameters the artifact does not carry; all are recorded in the calculation trace."""
 
     conductor_radius_m: float = Field(default=0.00525, ge=1e-4, le=0.5, description="Default: 2/0 AWG copper")
-    discretization_m: float = Field(default=1.0, gt=0, le=20, description="Maximum segment length; 1 m is the validated default")
+    discretization_m: float = Field(default=1.0, gt=0, le=20, description="Refinement length d; 1 m is the validated default")
+    segmentation: str = Field(default="graded", pattern="^(uniform|graded)$",
+                              description="uniform: pieces of at most d; graded: 0.25·d at ends, corners and rod joints, "
+                                          "d at crossings, growing by 2 up to 7·d")
+    estimate_uncertainty: bool = Field(default=False, description="Also solve with 2d and 4d and report the "
+                                                                  "discretisation error of R, GPR, touch and step")
     surface_spacing_m: float = Field(default=0.5, description="Surface raster spacing for touch and step search")
     safety_standards: list[str] = Field(default_factory=lambda: [IEEE80_2013], min_length=1, max_length=5,
                                         description="Standards and editions to evaluate; never inferred")
