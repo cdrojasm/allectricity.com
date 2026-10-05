@@ -21,7 +21,14 @@ from src.infrastructure.calculations.potential_engine_validation import (  # noq
 CONVERGENCE_CASES = {
     "ieee80_annex_h_grid1": [3.5, 1.75, 1.0, 0.7],
     "ieee80_annex_h_grid2": [3.5, 1.75, 1.0, 0.7],
+    "ieee80_annex_h_grid3": [3.5, 1.75, 1.0, 0.7],
 }
+
+
+def status(row: dict) -> str:
+    if row["passed"]:
+        return "pasa"
+    return "desviación conocida" if row["known_deviation"] else "**falla**"
 
 
 def reference_text(reference: dict) -> str:
@@ -35,6 +42,7 @@ def build(client: PotentialEngineClient) -> str:
     rows = validate(client, cases)
     version = rows[0]["engine_version"]
     passed = sum(row["passed"] for row in rows)
+    known = sum(not row["passed"] and row["known_deviation"] for row in rows)
     notes = [(case["id"], check.get("label", check["quantity"]), check["note"])
              for case in cases["cases"] for check in case["checks"] if "note" in check]
     lines = [
@@ -45,12 +53,12 @@ def build(client: PotentialEngineClient) -> str:
         "",
         "## Alcance que se revisa",
         "",
-        "Motor cuasiestático de electrodos cilíndricos delgados en suelo homogéneo, isotrópico y semiinfinito, "
-        "con metal ideal equipotencial por grupo. No cubre suelo estratificado, impedancia del conductor, "
-        "reparto de corriente de falla, capa superficial ni criterios tolerables normativos. "
-        "La revisión aprueba o rechaza el motor solo para ese alcance.",
+        "Motor cuasiestático de electrodos cilíndricos delgados en suelo homogéneo o de dos capas horizontales, "
+        "isotrópico y semiinfinito, con metal ideal equipotencial por grupo. No cubre suelo de n capas, "
+        "impedancia del conductor, reparto de corriente de falla, capa superficial ni criterios tolerables "
+        "normativos. La revisión aprueba o rechaza el motor solo para ese alcance.",
         "",
-        f"## Resultado: {passed} de {len(rows)} comprobaciones dentro de tolerancia",
+        f"## Resultado: {passed} de {len(rows)} comprobaciones dentro de tolerancia; {known} desviaciones conocidas investigadas",
         "",
         "| Caso | Magnitud | Motor | Referencia | Desviación | Tolerancia propuesta | Estado | Fuente |",
         "|---|---|---|---|---|---|---|---|",
@@ -59,7 +67,7 @@ def build(client: PotentialEngineClient) -> str:
         lines.append(
             f"| {row['case']} | {row['label']} | {row['value']:.4g} | {reference_text(row['reference'])} "
             f"| {100 * row['deviation_rel']:+.2f} % | ±{100 * row['tolerance_rel']:g} % "
-            f"| {'pasa' if row['passed'] else '**falla**'} | {row['source']} |"
+            f"| {status(row)} | {row['source']} |"
         )
     lines += ["", "La desviación es 0 cuando el valor cae dentro del rango publicado; si no, se mide contra el extremo más cercano.", "",
               "## Fuentes", ""]
@@ -83,10 +91,12 @@ def build(client: PotentialEngineClient) -> str:
         "## Preguntas para el revisor",
         "",
         "1. ¿Son aceptables las tolerancias propuestas (±2–2,5 % en resistencia, ±5 % en tensiones; ±0,5 % en la regresión interna)?",
-        "2. Cotejar cada valor de las fuentes `ieee80_2013_annex_h` y `ieee80_2013_annex_b` con una copia licenciada de IEEE Std 80-2013/Cor 1-2015; se transcribieron de un tercero.",
+        "2. Cotejar cada valor de las fuentes `ieee80_2013_annex_h`, `ieee80_2013_annex_h_layered`, `ieee80_2013_annex_b` y `ieee80_2013_annex_b_exhibit1` con una copia licenciada de IEEE Std 80-2013/Cor 1-2015, y los supuestos geométricos de cada caso con sus figuras; se transcribieron de un tercero.",
         "3. ¿Se acepta la explicación de la desviación del paso S1 del Grid 1 (referencia sub-resuelta en la esquina), o se exige confirmarla con la Tabla H.5 o con una corrida fina en un programa comercial?",
         "4. ¿Es adecuada la recomendación de segmentos de 1 m o menos cerca de varillas y esquinas?",
-        "5. ¿Hace falta algún caso adicional dentro del alcance homogéneo antes de exponer resultados a usuarios?",
+        "5. ¿Se aceptan las desviaciones conocidas (cerca sola del Grid 4 por la profundidad supuesta del conductor; Exhibit 1 del Anexo B, cuya referencia parece no modelar las varillas que atraviesan la interfaz)?",
+        "6. ¿Es aceptable excluir los puntos a menos de 0,08 m de un electrodo que aflora (radio de pie de IEEE 80) en la búsqueda de paso y contacto?",
+        "7. ¿Hace falta algún caso adicional dentro del alcance (homogéneo y dos capas) antes de exponer resultados a usuarios?",
         "",
         "## Dictamen",
         "",

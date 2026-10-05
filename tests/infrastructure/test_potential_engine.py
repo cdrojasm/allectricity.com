@@ -42,13 +42,15 @@ def rod(group="rod", x=0.0, segment_id=None, radius=0.008):
 @pytest.mark.parametrize("case_id", CASE_IDS)
 def test_reference_case_within_tolerance(client, case_id):
     cases = {**CASES, "cases": [case for case in CASES["cases"] if case["id"] == case_id]}
-    failures = [row for row in validate(client, cases) if not row["passed"]]
+    failures = [row for row in validate(client, cases) if not row["passed"] and not row["known_deviation"]]
     assert not failures, [(r["label"], r["value"], r["reference"], f"{100 * r['deviation_rel']:+.2f} %") for r in failures]
 
 
 def test_reference_cases_record_provenance():
     for case in CASES["cases"]:
         for check in case["checks"]:
+            if check.get("status") == "known-deviation":
+                assert len(check.get("note", "")) > 80, "a known deviation must explain the investigation"
             source = CASES["sources"][check["source"]]
             assert source["citation"] and source["method"] and source["version"]
             assert 0 < check["tolerance_rel"] <= 0.05

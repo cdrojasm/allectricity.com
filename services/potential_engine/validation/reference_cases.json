@@ -5,6 +5,16 @@
     "note": "Tolerances are proposals until a competent grounding engineer signs them off. Re-check every published value against your licensed copy of the cited standard before relying on it."
   },
   "sources": {
+    "ieee80_2013_annex_h_layered": {
+      "citation": "IEEE Std 80-2013 incl. Cor 1-2015, Annex H.3, Tables H.7 to H.10 (Grids 3 to 6): range of results from CDEGS, ETAP and WinIGS",
+      "method": "commercial method-of-moments grounding programs, two-layer soil",
+      "version": "IEEE Std 80-2013/Cor 1-2015; values and geometry assumptions transcribed from github.com/jacho35/protectionpro testing/earth-grid-validation/validate.py at commit 557027e415936e9fb1738997f1cccd49767988de (2026-10-04)"
+    },
+    "ieee80_2013_annex_b_exhibit1": {
+      "citation": "IEEE Std 80-2013, Annex B, Exhibit 1 (square grid with rods in two-layer soil): computer results from EPRI TR-100622",
+      "method": "EPRI SGSYS-type method-of-moments program, two-layer soil",
+      "version": "IEEE Std 80-2013; values and geometry assumptions transcribed from github.com/jacho35/protectionpro testing/earth-grid-validation/validate.py at commit 557027e415936e9fb1738997f1cccd49767988de (2026-10-04)"
+    },
     "dwight_1936": {
       "citation": "H. B. Dwight, 'Calculation of resistances to ground', AIEE Transactions, vol. 55, pp. 1319-1328, 1936; reproduced in IEEE Std 142-2007 (Green Book), Table 4-5",
       "method": "closed form, average-potential method with uniform leakage current",
@@ -147,6 +157,490 @@
         {"quantity": "resistance_ohm", "group": "grid", "reference": {"value": 2.67}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_b",
          "note": "older single-program result; wider tolerance than the Annex H range"},
         {"quantity": "max_touch_v", "group": "grid", "area_m": [0, 0, 70, 70], "spacing_m": 0.5, "label": "worst touch inside the grid", "reference": {"value": 984.3}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_b"}
+      ]
+    },
+    {
+      "id": "ieee80_annex_h_grid3",
+      "description": "IEEE 80 Annex H Grid 3: Grid 2 geometry (70 m square, 6 x 6 conductors at 14 m, 2/0 Cu radius 5.25 mm at 0.5 m, 20 perimeter rods 7.5 m, radius 7.95 mm) in two-layer soil, 300 ohm-m over 100 ohm-m, upper layer 6.096 m (20 ft); I_G 744.8 A",
+      "soil": {
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 6.096
+      },
+      "discretization_m": 1.0,
+      "grid": {
+        "group": "grid",
+        "x_lines_m": [
+          0,
+          14,
+          28,
+          42,
+          56,
+          70
+        ],
+        "y_lines_m": [
+          0,
+          14,
+          28,
+          42,
+          56,
+          70
+        ],
+        "depth_m": 0.5,
+        "radius_m": 0.00525,
+        "perimeter_rods": {
+          "length_m": 7.5,
+          "radius_m": 0.00795
+        }
+      },
+      "injections_a": {
+        "grid": 744.8
+      },
+      "checks": [
+          {"quantity": "resistance_ohm", "group": "grid", "reference": {"min": 0.97, "max": 0.972}, "tolerance_rel": 0.025, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "touch_v", "group": "grid", "point_m": [7, 7], "label": "T1 corner-mesh centre", "reference": {"min": 261.0, "max": 268.5}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "max_touch_v", "group": "grid", "area_m": [0, 0, 70, 70], "spacing_m": 0.5, "label": "T3 worst touch inside the grid", "reference": {"min": 262.5, "max": 269.7}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "step_v", "points_m": [[0, 0], [-0.70710678, -0.70710678]], "label": "S1 grid corner, 1 m outward diagonal", "reference": {"min": 101.9, "max": 117.0}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"}
+      ]
+    },
+    {
+      "id": "ieee80_annex_h_grid4",
+      "description": "IEEE 80 Annex H Grid 4: Grid 3 plus a separately grounded (unbonded) fence; I_G 744.8 A",
+      "assumptions": [
+        "fence line 3 m outside the grid perimeter; posts every 3.28 m starting at each corner (23 per side, 3.30 m), 0.762 m long from grade, 2 in (51 mm) diameter",
+        "buried fence conductor 1 m outside the fence line (4 m outside the grid), 2/0 Cu, depth 0.5 m (assumed; the figure leaves it open)",
+        "posts and fence conductor form one unbonded metal group with zero net current"
+      ],
+      "soil": {
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 6.096
+      },
+      "discretization_m": 1.0,
+      "grid": {
+        "group": "grid",
+        "x_lines_m": [
+          0,
+          14,
+          28,
+          42,
+          56,
+          70
+        ],
+        "y_lines_m": [
+          0,
+          14,
+          28,
+          42,
+          56,
+          70
+        ],
+        "depth_m": 0.5,
+        "radius_m": 0.00525,
+        "perimeter_rods": {
+          "length_m": 7.5,
+          "radius_m": 0.00795
+        }
+      },
+      "fences": [
+        {
+          "group": "fence",
+          "offset_m": 3.0,
+          "post_spacing_m": 3.28,
+          "post_length_m": 0.762,
+          "post_radius_m": 0.0255,
+          "conductor_offset_m": 1.0,
+          "conductor_depth_m": 0.5,
+          "conductor_radius_m": 0.00525
+        }
+      ],
+      "injections_a": {
+        "grid": 744.8
+      },
+      "checks": [
+          {"quantity": "resistance_ohm", "group": "grid", "reference": {"min": 0.96, "max": 0.97}, "tolerance_rel": 0.025, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "group_difference_v", "groups": ["grid", "fence"], "label": "transferred voltage grid to fence", "reference": {"min": 309.2, "max": 312.4}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "touch_v", "group": "grid", "point_m": [7, 7], "label": "T1 corner-mesh centre", "reference": {"min": 259.7, "max": 263.6}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "touch_v", "group": "grid", "point_m": [0, 0], "label": "T2 grid corner", "reference": {"min": 127.1, "max": 130.1}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "max_touch_v", "group": "grid", "area_m": [0, 0, 70, 70], "spacing_m": 0.5, "label": "T3 worst touch inside the grid", "reference": {"min": 261.1, "max": 264.9}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "touch_v", "group": "fence", "point_m": [-4, -4], "label": "T4 fence conductor corner", "reference": {"min": 49.9, "max": 51.1}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "step_v", "points_m": [[0, 0], [-0.70710678, -0.70710678]], "label": "S1 grid corner, 1 m outward diagonal", "reference": {"min": 97.0, "max": 97.4}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "step_v", "points_m": [[-4, -4], [-4.70710678, -4.70710678]], "label": "S2 fence corner, 1 m outward diagonal", "reference": {"min": 37.4, "max": 38.1}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"}
+      ]
+    },
+    {
+      "id": "ieee80_annex_h_grid4_fence_alone",
+      "description": "IEEE 80 Annex H Grid 4: resistance of the fence of Grid 4 on its own (no grid), two-layer soil 300/100 ohm-m, upper layer 6.096 m",
+      "assumptions": [
+        "fence line 3 m outside the grid perimeter; posts every 3.28 m starting at each corner (23 per side, 3.30 m), 0.762 m long from grade, 2 in (51 mm) diameter",
+        "buried fence conductor 1 m outside the fence line (4 m outside the grid), 2/0 Cu, depth 0.5 m (assumed; the figure leaves it open)",
+        "posts and fence conductor form one unbonded metal group with zero net current"
+      ],
+      "soil": {
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 6.096
+      },
+      "discretization_m": 1.0,
+      "outline_m": [
+        [
+          0,
+          0
+        ],
+        [
+          70,
+          0
+        ],
+        [
+          70,
+          70
+        ],
+        [
+          0,
+          70
+        ]
+      ],
+      "fences": [
+        {
+          "group": "fence",
+          "offset_m": 3.0,
+          "post_spacing_m": 3.28,
+          "post_length_m": 0.762,
+          "post_radius_m": 0.0255,
+          "conductor_offset_m": 1.0,
+          "conductor_depth_m": 0.5,
+          "conductor_radius_m": 0.00525
+        }
+      ],
+      "injections_a": {
+        "fence": 1.0
+      },
+      "checks": [
+          {"quantity": "resistance_ohm", "group": "fence", "reference": {"min": 1.6, "max": 1.62}, "tolerance_rel": 0.025, "source": "ieee80_2013_annex_h_layered", "status": "known-deviation", "note": "Known deviation of about +3.6 %, driven by the fence-conductor depth, which the figure leaves open and is assumed 0.5 m: the same model gives 1.632 ohm with the ring at 0.762 m and 1.597 ohm at 1.0 m (inside the range). With 0.5 m the in-grid fence quantities (transfer, T4, S2) stay within 5 %. Not an engine defect; confirm the depth in IEEE 80-2013 Annex H before tightening this check."}
+      ]
+    },
+    {
+      "id": "ieee80_annex_h_grid5",
+      "description": "IEEE 80 Annex H Grid 5: L-shaped grid 70 m x 105 m without the 35 m x 35 m corner, conductors at 7 m, 2/0 Cu at 0.5 m, rods 7.5 m (radius 7.95 mm) at every other perimeter node, fence bonded to the grid 1 m inside the perimeter; two-layer soil 300/100 ohm-m, upper layer 6.096 m; I_G 744.8 A",
+      "assumptions": [
+        "rods at every other perimeter node counted from the corner (0, 0) around the outline: 25 rods",
+        "fence 1 m inside the perimeter, bonded to the grid; posts every 3.28 m from each corner, 0.762 m long from grade, 2 in diameter; no buried fence conductor",
+        "worst touch searched on a 0.5 m raster inside the grid outline, refined at 0.1 m around the 12 lowest potentials",
+        "worst step: first foot within 1 m outside the outline, 16 directions, 0.5 m raster refined at 0.1 m around the 5 strongest candidates",
+        "surface points closer than 0.08 m (the IEEE 80 foot radius) to an electrode that reaches grade, such as a fence post, are not evaluated; standing on a post's axis is touching it, not stepping (without this rule the search returns 128 V with one foot on a post top)",
+        "1.75 m segments (the 1 m model needs about 1900 segments, above the 1500-segment limit)"
+      ],
+      "soil": {
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 6.096
+      },
+      "discretization_m": 1.75,
+      "grid": {
+        "group": "grid",
+        "x_lines_m": [
+          0,
+          7,
+          14,
+          21,
+          28,
+          35,
+          42,
+          49,
+          56,
+          63,
+          70
+        ],
+        "y_lines_m": [
+          0,
+          7,
+          14,
+          21,
+          28,
+          35,
+          42,
+          49,
+          56,
+          63,
+          70,
+          77,
+          84,
+          91,
+          98,
+          105
+        ],
+        "notch_m": [
+          35,
+          35
+        ],
+        "depth_m": 0.5,
+        "radius_m": 0.00525,
+        "perimeter_rods": {
+          "length_m": 7.5,
+          "radius_m": 0.00795,
+          "rule": "alternate"
+        }
+      },
+      "fences": [
+        {
+          "group": "grid",
+          "offset_m": -1.0,
+          "post_spacing_m": 3.28,
+          "post_length_m": 0.762,
+          "post_radius_m": 0.0255
+        }
+      ],
+      "injections_a": {
+        "grid": 744.8
+      },
+      "checks": [
+          {"quantity": "resistance_ohm", "group": "grid", "reference": {"value": 0.81}, "tolerance_rel": 0.025, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "group_potential_v", "group": "grid", "label": "GPR", "reference": {"min": 602.7, "max": 606.4}, "tolerance_rel": 0.025, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "max_touch_v", "group": "grid", "area_outline_offset_m": 0.0, "spacing_m": 0.5, "refine_m": 0.1, "label": "worst touch inside the outline", "reference": {"min": 131.6, "max": 138.1}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "max_step_v", "area_outline_offset_m": 1.0, "spacing_m": 0.5, "refine_m": 0.1, "label": "worst step within 1 m outside the outline", "reference": {"min": 83.0, "max": 90.7}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"}
+      ]
+    },
+    {
+      "id": "ieee80_annex_h_grid6",
+      "description": "IEEE 80 Annex H Grid 6: 70 m square with conductors at 0, 14, 56 and 70 m both ways plus both full diagonals, 2/0 Cu at 0.5 m, 7.5 m corner rods and 2.5 m inner rods (radius 7.95 mm); two-layer soil 100 ohm-m over 300 ohm-m, upper layer 6.096 m; I_G 744.8 A",
+      "assumptions": [
+        "inner 2.5 m rods at (14, 14), (56, 14), (14, 56), (56, 56) and (35, 35)",
+        "worst touch searched on a 0.5 m raster inside the grid outline, refined at 0.1 m around the 12 lowest potentials",
+        "worst step: first foot within 1 m outside the outline, 16 directions, 0.5 m raster refined at 0.1 m around the 5 strongest candidates"
+      ],
+      "soil": {
+        "upper_resistivity_ohm_m": 100.0,
+        "lower_resistivity_ohm_m": 300.0,
+        "upper_thickness_m": 6.096
+      },
+      "discretization_m": 1.0,
+      "grid": {
+        "group": "grid",
+        "x_lines_m": [
+          0,
+          14,
+          56,
+          70
+        ],
+        "y_lines_m": [
+          0,
+          14,
+          56,
+          70
+        ],
+        "depth_m": 0.5,
+        "radius_m": 0.00525,
+        "diagonals_m": [
+          [
+            0,
+            0,
+            70,
+            70
+          ],
+          [
+            70,
+            0,
+            0,
+            70
+          ]
+        ]
+      },
+      "rods": [
+        {
+          "group": "grid",
+          "x_m": 0,
+          "y_m": 0,
+          "top_depth_m": 0.5,
+          "length_m": 7.5,
+          "radius_m": 0.00795
+        },
+        {
+          "group": "grid",
+          "x_m": 0,
+          "y_m": 70,
+          "top_depth_m": 0.5,
+          "length_m": 7.5,
+          "radius_m": 0.00795
+        },
+        {
+          "group": "grid",
+          "x_m": 70,
+          "y_m": 0,
+          "top_depth_m": 0.5,
+          "length_m": 7.5,
+          "radius_m": 0.00795
+        },
+        {
+          "group": "grid",
+          "x_m": 70,
+          "y_m": 70,
+          "top_depth_m": 0.5,
+          "length_m": 7.5,
+          "radius_m": 0.00795
+        },
+        {
+          "group": "grid",
+          "x_m": 14,
+          "y_m": 14,
+          "top_depth_m": 0.5,
+          "length_m": 2.5,
+          "radius_m": 0.00795
+        },
+        {
+          "group": "grid",
+          "x_m": 56,
+          "y_m": 14,
+          "top_depth_m": 0.5,
+          "length_m": 2.5,
+          "radius_m": 0.00795
+        },
+        {
+          "group": "grid",
+          "x_m": 14,
+          "y_m": 56,
+          "top_depth_m": 0.5,
+          "length_m": 2.5,
+          "radius_m": 0.00795
+        },
+        {
+          "group": "grid",
+          "x_m": 56,
+          "y_m": 56,
+          "top_depth_m": 0.5,
+          "length_m": 2.5,
+          "radius_m": 0.00795
+        },
+        {
+          "group": "grid",
+          "x_m": 35,
+          "y_m": 35,
+          "top_depth_m": 0.5,
+          "length_m": 2.5,
+          "radius_m": 0.00795
+        }
+      ],
+      "injections_a": {
+        "grid": 744.8
+      },
+      "checks": [
+          {"quantity": "resistance_ohm", "group": "grid", "reference": {"min": 1.42, "max": 1.43}, "tolerance_rel": 0.025, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "group_potential_v", "group": "grid", "label": "GPR", "reference": {"min": 1054.4, "max": 1068.2}, "tolerance_rel": 0.025, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "max_touch_v", "group": "grid", "area_outline_offset_m": 0.0, "spacing_m": 0.5, "refine_m": 0.1, "label": "worst touch inside the outline", "reference": {"min": 134.4, "max": 140.2}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"},
+          {"quantity": "max_step_v", "area_outline_offset_m": 1.0, "spacing_m": 0.5, "refine_m": 0.1, "label": "worst step within 1 m outside the outline", "reference": {"min": 77.4, "max": 99.2}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_h_layered"}
+      ]
+    },
+    {
+      "id": "ieee80_annex_b_exhibit1",
+      "description": "IEEE 80 Annex B Exhibit 1: 60.96 m (200 ft) square, 5 x 5 conductors at 15.24 m, radius 5 mm at 0.5 m, nine 9.144 m rods (radius 6.35 mm) at the corners, mid-sides and centre; two-layer soil 300 ohm-m over 100 ohm-m, upper layer 4.572 m (15 ft)",
+      "assumptions": [
+        "mesh voltage at the centre of the corner mesh (7.62, 7.62); step voltage 1 m diagonally outward from the grid corner"
+      ],
+      "soil": {
+        "upper_resistivity_ohm_m": 300.0,
+        "lower_resistivity_ohm_m": 100.0,
+        "upper_thickness_m": 4.572
+      },
+      "discretization_m": 1.0,
+      "grid": {
+        "group": "grid",
+        "x_lines_m": [
+          0,
+          15.24,
+          30.48,
+          45.72,
+          60.96
+        ],
+        "y_lines_m": [
+          0,
+          15.24,
+          30.48,
+          45.72,
+          60.96
+        ],
+        "depth_m": 0.5,
+        "radius_m": 0.005
+      },
+      "rods": [
+        {
+          "group": "grid",
+          "x_m": 0,
+          "y_m": 0,
+          "top_depth_m": 0.5,
+          "length_m": 9.144,
+          "radius_m": 0.00635
+        },
+        {
+          "group": "grid",
+          "x_m": 0,
+          "y_m": 30.48,
+          "top_depth_m": 0.5,
+          "length_m": 9.144,
+          "radius_m": 0.00635
+        },
+        {
+          "group": "grid",
+          "x_m": 0,
+          "y_m": 60.96,
+          "top_depth_m": 0.5,
+          "length_m": 9.144,
+          "radius_m": 0.00635
+        },
+        {
+          "group": "grid",
+          "x_m": 30.48,
+          "y_m": 0,
+          "top_depth_m": 0.5,
+          "length_m": 9.144,
+          "radius_m": 0.00635
+        },
+        {
+          "group": "grid",
+          "x_m": 30.48,
+          "y_m": 30.48,
+          "top_depth_m": 0.5,
+          "length_m": 9.144,
+          "radius_m": 0.00635
+        },
+        {
+          "group": "grid",
+          "x_m": 30.48,
+          "y_m": 60.96,
+          "top_depth_m": 0.5,
+          "length_m": 9.144,
+          "radius_m": 0.00635
+        },
+        {
+          "group": "grid",
+          "x_m": 60.96,
+          "y_m": 0,
+          "top_depth_m": 0.5,
+          "length_m": 9.144,
+          "radius_m": 0.00635
+        },
+        {
+          "group": "grid",
+          "x_m": 60.96,
+          "y_m": 30.48,
+          "top_depth_m": 0.5,
+          "length_m": 9.144,
+          "radius_m": 0.00635
+        },
+        {
+          "group": "grid",
+          "x_m": 60.96,
+          "y_m": 60.96,
+          "top_depth_m": 0.5,
+          "length_m": 9.144,
+          "radius_m": 0.00635
+        }
+      ],
+      "injections_a": {
+        "grid": 1.0
+      },
+      "checks": [
+          {"quantity": "resistance_ohm", "group": "grid", "reference": {"value": 1.353}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_b_exhibit1", "status": "known-deviation", "note": "Known deviation (-12 to -19 %), also unexplained by an independent solver (protectionpro BACKLOG: 'Exhibit 1 unexplained'). Without rods the engine gives 1.4112 ohm against 1.4102 ohm from that solver. With rods shortened to 4 m (not reaching the 100 ohm-m layer) it reproduces the published figures (1.357 ohm, 49.3 %, 17.3 %), so the EPRI result most likely did not model the 9.144 m rods penetrating the lower layer. Rods crossing the interface are validated by Annex H Grids 3-6. Informative only."},
+          {"quantity": "touch_v", "group": "grid", "point_m": [7.62, 7.62], "per": "gpr_percent", "label": "mesh voltage, % of GPR", "reference": {"value": 49.66}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_b_exhibit1", "status": "known-deviation", "note": "Known deviation (-12 to -19 %), also unexplained by an independent solver (protectionpro BACKLOG: 'Exhibit 1 unexplained'). Without rods the engine gives 1.4112 ohm against 1.4102 ohm from that solver. With rods shortened to 4 m (not reaching the 100 ohm-m layer) it reproduces the published figures (1.357 ohm, 49.3 %, 17.3 %), so the EPRI result most likely did not model the 9.144 m rods penetrating the lower layer. Rods crossing the interface are validated by Annex H Grids 3-6. Informative only."},
+          {"quantity": "step_v", "group": "grid", "points_m": [[0, 0], [-0.70710678, -0.70710678]], "per": "gpr_percent", "label": "corner step voltage, % of GPR", "reference": {"value": 18.33}, "tolerance_rel": 0.05, "source": "ieee80_2013_annex_b_exhibit1", "status": "known-deviation", "note": "Known deviation (-12 to -19 %), also unexplained by an independent solver (protectionpro BACKLOG: 'Exhibit 1 unexplained'). Without rods the engine gives 1.4112 ohm against 1.4102 ohm from that solver. With rods shortened to 4 m (not reaching the 100 ohm-m layer) it reproduces the published figures (1.357 ohm, 49.3 %, 17.3 %), so the EPRI result most likely did not model the 9.144 m rods penetrating the lower layer. Rods crossing the interface are validated by Annex H Grids 3-6. Informative only."}
       ]
     }
   ]

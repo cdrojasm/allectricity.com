@@ -24,6 +24,10 @@ SWEEPS = {
     "ieee80_annex_h_grid1": {"discretizations_m": [7.0, 3.5, 1.75, 1.0, 0.7], "raster_spacings_m": [1.0, 0.5, 0.25]},
     "ieee80_annex_h_grid2": {"discretizations_m": [7.0, 3.5, 1.75, 1.0, 0.7], "raster_spacings_m": [1.0, 0.5, 0.25]},
     "ieee80_annex_b_example1": {"discretizations_m": [7.0, 3.5, 1.75], "raster_spacings_m": [1.0, 0.5, 0.25]},
+    "ieee80_annex_h_grid3": {"discretizations_m": [7.0, 3.5, 1.75, 1.0, 0.7], "raster_spacings_m": [1.0, 0.5, 0.25]},
+    "ieee80_annex_h_grid4": {"discretizations_m": [7.0, 3.5, 1.75, 1.0]},
+    "ieee80_annex_h_grid5": {"discretizations_m": [7.0, 3.5, 1.75]},
+    "ieee80_annex_h_grid6": {"discretizations_m": [7.0, 3.5, 1.75, 1.0, 0.7]},
 }
 
 
