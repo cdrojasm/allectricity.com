@@ -17,15 +17,15 @@ El resultado actual es exploratorio. No se debe usar para declarar cumplimiento 
 | P0 | Hecho | Diagnóstico de condicionamiento y balance | Devolver residuo del sistema, error de balance de corriente por grupo, condición de pivote y advertencia cuando el sistema sea singular o mal condicionado. Rechazar resultados no finitos o con error por encima del límite. |
 | P0 | Hecho | Contrato de cálculo y trazabilidad | Versionar protocolo, solver, hipótesis, unidades, geometría discretizada, parámetros y origen de cada inyección. Incluir estos metadatos en cada resultado y artefacto/versionado del proyecto. |
 | P0 | Hecho; re-medir en la CPU de producción | Límites operativos del ejecutable | Validar dimensiones, radio, cruces, segmentos duplicados, IDs, suelo e inyecciones en Python y C++. Definir límites de segmentos/puntos, timeout y memoria con mediciones de rendimiento representativas. |
-| P1 | Pendiente | Suelo estratificado | Implementar Green de dos capas y luego n capas con suelo superior, inferior y profundidad de interfaz, incluidas varillas que atraviesan capas. Validar contra soluciones de referencia; propagar incertidumbre de resistividad y espesor. **Brecha de mercado crítica:** todos los programas comerciales lo tienen y casi ningún diseño real usa suelo homogéneo. |
-| P1 | Pendiente | Modelo de suelo desde mediciones | Interpretar mediciones Wenner y Schlumberger (IEEE Std 81) e invertir modelos de 2 y n capas con error RMS, sensibilidad y descarte de lecturas atípicas. Conservar las mediciones crudas y el modelo elegido como entradas versionadas. Validar con los modelos de suelo del Anexo H de IEEE 80 y los casos de IEEE 81. |
-| P1 | Pendiente | Validación de suelo estratificado | Agregar a `reference_cases.json` los Grids 3–6 del Anexo H de IEEE 80-2013: dos capas, cerca separada con conductor flotante, malla en L y malla irregular con diagonales. Cubre el conductor flotante en malla que falta en la validación P0. Depende de "Suelo estratificado". |
-| P1 | Pendiente | Verificación de tensiones de seguridad | Evaluar paso, contacto, malla y tensiones transferidas (incluidas cercas y estructuras) sobre una grilla adaptativa. Usar criterios tolerables con tiempo de despeje, masa corporal, capa superficial y norma/edición seleccionadas: IEEE Std 80, IEC/EN 50522 y RETIE para proyectos en Colombia. Mantener cálculo de campo separado de decisión normativa. |
-| P1 | Pendiente | Capa superficial | Modelar gravilla/concreto/capa superficial en la respuesta del suelo y las tensiones tolerables según el método normativo seleccionado; validar casos publicados antes de mostrar estados de cumplimiento. |
-| P1 | Pendiente | Corriente de falla y reparto de retorno | Modelar factor de decremento, división de corriente entre malla, neutros, cables de guarda, pantallas y tierras remotas. Aceptar impedancias/conexiones de la red externa y conservar el desglose de aportes. |
+| P1 | Hecho (dos capas) | Suelo estratificado | Implementar Green de dos capas y luego n capas con suelo superior, inferior y profundidad de interfaz, incluidas varillas que atraviesan capas. Validar contra soluciones de referencia; propagar incertidumbre de resistividad y espesor. **Brecha de mercado crítica:** todos los programas comerciales lo tienen y casi ningún diseño real usa suelo homogéneo. |
+| P1 | Hecho (dos capas) | Modelo de suelo desde mediciones | Interpretar mediciones Wenner y Schlumberger (IEEE Std 81) e invertir modelos de 2 y n capas con error RMS, sensibilidad y descarte de lecturas atípicas. Conservar las mediciones crudas y el modelo elegido como entradas versionadas. Validar con los modelos de suelo del Anexo H de IEEE 80 y los casos de IEEE 81. |
+| P1 | Hecho; falta firma del revisor | Validación de suelo estratificado | Agregar a `reference_cases.json` los Grids 3–6 del Anexo H de IEEE 80-2013: dos capas, cerca separada con conductor flotante, malla en L y malla irregular con diagonales. Cubre el conductor flotante en malla que falta en la validación P0. Depende de "Suelo estratificado". |
+| P1 | Hecho para IEEE 80-2013 | Verificación de tensiones de seguridad | Evaluar paso, contacto, malla y tensiones transferidas (incluidas cercas y estructuras) sobre una grilla adaptativa. Usar criterios tolerables con tiempo de despeje, masa corporal, capa superficial y norma/edición seleccionadas: IEEE Std 80, IEC/EN 50522 y RETIE para proyectos en Colombia. Mantener cálculo de campo separado de decisión normativa. |
+| P1 | Parcial | Capa superficial | Modelar gravilla/concreto/capa superficial en la respuesta del suelo y las tensiones tolerables según el método normativo seleccionado; validar casos publicados antes de mostrar estados de cumplimiento. |
+| P1 | Hecho (base) | Corriente de falla y reparto de retorno | Modelar factor de decremento, división de corriente entre malla, neutros, cables de guarda, pantallas y tierras remotas. Aceptar impedancias/conexiones de la red externa y conservar el desglose de aportes. |
 | P1 | Pendiente | Elementos metálicos con impedancia finita | Incorporar resistividad y sección del metal, conexiones y caída longitudinal para barras, uniones, pantallas, cercas, estructuras y neutros. Reemplazar el supuesto actual de conductor perfecto/equipotencial por una red eléctrica verificable. |
 | P1 | Pendiente | Malla y geometría CAD | Crear importador DXF, asignar capas a tipos de elemento, detectar uniones/cruces reales y construir segmentos/nodos automáticamente. Añadir revisión visual de malla y puntos de consulta del mapa de potencial. |
-| P1 | Pendiente | Segmentación graduada e incertidumbre numérica | Segmentos cortos cerca de puntas, esquinas, uniones y varillas, y largos en tramos rectos. Estimar el error de discretización en cada cálculo (dos refinamientos y extrapolación de Richardson) y reportarlo junto a cada magnitud, por ejemplo "S1 = 91,2 V ± 0,1 %". Criterio: igualar el paso convergido del Grid 1 (91,24 V) con menos de 500 segmentos. |
+| P1 | Hecho | Segmentación graduada e incertidumbre numérica | Segmentos cortos cerca de puntas, esquinas, uniones y varillas, y largos en tramos rectos. Estimar el error de discretización en cada cálculo (dos refinamientos y extrapolación de Richardson) y reportarlo junto a cada magnitud, por ejemplo "S1 = 91,2 V ± 0,1 %". Criterio: igualar el paso convergido del Grid 1 (91,24 V) con menos de 500 segmentos. |
 | P1 | Pendiente | Rendimiento de mallas grandes | Las mediciones de 2026-10-04 dan tiempo cúbico y memoria cuadrática en el número de segmentos. Comparar el solucionador denso con métodos iterativos o acelerados para pasar de 1 500 a más de 10 000 segmentos, como exigen las subestaciones grandes. Ampliar límites solo con benchmarks en la CPU de despliegue. |
 | P1 | Hecho (base) | Integración asíncrona | Ejecutar cálculos largos desde Celery/worker aislado; API encola y devuelve identificador, estado, cancelación y resultado. Aplicar concurrencia limitada, timeout y reintentos idempotentes. |
 | P1 | Pendiente | Prueba de contrato Python/C++ | Formalizar serialización, escaping, unidades, errores, límites y versionado. Evaluar JSON Lines o Protobuf para reemplazar el protocolo de tokens cuando se requieran objetos más ricos; conservar `Popen` como adaptador sencillo. |
@@ -48,6 +48,53 @@ El resultado actual es exploratorio. No se debe usar para declarar cumplimiento 
 - **Trazabilidad:** cada resultado incluye protocolo, versión del solver, método, hipótesis, unidades, SHA-256 de la solicitud y del binario, fecha, duración, geometría discretizada y origen de cada inyección. Desde el 2026-10-04 cada cálculo de un artefacto se guarda en `calculos_potencial_tierras` (migración 0008), ligado a (artefacto, versión), con parámetros, resultado y `trace` completo, incluidos los hashes de cada lote de puntos.
 - **Límites:** validación espejo en Python y C++. Medidos con `validation/benchmark.py`: 1500 segmentos, 100 000 puntos, 2e7 puntos × segmentos, timeout de 60 s y 512 MiB en Linux. Re-medidos el 2026-10-04 en la imagen de despliegue (Linux aarch64 en Docker sobre Apple M5 Pro, `validation/benchmark-linux-aarch64.json`): el peor caso permitido (1 200 segmentos, 16 641 puntos) tarda 1,03 s con el límite de 512 MiB activo. **Pendiente:** repetir en la CPU real de producción, que aún no está definida.
 
+## Resultado de los P1 (2026-10-04)
+
+- **Suelo estratificado:** motor 3.0.0, protocolo `SPAT-POTENTIAL-3`, suelo homogéneo o de dos capas.
+  - Usa la serie de imágenes de Sunde/Tagg, truncada con una cota a priori de 1e-7. Si la serie necesita más de 2000 términos, el motor da un error explícito.
+  - El suelo homogéneo da resultados idénticos bit a bit al v2. Se verificaron los límites h→∞ y h→0, la reciprocidad y la continuidad en la interfaz.
+  - Las varillas que atraviesan la interfaz se parten automáticamente.
+  - Límites nuevos de 4e9 evaluaciones de imagen, para la matriz y para los puntos. Peor caso permitido en Linux: 5,7 s con K = −0,5 y 12,3 s con K = 0,82.
+  - Los artefactos aceptan 1 o 2 capas. **Pendiente:** suelo de n capas.
+- **Validación de suelo estratificado:** Grids 3–6 del Anexo H y Exhibit 1 del Anexo B; 38 de 42 comprobaciones dentro de tolerancia.
+  - 4 desviaciones conocidas, investigadas y documentadas en cada caso:
+    - La resistencia de la cerca sola del Grid 4 depende de la profundidad supuesta del conductor: con 0,5 m queda en +3,6 %; con 1,0 m entra en el rango.
+    - En el Exhibit 1, la referencia parece no modelar las varillas que atraviesan la interfaz. Sin varillas, el motor coincide con un solver independiente en 0,07 %.
+  - El paso de esquina converge más lento que la resistencia y el contacto (0,8 % a 0,7 m). El Grid 5 solo se valida con segmentos de 1,75 m por el límite de segmentos.
+  - El arnés excluye los puntos a menos de 0,08 m (radio de pie de IEEE 80) de un electrodo que aflora.
+- **Modelo de suelo desde mediciones:** `calculations/soil_model.py`.
+  - Interpreta sondeos Wenner y Schlumberger con el modelo de dos capas de Sunde (1949) y Tagg (1964). Suma la cola de la serie con Euler-Maclaurin para capas delgadas y contrastes fuertes.
+  - Invierte ρ1, ρ2 y h por Levenberg-Marquardt con varios arranques. Reporta error RMS, incertidumbre por parámetro, residuo por lectura, exclusión de lecturas atípicas (umbral de 15 %) y la comparación con el modelo homogéneo.
+  - Entrega las capas en el formato de los artefactos.
+  - Validado con sondeos sintéticos de los suelos del Anexo H, con 2 % de ruido y con una lectura atípica.
+  - **Pendiente:** n capas con filtro de Hankel citado, contraste con una tabla publicada de IEEE 81 y un endpoint para cargar mediciones.
+- **Verificación de seguridad y capa superficial:** `calculations/safety_criteria.py`, separado del cálculo de campo.
+  - Cada cálculo de artefacto se compara con los tolerables de la norma y la edición pedidas explícitamente (`safety_standards`; por defecto IEEE 80-2013).
+  - Cubre 50 y 70 kg, el factor Cs de la capa superficial con la resistividad de la capa superior, el tiempo de despeje entre 0,03 y 3 s, y el chequeo del GPR frente al contacto tolerable.
+  - Para el Ejemplo 1 del Anexo B, con Cs redondeado a 0,74, reproduce los tolerables publicados de 838,2 V de contacto y 2686,6 V de paso.
+  - La capa superficial solo afecta los tolerables vía Cs; el campo del motor no la modela (por eso "Capa superficial" queda Parcial).
+  - **Pendiente:**
+    - cargar las tablas de EN 50522:2010 y RETIE (Tabla 15.1) desde copias oficiales; hoy se reportan como "no evaluable";
+    - cotejar los valores del Anexo B con una copia licenciada;
+    - evaluar las tensiones transferidas a cercas y estructuras externas.
+- **Corriente de falla y reparto de retorno:** `calculations/fault_current.py` calcula I_G = D_f·S_f·3I0 según IEEE Std 80-2013 (ecuaciones 64, 74 y 79). D_f se verificó con la Tabla 10.
+  - S_f se toma de un valor que da el usuario, con su origen, o se calcula con un divisor de corriente complejo entre R_g y las rutas de retorno, con el desglose de corriente por ruta.
+  - Los artefactos inyectan I_G y registran su origen en el trace. Sin datos se conserva la corriente total con advertencia.
+  - **Pendiente:** modelo de escalera de cables de guarda (Anexo C de IEEE 80) validado contra una referencia publicada.
+
+- **Segmentación graduada e incertidumbre numérica:** `Segmentation` y `discretize` cortan cada conductor entre nodos con segmentos de 0,25·d junto a extremos libres, esquinas, uniones, varillas y la interfaz entre capas, y de d junto a cruces. Crecen con razón 2 hasta 7·d y respetan los 5 radios.
+  - Con d = 1 m, el paso de esquina converge con 40–55 % menos segmentos que en uniforme:
+
+    | Malla | Graduada | Uniforme |
+    |---|---|---|
+    | Grid 1 | 0,01 % de 91,24 V con 452 segmentos | −0,12 % con 1 200 |
+    | Grids 2–3 | 0,25–0,28 % con 612–692 segmentos | 0,8–0,9 % con 1 420 |
+
+    La tabla sale de `validation/segmentation_study.py`.
+  - Los artefactos usan graduado por defecto. Los Grids 1–3 se validan así, con regresiones contra el S1 convergido.
+  - `estimate_uncertainty` reporta el error estimado de R, GPR, contacto y paso (Richardson con GCI 1,25, o la diferencia entre refinamientos), a cambio de unas 2,3 veces el tiempo de cálculo.
+  - **Pendiente:** cortar las diagonales en los cruces y validar la ganancia en mallas densas (Grid 5) y con cercas (Grid 4).
+
 ## Integración con artefactos (2026-10-04)
 
 - `POST /api/v1/projects/{project_id}/artefactos-diseno-tierras/{artifact_id}/versions/{version}/calculos-potencial` encola un cálculo y responde 202 con su identificador. Parámetros opcionales: radio del conductor (por defecto 2/0 AWG, 5,25 mm), discretización (1 m) y paso de la rejilla superficial (0,25, 0,5 o 1 m).
@@ -63,13 +110,13 @@ Comparación con CDEGS (SES), XGSLab (SINT), SafeGrid (ELEK), ETAP Ground Grid y
 
 | Capacidad del mercado | Estado en SPAT | Fila del backlog |
 |---|---|---|
-| Suelo de 2 capas y multicapa | No | Suelo estratificado (P1) |
-| Interpretación de mediciones de resistividad | No | Modelo de suelo desde mediciones (P1) |
-| Validación con suelo estratificado (Anexo H Grids 3–6) | No | Validación de suelo estratificado (P1) |
-| Criterios tolerables IEEE 80 / IEC / EN 50522 | No | Verificación de tensiones de seguridad (P1), Capa superficial (P1) |
-| Reparto de corriente de falla (cables de guarda, neutros, pantallas) | No | Corriente de falla y reparto de retorno (P1) |
+| Suelo de 2 capas y multicapa | Dos capas; n capas no | Suelo estratificado (P1) |
+| Interpretación de mediciones de resistividad | Dos capas (Wenner/Schlumberger); sin endpoint | Modelo de suelo desde mediciones (P1) |
+| Validación con suelo estratificado (Anexo H Grids 3–6) | Sí; falta firma del revisor | Validación de suelo estratificado (P1) |
+| Criterios tolerables IEEE 80 / IEC / EN 50522 | IEEE 80-2013; EN 50522 y RETIE con tabla pendiente | Verificación de tensiones de seguridad (P1), Capa superficial (P1) |
+| Reparto de corriente de falla (cables de guarda, neutros, pantallas) | Base: S_f y rutas agrupadas; sin modelo de escalera | Corriente de falla y reparto de retorno (P1) |
 | Impedancia del conductor y caída longitudinal | No | Elementos metálicos con impedancia finita (P1) |
-| Importación CAD y segmentación automática | No | Malla y geometría CAD (P1), Segmentación graduada (P1) |
+| Importación CAD y segmentación automática | Segmentación graduada sí; CAD no | Malla y geometría CAD (P1), Segmentación graduada (P1) |
 | Mallas de más de 10 000 segmentos | No (límite de 1 500) | Rendimiento de mallas grandes (P1) |
 | Respuesta en frecuencia y rayo | No | Impedancia compleja en AC (P2), Transitorios e impulso (P2) |
 | Optimización de diseño | No | Barridos paramétricos y optimización (P2) |
@@ -81,7 +128,12 @@ Comparación con CDEGS (SES), XGSLab (SINT), SafeGrid (ELEK), ETAP Ground Grid y
 | Interferencia AC en tuberías | No | Interferencia AC y protección catódica (P3) |
 | Diagnóstico numérico expuesto, trazabilidad por hash, código abierto vía API | **Sí** | Ventaja propia; mantenerla en cada feature nueva |
 
-Orden sugerido para alcanzar paridad en diseños reales: suelo estratificado → modelo de suelo desde mediciones → validación con los Grids 3–6 → verificación de seguridad y capa superficial → reparto de corriente de falla. Sin esas cinco filas, el motor no puede reemplazar a un programa comercial en un proyecto.
+El 2026-10-04 se completó el orden sugerido para alcanzar paridad en diseños reales: suelo estratificado, modelo de suelo desde mediciones, validación con los Grids 3–6, verificación de seguridad y reparto de corriente de falla, más la segmentación graduada. Siguen bloqueando el uso en proyectos reales:
+- la firma del revisor;
+- las tablas de EN 50522 y RETIE;
+- el suelo de n capas;
+- las mallas de más de 1 500 segmentos;
+- la impedancia del conductor.
 
 ## Recomendación de ejecución
 
