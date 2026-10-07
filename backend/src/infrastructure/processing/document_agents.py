@@ -16,7 +16,7 @@ from src.domain.knowledge_graph.taxonomy import taxonomy_summary
 from src.domain.knowledge_graph.validation import validate_extraction
 from src.infrastructure.agents.runtime import (
     clients as _clients, load_prompt as _load_prompt, new_usage as _new_usage,
-    run_tool_agent as _run_tool_agent, tool as _tool,
+    TokenLimitExceeded, run_tool_agent as _run_tool_agent, tool as _tool,
 )
 
 MAX_SUBMISSIONS = 3
@@ -112,7 +112,8 @@ def _document_tools(source):
     return tools, handlers
 
 
-def run_llm_extraction(source, rule_payload: dict, filename: str, prompts: dict) -> dict:
+def run_llm_extraction(source, rule_payload: dict, filename: str, prompts: dict,
+                       max_tokens: int | None = None) -> dict:
     """Extractor ReAct: devuelve el payload del contrato o errores explícitos."""
     _, client = _clients()
     _, _, extractor_messages = prompts["extractor"]
@@ -146,25 +147,31 @@ def run_llm_extraction(source, rule_payload: dict, filename: str, prompts: dict)
                            "call submit_extraction again with the full payload."}
         return True, {"accepted": not errors}
 
-    payload = _run_tool_agent(
-        client, model_name(),
-        [*extractor_messages, {"role": "user", "content": json.dumps({
-            "filename": filename,
-            "schema_version": SCHEMA_VERSION,
-            "taxonomy": taxonomy_summary(),
-            "document": {"segments": len(source.segments), "coverage": source.coverage,
-                         "ocr": source.ocr},
-            "outline": _outline(source)["segments"],
-            "rule_candidates": rule_payload,
-            "next_step": "Inspect the source with tools, then call submit_extraction.",
-        }, ensure_ascii=False)}],
-        [*tools, submit], handlers, "submit_extraction", finalize, usage,
-    )
+    try:
+        payload = _run_tool_agent(
+            client, model_name(),
+            [*extractor_messages, {"role": "user", "content": json.dumps({
+                "filename": filename,
+                "schema_version": SCHEMA_VERSION,
+                "taxonomy": taxonomy_summary(),
+                "document": {"segments": len(source.segments), "coverage": source.coverage,
+                             "ocr": source.ocr},
+                "outline": _outline(source)["segments"],
+                "rule_candidates": rule_payload,
+                "next_step": "Inspect the source with tools, then call submit_extraction.",
+            }, ensure_ascii=False)}],
+            [*tools, submit], handlers, "submit_extraction", finalize, usage,
+            max_tokens=max_tokens,
+        )
+    except TokenLimitExceeded as exc:
+        usage["token_limit_exceeded"] = True
+        attempts["errors"] = [str(exc)]
     usage["duration_seconds"] = round(time.monotonic() - started, 3)
     usage["submissions"] = attempts["count"]
     if attempts["errors"]:
         return {"payload": None, "errors": attempts["errors"], "usage": usage}
     return {"payload": payload, "errors": [], "usage": usage}
+
 
 
 def _claim_brief(claim: dict) -> dict:
@@ -182,7 +189,7 @@ def _claim_brief(claim: dict) -> dict:
 
 
 def run_llm_consolidation(source, claims: list, questions: list, project_context: list,
-                          filename: str, prompts: dict) -> dict:
+                          filename: str, prompts: dict, max_tokens: int | None = None) -> dict:
     """El consolidador solo puede marcar revisión y formular preguntas."""
     _, client = _clients()
     _, _, consolidator_messages = prompts["consolidator"]
@@ -198,18 +205,23 @@ def run_llm_consolidation(source, claims: list, questions: list, project_context
          "summary": {"type": "string"}},
         ["review_claim_ids", "questions", "summary"],
     )
-    result = _run_tool_agent(
-        client, model_name(),
-        [*consolidator_messages, {"role": "user", "content": json.dumps({
-            "filename": filename,
-            "claims": [_claim_brief(claim) for claim in claims],
-            "deterministic_questions": [q["question"] for q in questions],
-            "existing_project_graph": project_context,
-            "instruction": "Use source tools to check conflicts before finalizing.",
-        }, ensure_ascii=False)}],
-        [*tools, finalize_tool], handlers, "finalize_consolidation",
-        lambda arguments: (True, {"accepted": True}), usage,
-    )
+    try:
+        result = _run_tool_agent(
+            client, model_name(),
+            [*consolidator_messages, {"role": "user", "content": json.dumps({
+                "filename": filename,
+                "claims": [_claim_brief(claim) for claim in claims],
+                "deterministic_questions": [q["question"] for q in questions],
+                "existing_project_graph": project_context,
+                "instruction": "Use source tools to check conflicts before finalizing.",
+            }, ensure_ascii=False)}],
+            [*tools, finalize_tool], handlers, "finalize_consolidation",
+            lambda arguments: (True, {"accepted": True}), usage, max_tokens=max_tokens,
+        )
+    except TokenLimitExceeded:
+        # Sin consolidación LLM las afirmaciones conservan su estado y preguntas deterministas.
+        result = {}
+        usage["token_limit_exceeded"] = True
     usage["duration_seconds"] = round(time.monotonic() - started, 3)
     known = {claim["claim_id"] for claim in claims}
     return {
@@ -222,3 +234,4 @@ def run_llm_consolidation(source, claims: list, questions: list, project_context
         "summary": str(result.get("summary", ""))[:3000],
         "usage": usage,
     }
+

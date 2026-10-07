@@ -57,6 +57,21 @@ def test_last_submission_is_kept_even_with_finding_level_problems(monkeypatch):
     assert result["payload"] == broken and result["errors"] == []
 
 
+def test_token_limit_stops_the_extractor_and_reports_its_usage(monkeypatch):
+    broken = copy.deepcopy(LLM_PAYLOAD)
+    broken["evidence"][0]["finding_ids"].remove("a1")
+    client = ScriptedClient([broken] * document_agents.MAX_SUBMISSIONS)
+    monkeypatch.setattr(document_agents, "_clients", lambda: (None, client))
+    source = parse_document(MEMORIA, DOCX_MIME)
+    prompts = {"extractor": ("name", None, [])}
+
+    result = document_agents.run_llm_extraction(source, {}, "m.docx", prompts, max_tokens=20)
+
+    assert result["payload"] is None and "token limit" in result["errors"][0]
+    assert len(client.requests) == 2 and result["usage"]["token_limit_exceeded"]
+    assert result["usage"]["prompt_tokens"] + result["usage"]["completion_tokens"] == 30
+
+
 def test_plain_text_answers_get_a_reminder_and_then_a_forced_tool_call(monkeypatch):
     client = ScriptedClient([LLM_PAYLOAD])
     replies = [None, None]  # dos respuestas de texto antes de la llamada a la herramienta

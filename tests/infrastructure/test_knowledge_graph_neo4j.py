@@ -56,6 +56,7 @@ def test_persistence_is_atomic_idempotent_and_reviewable(graph):
     # Reintento: mismo run_id, nada duplicado; guardar el mismo run directamente tampoco.
     _, again = extract_knowledge(upload, MEMORIA, DOCX_MIME, store, agents=FakeAgents(LLM_PAYLOAD))
     assert again["status"] == "already_processed"
+    assert store.project_llm_tokens(project_id) == 1550  # el reintento no suma tokens
     assert _count(store, "MATCH (c:Claim {project_id: $p}) RETURN count(c)", p=project_id) == claims
     assert _count(store, "MATCH (e:Entity {project_id: $p}) RETURN count(e)", p=project_id) == 2
 

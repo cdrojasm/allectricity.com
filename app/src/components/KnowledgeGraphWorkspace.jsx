@@ -361,15 +361,24 @@ function RunsTab({ request, base, summary, version }) {
   const [runs, setRuns] = useState([]);
   const [expanded, setExpanded] = useState(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  async function reprocess() {
+    try {
+      await request(`${base}/documents/${uploadId}/reprocess`, { method: "POST" });
+      setNotice("Reprocesamiento en cola. Si cambió el prompt, el modelo o el parser aparecerá una ejecución nueva; si no, se conserva la actual."); setError("");
+    } catch (e) { setError(e.message); setNotice(""); }
+  }
   useEffect(() => {
+    setNotice("");
     (async () => {
       try { setRuns((await request(`${base}/runs?limit=100${uploadId ? `&upload_id=${uploadId}` : ""}`)).items); setError(""); }
       catch (e) { setError(e.message); }
     })();
   }, [uploadId, version]);
   return <div className="kg-tab-body">
-    <div className="kg-filters"><select aria-label="Documento" value={uploadId} onChange={(e) => setUploadId(e.target.value)}><option value="">Todos los documentos</option>{summary?.documents?.map((d) => <option key={d.upload_id} value={d.upload_id}>{d.filename}</option>)}</select><span className="kg-muted">{runs.length} ejecuciones · las reemplazadas aparecen atenuadas</span></div>
+    <div className="kg-filters"><select aria-label="Documento" value={uploadId} onChange={(e) => setUploadId(e.target.value)}><option value="">Todos los documentos</option>{summary?.documents?.map((d) => <option key={d.upload_id} value={d.upload_id}>{d.filename}</option>)}</select><span className="kg-muted">{runs.length} ejecuciones · las reemplazadas aparecen atenuadas</span>{uploadId && <button className="button" onClick={reprocess}><RotateCcw size={13}/> Reprocesar documento</button>}</div>
     {error && <div className="kg-alert"><AlertTriangle size={14}/>{error}</div>}
+    {notice && <p className="kg-muted">{notice}</p>}
     <div className="kg-table-wrap"><table className="kg-table kg-runs"><thead><tr><th/><th>Documento</th><th>Inicio</th><th>Estado</th><th>Método / modelo</th><th>Afirmaciones</th><th>Rechazos</th><th>Errores</th><th>Preguntas</th><th>Tokens</th><th>Duración</th></tr></thead><tbody>
       {runs.length ? runs.map((run) => {
         const metrics = run.metrics || {};
@@ -378,7 +387,7 @@ function RunsTab({ request, base, summary, version }) {
           <tr className={run.superseded_by ? "superseded" : ""} onClick={() => setExpanded(isOpen ? null : run.run_id)}>
             <td>{isOpen ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}</td><td><strong>{run.filename}</strong>{run.superseded_by && <small>reemplazada</small>}</td><td>{formatDate(run.started_at)}</td><td><span className={`kg-run-status ${run.status}`}>{runStatusLabels[run.status] || run.status}</span></td><td>{run.method}<small>{run.model || "sin LLM"}</small></td>
             <td>{metrics.claims ?? "—"}<small>{Object.entries(metrics.by_status || {}).map(([s, n]) => `${statusLabels[s] || s}: ${n}`).join(" · ")}</small></td>
-            <td className={metrics.rejected ? "warn" : ""}>{metrics.rejected ?? 0}</td><td className={run.errors?.length ? "warn" : ""}>{run.errors?.length || 0}</td><td>{metrics.questions ?? 0}</td><td>{tokensOf(metrics.usage).toLocaleString("es-CO")}</td><td>{metrics.duration_seconds != null ? `${metrics.duration_seconds.toFixed(1)} s` : "—"}</td>
+            <td className={metrics.rejected ? "warn" : ""}>{metrics.rejected ?? 0}</td><td className={run.errors?.length ? "warn" : ""}>{run.errors?.length || 0}</td><td>{metrics.questions ?? 0}</td><td>{tokensOf(metrics.usage).toLocaleString("es-CO")}{metrics.llm_cost_usd != null && <small>US$ {metrics.llm_cost_usd.toFixed(4)}</small>}</td><td>{metrics.duration_seconds != null ? `${metrics.duration_seconds.toFixed(1)} s` : "—"}</td>
           </tr>
           {isOpen && <tr className="kg-run-detail"><td colSpan="11"><RunDetail run={run}/></td></tr>}
         </React.Fragment>;
@@ -393,7 +402,7 @@ function RunDetail({ run }) {
   return <div className="kg-run-grid">
     <section><h4>Errores ({run.errors?.length || 0})</h4>{run.errors?.length ? <ul className="kg-reasons error">{run.errors.map((e, i) => <li key={i}>{e}</li>)}</ul> : <p className="kg-muted">Sin errores.</p>}</section>
     <section><h4>Hallazgos rechazados ({run.rejected?.length || 0})</h4>{run.rejected?.length ? <table className="kg-mini"><thead><tr><th>Código</th><th>Hallazgo</th><th>Origen</th><th>Detalle</th></tr></thead><tbody>{run.rejected.map((r, i) => <tr key={i}><td><code>{r.code}</code></td><td>{r.finding_id}</td><td>{r.method}</td><td>{r.message}</td></tr>)}</tbody></table> : <p className="kg-muted">Ningún hallazgo rechazado.</p>}</section>
-    <section><h4>Cobertura del documento</h4><dl className="kg-dl"><dt>Segmentos</dt><dd>{run.metrics?.segments ?? "—"}</dd>{coverage.pages != null && <><dt>Páginas</dt><dd>{coverage.pages} (texto: {coverage.text_pages?.length || 0}, OCR: {coverage.ocr_pages?.length || 0}, vacías: {coverage.empty_pages?.length || 0})</dd></>}<dt>Páginas fallidas</dt><dd className={failedPages.length ? "warn" : ""}>{failedPages.length ? failedPages.map((p) => `p. ${p.page}: ${p.error}`).join("; ") : "ninguna"}</dd>{run.ocr && Object.keys(run.ocr).length > 0 && <><dt>OCR</dt><dd><code>{JSON.stringify(run.ocr)}</code></dd></>}</dl></section>
+    <section><h4>Cobertura del documento</h4><dl className="kg-dl"><dt>Segmentos</dt><dd>{run.metrics?.segments ?? "—"}</dd>{coverage.pages != null && <><dt>Páginas</dt><dd>{coverage.pages} (texto: {coverage.text_pages?.length || 0}, OCR: {coverage.ocr_pages?.length || 0}, vacías: {coverage.empty_pages?.length || 0})</dd></>}{coverage.tables > 0 && <><dt>Tablas</dt><dd>{coverage.tables} en p. {coverage.table_pages.join(", ")}</dd></>}{coverage.low_quality_pages?.length > 0 && <><dt>OCR dudoso</dt><dd className="warn">p. {coverage.low_quality_pages.join(", ")}</dd></>}<dt>Páginas fallidas</dt><dd className={failedPages.length ? "warn" : ""}>{failedPages.length ? failedPages.map((p) => `p. ${p.page}: ${p.error}`).join("; ") : "ninguna"}</dd>{run.ocr && Object.keys(run.ocr).length > 0 && <><dt>OCR</dt><dd><code>{JSON.stringify(run.ocr)}</code></dd></>}</dl></section>
     <section><h4>Versiones y uso</h4><dl className="kg-dl"><dt>Run</dt><dd><code>{run.run_id}</code></dd><dt>Parser / reglas / esquema</dt><dd>{run.parser_version} / {run.rules_version} / {run.schema_version}</dd><dt>Extractor</dt><dd>{run.extractor_prompt_name ? `${run.extractor_prompt_name} v${run.extractor_prompt_version}` : "—"}</dd><dt>Consolidador</dt><dd>{run.consolidator_prompt_name ? `${run.consolidator_prompt_name} v${run.consolidator_prompt_version}` : "—"}</dd>{Object.entries(run.metrics?.usage || {}).map(([agent, usage]) => <React.Fragment key={agent}><dt>{agent}</dt><dd>{usage ? `${usage.prompt_tokens || 0} + ${usage.completion_tokens || 0} tokens · ${usage.rounds || 0} rondas${usage.submissions ? ` · ${usage.submissions} envíos` : ""}${usage.duration_seconds ? ` · ${usage.duration_seconds} s` : ""}` : "—"}</dd></React.Fragment>)}{run.superseded_by && <><dt>Reemplazada por</dt><dd><code>{run.superseded_by.slice(0, 16)}</code></dd></>}</dl></section>
     {(run.summary || run.notes?.length > 0) && <section className="wide"><h4>Resumen y notas del modelo</h4>{run.summary && <p>{run.summary}</p>}{run.notes?.length > 0 && <ul className="kg-reasons">{run.notes.map((n, i) => <li key={i}>{typeof n === "string" ? n : JSON.stringify(n)}</li>)}</ul>}</section>}
     <section className="wide"><RawJson value={run}/></section>

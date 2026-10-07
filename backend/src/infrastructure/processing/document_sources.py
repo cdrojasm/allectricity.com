@@ -1,6 +1,7 @@
 """Parseo documental que conserva el origen de cada pasaje (EG-04, EG-09).
 
-PDF por página (con OCR de páginas escaneadas), CSV por fila y celda, XLSX por hoja,
+PDF por página (texto nativo, tablas por fila y celda, y OCR de páginas escaneadas o
+vectoriales rasterizadas), CSV por fila y celda, XLSX por hoja,
 fila y celda, DOCX por párrafo y fila de tabla, e imágenes por línea OCR con región.
 Los fallos parciales por página quedan registrados en `coverage` y el documento no se
 presenta como completo.
@@ -16,7 +17,7 @@ from urllib.request import Request, urlopen
 
 from src.domain.knowledge_graph.source import Segment, SourceDocument
 
-PARSER_VERSION = "doc-sources/1"
+PARSER_VERSION = "doc-sources/2"
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 MIN_PAGE_TEXT = 20
@@ -133,48 +134,151 @@ def _page_image(page):
     return buffer.getvalue()
 
 
+def _has_marks(page) -> bool:
+    """Una página sin imágenes ni operadores de dibujo está en blanco y no merece OCR."""
+    if list(page.images):
+        return True
+    contents = page.get_contents()
+    return contents is not None and bool(contents.get_data().strip())
+
+
+class _PdfRaster:
+    """Rasteriza páginas completas con PDFium: cubre escaneos y PDF vectoriales sin imagen
+    embebida (texto convertido a curvas, planos). Si PDFium falla se usa la imagen embebida."""
+
+    def __init__(self, data: bytes):
+        self.data, self.document = data, None
+        self.dpi = int(os.getenv("PDF_OCR_DPI", "200"))
+
+    def page(self, index: int, page) -> bytes:
+        try:
+            import pypdfium2
+
+            if self.document is None:
+                self.document = pypdfium2.PdfDocument(self.data)
+            bitmap = self.document[index].render(scale=self.dpi / 72, grayscale=True)
+            buffer = io.BytesIO()
+            bitmap.to_pil().save(buffer, format="PNG")
+            return buffer.getvalue()
+        except Exception:
+            image = _page_image(page)
+            if image is None:
+                raise
+            return image
+
+    def close(self):
+        if self.document is not None:
+            self.document.close()
+
+
+def _pdf_tables(plumber_page) -> tuple[str, list]:
+    """Tablas con líneas de una página (pdfplumber) y el texto que queda fuera de ellas."""
+    tables = [table for table in plumber_page.find_tables()
+              if any(any(cell for cell in row) for row in table.extract())]
+    if not tables:
+        return "", []
+    boxes = [table.bbox for table in tables]
+
+    def outside(obj):
+        if obj.get("object_type") != "char":
+            return True
+        x = (obj["x0"] + obj["x1"]) / 2
+        y = (obj["top"] + obj["bottom"]) / 2
+        return not any(x0 <= x <= x1 and top <= y <= bottom for x0, top, x1, bottom in boxes)
+
+    text = plumber_page.filter(outside).extract_text() or ""
+    return text, [table.extract() for table in tables]
+
+
+def _add_pdf_tables(builder, number, tables):
+    for table_number, rows in enumerate(tables, start=1):
+        for row_number, row in enumerate(rows, start=1):
+            _row(builder, f"p{number}t{table_number}r{row_number}",
+                 [(column, " ".join(str(cell).split()) if cell else None)
+                  for column, cell in enumerate(row, start=1)],
+                 {"page": number, "table": table_number, "row": row_number},
+                 lambda column, t=table_number, r=row_number:
+                     f"P{number}T{t}R{r}C{column}")
+
+
 def _parse_pdf(data: bytes) -> SourceDocument:
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(data))
     builder = _Builder()
     max_ocr_pages = int(os.getenv("PDF_OCR_MAX_PAGES", "50"))
+    max_table_pages = int(os.getenv("PDF_TABLE_MAX_PAGES", "200"))
     coverage = {"pages": len(reader.pages), "text_pages": [], "ocr_pages": [],
-                "empty_pages": [], "failed_pages": []}
+                "empty_pages": [], "failed_pages": [], "table_pages": [], "tables": 0,
+                "low_quality_pages": [], "page_quality": []}
     results, unavailable = [], 0
-    for number, page in enumerate(reader.pages, start=1):
-        text = page.extract_text() or ""
-        if len(text.strip()) >= MIN_PAGE_TEXT:
-            builder.add(f"p{number}", text, {"page": number})
-            coverage["text_pages"].append(number)
-            continue
-        try:
-            image = _page_image(page)
-        except Exception as exc:  # imagen corrupta o filtro no soportado
-            coverage["failed_pages"].append({"page": number, "error": f"imagen ilegible: {exc}"[:200]})
-            continue
-        if image is None:
-            builder.add(f"p{number}", text, {"page": number})
-            (coverage["text_pages"] if text.strip() else coverage["empty_pages"]).append(number)
-            continue
-        if len(coverage["ocr_pages"]) + len(coverage["failed_pages"]) >= max_ocr_pages:
-            coverage["failed_pages"].append({"page": number, "error": "límite de páginas OCR"})
-            continue
-        try:
-            result = ocr_image(image)
-        except ValueError as exc:
-            coverage["failed_pages"].append({"page": number, "error": str(exc)})
-            continue
-        except OCRUnavailable as exc:
-            unavailable += 1
-            coverage["failed_pages"].append({"page": number, "error": str(exc)})
-            continue
-        results.append(result)
-        if not result.get("text", "").strip():
-            coverage["failed_pages"].append({"page": number, "error": "OCR sin texto legible"})
-            continue
-        coverage["ocr_pages"].append(number)
-        _add_ocr(builder, result, number, f"p{number}")
+    raster, plumber = _PdfRaster(data), None
+    try:
+        for number, page in enumerate(reader.pages, start=1):
+            text = page.extract_text() or ""
+            if len(text.strip()) >= MIN_PAGE_TEXT:
+                tables = []
+                if number <= max_table_pages:
+                    try:
+                        if plumber is None:
+                            import pdfplumber
+
+                            plumber = pdfplumber.open(io.BytesIO(data))
+                        outside, tables = _pdf_tables(plumber.pages[number - 1])
+                    except Exception as exc:  # una tabla ilegible no invalida el texto
+                        coverage.setdefault("table_errors", []).append(
+                            {"page": number, "error": f"{type(exc).__name__}"[:200]})
+                if tables:
+                    builder.add(f"p{number}", outside, {"page": number})
+                    _add_pdf_tables(builder, number, tables)
+                    coverage["table_pages"].append(number)
+                    coverage["tables"] += len(tables)
+                else:
+                    builder.add(f"p{number}", text, {"page": number})
+                coverage["text_pages"].append(number)
+                continue
+            if not _has_marks(page):
+                builder.add(f"p{number}", text, {"page": number})
+                (coverage["text_pages"] if text.strip() else coverage["empty_pages"]).append(number)
+                continue
+            if len(coverage["ocr_pages"]) + len(coverage["failed_pages"]) >= max_ocr_pages:
+                coverage["failed_pages"].append({"page": number, "error": "límite de páginas OCR"})
+                continue
+            try:
+                image = raster.page(number - 1, page)
+            except Exception as exc:  # imagen corrupta o filtro no soportado
+                coverage["failed_pages"].append({"page": number,
+                                                 "error": f"imagen ilegible: {exc}"[:200]})
+                continue
+            try:
+                result = ocr_image(image)
+            except ValueError as exc:
+                coverage["failed_pages"].append({"page": number, "error": str(exc)})
+                continue
+            except OCRUnavailable as exc:
+                unavailable += 1
+                coverage["failed_pages"].append({"page": number, "error": str(exc)})
+                continue
+            results.append(result)
+            if not result.get("text", "").strip():
+                if text.strip():
+                    builder.add(f"p{number}", text, {"page": number})
+                    coverage["text_pages"].append(number)
+                    continue
+                coverage["failed_pages"].append({"page": number, "error": "OCR sin texto legible"})
+                continue
+            coverage["ocr_pages"].append(number)
+            coverage["page_quality"].append({
+                "page": number, "mean_confidence": result.get("mean_confidence"),
+                "low_confidence_ratio": result.get("low_confidence_ratio"),
+                "needs_review": bool(result.get("needs_review"))})
+            if result.get("needs_review"):
+                coverage["low_quality_pages"].append(number)
+            _add_ocr(builder, result, number, f"p{number}")
+    finally:
+        raster.close()
+        if plumber is not None:
+            plumber.close()
     if unavailable and not coverage["text_pages"] and not coverage["ocr_pages"]:
         raise OCRUnavailable("El OCR no estuvo disponible para ninguna página")
     ocr = _summarize_ocr(results)

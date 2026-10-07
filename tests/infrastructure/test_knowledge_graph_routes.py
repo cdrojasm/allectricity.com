@@ -91,3 +91,28 @@ def test_graph_not_configured_returns_503(env):  # noqa: F811
     response = client.get(f"/api/v1/projects/{project['id']}/knowledge-graph/claims",
                           headers=headers(tokens))
     assert response.status_code == 503
+
+
+def test_reprocess_queues_only_available_project_documents(env, monkeypatch):  # noqa: F811
+    from src.infrastructure.entrypoint.worker import tasks
+
+    _, services, client, _, tokens, _ = env
+    base, _, project = _project(client, tokens, services)
+    queued = []
+    monkeypatch.setattr(tasks.reprocess_document, "delay", queued.append)
+    with services.store.transaction(write=True) as db:
+        for upload_id, status in (("00000000-0000-0000-0000-0000000000a1", "available"),
+                                  ("00000000-0000-0000-0000-0000000000a2", "scanning")):
+            db.add("file_uploads", id=upload_id, owner_id=project["owner_id"],
+                   project_id=project["id"],
+                   filename="m.docx", quarantine_key=f"q/{upload_id}", target_bucket="documents",
+                   object_key=f"p/{upload_id}", expected_mime=DOCX_MIME, status=status,
+                   created_at=0, updated_at=0)
+
+    response = client.post(f"{base}/documents/00000000-0000-0000-0000-0000000000a1/reprocess",
+                           headers=headers(tokens))
+    assert response.status_code == 202 and response.json()["status"] == "queued"
+    assert queued == ["00000000-0000-0000-0000-0000000000a1"]
+    response = client.post(f"{base}/documents/00000000-0000-0000-0000-0000000000a2/reprocess",
+                           headers=headers(tokens))
+    assert response.status_code == 404 and len(queued) == 1

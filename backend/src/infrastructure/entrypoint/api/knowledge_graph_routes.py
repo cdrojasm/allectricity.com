@@ -140,3 +140,21 @@ def document_source(project_id: str, upload_id: str, request: Request,
     url = storage_client().presign_download(upload["target_bucket"], upload["object_key"])
     return {"upload_id": upload_id, "filename": upload["filename"],
             "mime_type": upload["expected_mime"], "url": url, "expires_in": 300}
+
+
+@router.post("/documents/{upload_id}/reprocess", status_code=202)
+def reprocess_document(project_id: str, upload_id: str, request: Request,
+                       actor=Depends(require("designs:write"))):
+    """Encola una nueva extracción; es idempotente si no cambió parser, prompts ni modelo."""
+    _graph(request, project_id, actor)
+    with request.app.state.services.store.transaction() as db:
+        upload = db.one("file_uploads", id=upload_id, project_id=project_id)
+    if not upload or upload["status"] != "available":
+        raise HTTPException(404, "Document not found")
+    from src.infrastructure.entrypoint.worker.tasks import reprocess_document as task
+
+    try:
+        task.delay(upload_id)
+    except Exception as exc:
+        raise HTTPException(503, "Unable to queue document reprocessing") from exc
+    return {"upload_id": upload_id, "status": "queued"}

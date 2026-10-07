@@ -30,7 +30,7 @@ def upload(upload_id="u1", filename="memoria.docx"):
 class FakeAgents:
     def __init__(self, payload=None, version=1, fail=False):
         self.payload, self.version, self.fail = payload, version, fail
-        self.extractions = 0
+        self.extractions, self.limits = 0, []
 
     def enabled(self):
         return True
@@ -42,18 +42,22 @@ class FakeAgents:
                          "consolidator_prompt_version": 1, "prompt_label": "test",
                          "model": "fake-model"}}
 
-    def run_llm_extraction(self, source, rule_payload, filename, prompts):
+    def run_llm_extraction(self, source, rule_payload, filename, prompts, max_tokens=None):
         self.extractions += 1
+        self.limits.append(max_tokens)
         if self.fail:
             raise TimeoutError("provider down")
         if isinstance(self.payload, dict) and "schema_version" in self.payload:
-            return {"payload": self.payload, "errors": [], "usage": {"rounds": 2}}
+            return {"payload": self.payload, "errors": [],
+                    "usage": {"rounds": 2, "prompt_tokens": 1000, "completion_tokens": 200}}
         return {"payload": None, "errors": ["(raíz): 'entities' is a required property"],
                 "usage": {"rounds": 3}}
 
-    def run_llm_consolidation(self, source, claims, questions, context, filename, prompts):
+    def run_llm_consolidation(self, source, claims, questions, context, filename, prompts,
+                              max_tokens=None):
+        self.limits.append(max_tokens)
         return {"review_claim_ids": [], "questions": [], "summary": "Resumen de prueba",
-                "usage": {"rounds": 1}}
+                "usage": {"rounds": 1, "prompt_tokens": 300, "completion_tokens": 50}}
 
 
 MEMORIA = docx("El transformador T1, 13,8 kV, alimenta el tablero TD-2.",
@@ -201,3 +205,38 @@ def test_provider_failures_are_retryable():
     with pytest.raises(RuntimeError):
         extract_knowledge(upload(), MEMORIA, DOCX_MIME, InMemoryKnowledgeGraph(),
                           agents=FakeAgents(LLM_PAYLOAD, fail=True))
+
+
+def test_llm_tokens_and_cost_are_recorded(monkeypatch):
+    monkeypatch.setenv("LLM_PRICE_INPUT_USD_PER_MTOK", "0.15")
+    monkeypatch.setenv("LLM_PRICE_OUTPUT_USD_PER_MTOK", "0.60")
+    graph = InMemoryKnowledgeGraph()
+    _, run = extract_knowledge(upload(), MEMORIA, DOCX_MIME, graph, agents=FakeAgents(LLM_PAYLOAD))
+    stored = graph.runs[run["run_id"]]
+    assert stored["llm_tokens"] == 1550 and run["metrics"]["llm_tokens"] == 1550
+    assert stored["llm_cost_usd"] == round((1300 * 0.15 + 250 * 0.60) / 1e6, 6)
+    assert graph.project_llm_tokens("project-1") == 1550
+
+
+def test_token_limits_split_between_agents_and_exhausted_project_uses_rules(monkeypatch):
+    monkeypatch.setenv("DOCUMENT_LLM_MAX_TOKENS_PER_FILE", "5000")
+    monkeypatch.setenv("DOCUMENT_LLM_MAX_TOKENS_PER_PROJECT", "6000")
+    graph = InMemoryKnowledgeGraph()
+    agents = FakeAgents(LLM_PAYLOAD)
+    extract_knowledge(upload(), MEMORIA, DOCX_MIME, graph, agents=agents)
+    # El consolidador recibe lo que dejó el extractor dentro del límite por archivo.
+    assert agents.limits == [5000, 5000 - 1200]
+
+    # Quedan 6000 - 1550 = 4450 tokens del proyecto para el siguiente archivo.
+    second = FakeAgents(LLM_PAYLOAD)
+    extract_knowledge(upload("u2"), MEMORIA, DOCX_MIME, graph, agents=second)
+    assert second.limits[0] == 4450
+
+    monkeypatch.setenv("DOCUMENT_LLM_MAX_TOKENS_PER_PROJECT", "3100")
+    third = FakeAgents(LLM_PAYLOAD)
+    _, run = extract_knowledge(upload("u3"), MEMORIA, DOCX_MIME, graph, agents=third)
+    stored = graph.runs[run["run_id"]]
+    assert third.extractions == 0 and stored["method"] == "rules"
+    assert stored["status"] == "completed_with_errors"
+    assert "límite de tokens LLM del proyecto agotado" in stored["errors"][0]
+    assert "T1" in by_content(graph)

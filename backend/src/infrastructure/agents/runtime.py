@@ -55,12 +55,17 @@ def tool(name: str, description: str, properties: dict, required: list[str]):
     }
 
 
+class TokenLimitExceeded(RuntimeError):
+    """El agente agotó el presupuesto de tokens asignado; no se reintenta automáticamente."""
+
+
 def run_tool_agent(client, model, messages, tools, handlers, final_tool, finalize, usage,
-                    max_rounds=10):
+                    max_rounds=10, max_tokens=None):
     """Bucle ReAct acotado. `finalize(args)` devuelve (terminado, respuesta para el agente).
 
     Si el modelo responde con texto en lugar de herramientas se le recuerda la herramienta
-    final, y en la última ronda se le obliga a llamarla.
+    final, y en la última ronda se le obliga a llamarla. `max_tokens` corta el bucle cuando
+    los tokens acumulados en `usage` lo superan.
     """
     reminders = 0
     for round_number in range(max_rounds):
@@ -77,6 +82,8 @@ def run_tool_agent(client, model, messages, tools, handlers, final_tool, finaliz
         if getattr(response, "usage", None):
             usage["prompt_tokens"] += response.usage.prompt_tokens or 0
             usage["completion_tokens"] += response.usage.completion_tokens or 0
+        if max_tokens and usage["prompt_tokens"] + usage["completion_tokens"] > max_tokens:
+            raise TokenLimitExceeded(f"Agent exceeded its token limit ({max_tokens})")
         message = response.choices[0].message
         if not message.tool_calls:
             if forced:

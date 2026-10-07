@@ -25,6 +25,10 @@ class InMemoryKnowledgeGraph(KnowledgeGraphRepository):
                 and not (c["upload_id"] == exclude_open_upload_id
                          and c["status"] in OPEN_STATUSES)][:limit]
 
+    def project_llm_tokens(self, project_id):
+        return sum(run.get("llm_tokens") or 0 for run in self.runs.values()
+                   if run["project_id"] == project_id)
+
     def save_run(self, run):
         if run["run_id"] in self.runs:
             return False

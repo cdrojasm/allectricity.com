@@ -10,7 +10,8 @@ from src.infrastructure.processing.document_sources import (
 
 
 def _pdf(pages) -> bytes:
-    """PDF mínimo: cada página es texto (str) o una imagen JPEG (bytes)."""
+    """PDF mínimo: cada página es texto (str), una imagen JPEG (bytes) o un contenido crudo
+    (tupla ("raw", operadores)) para dibujos vectoriales y tablas."""
     objects = {1: b"<< /Type /Catalog /Pages 2 0 R >>", 3: b"<< /Type /Font /Subtype /Type1 "
                b"/BaseFont /Helvetica >>"}
     kids, number = [], 4
@@ -18,7 +19,9 @@ def _pdf(pages) -> bytes:
         page_id, content_id = number, number + 1
         number += 2
         resources = b"<< /Font << /F1 3 0 R >> >>"
-        if isinstance(page, bytes):
+        if isinstance(page, tuple):
+            stream = page[1]
+        elif isinstance(page, bytes):
             image_id = number
             number += 1
             width, height = Image.open(io.BytesIO(page)).size
@@ -114,6 +117,56 @@ def test_pdf_retries_when_ocr_is_unavailable_for_every_page(monkeypatch):
     monkeypatch.setattr(document_sources, "ocr_image", unavailable)
     with pytest.raises(OCRUnavailable):
         parse_document(_pdf([_jpeg()]), "application/pdf")
+
+
+def _table_page() -> tuple:
+    """Título fuera de la tabla y una tabla de 3x3 con todas sus líneas dibujadas."""
+    rows = [("a (m)", "R (ohm)", "rho (ohm.m)"), ("1", "15,9", "100"), ("2", "6,4", "80")]
+    ops = [b"0.5 w"]
+    for x in (50, 150, 250, 350):
+        ops.append(b"%d 600 m %d 690 l S" % (x, x))
+    for y in (600, 630, 660, 690):
+        ops.append(b"50 %d m 350 %d l S" % (y, y))
+    ops.append(b"BT /F1 11 Tf 50 720 Td (Tabla 3. Resistividad medida en el sondeo SEV-1) Tj ET")
+    for row_index, row in enumerate(rows):
+        for column_index, value in enumerate(row):
+            ops.append(b"BT /F1 10 Tf %d %d Td (%s) Tj ET"
+                       % (55 + 100 * column_index, 670 - 30 * row_index, value.encode()))
+    return ("raw", b"\n".join(ops))
+
+
+def test_pdf_tables_keep_page_table_row_and_cell():
+    source = parse_document(_pdf([_table_page()]), "application/pdf")
+    assert source.coverage["table_pages"] == [1] and source.coverage["tables"] == 1
+    page_text = source.segment_text(source.segment("p1"))
+    assert "Tabla 3" in page_text and "15,9" not in page_text  # la tabla no se duplica
+    row = source.segment("p1t1r2")
+    assert row.locator == {"page": 1, "table": 1, "row": 2}
+    assert source.segment_text(row) == "1 | 15,9 | 100"
+    start = source.text.index("15,9")
+    assert source.locator_for(start, start + 4)["cells"] == ["P1T1R2C2"]
+    # El localizador de página también encuentra las filas de la tabla.
+    assert row in source.resolve({"page": 1, "table": 1, "row": 2})
+
+
+def test_vector_pdf_without_embedded_image_is_rendered_for_ocr(monkeypatch):
+    received = []
+
+    def fake_ocr(data):
+        received.append(data)
+        return _ocr_result(["PLANO MALLA SPT", "Conductor 2/0 AWG"], confidence=52.0)
+
+    monkeypatch.setattr(document_sources, "ocr_image", fake_ocr)
+    drawing = ("raw", b"2 w 100 100 m 500 100 l 500 500 l 100 500 l h S 100 300 m 500 300 l S")
+    source = parse_document(_pdf([drawing, ("raw", b"")]), "application/pdf")
+    assert len(received) == 1 and received[0][:8] == b"\x89PNG\r\n\x1a\n"
+    assert source.coverage["ocr_pages"] == [1] and source.coverage["empty_pages"] == [2]
+    assert source.coverage["low_quality_pages"] == [1]
+    assert source.coverage["page_quality"] == [{"page": 1, "mean_confidence": 52.0,
+                                                "low_confidence_ratio": 0.0,
+                                                "needs_review": True}]
+    start = source.text.index("2/0 AWG")
+    assert source.quality_for(start, start + 7) == (52.0, True)
 
 
 def test_csv_rows_and_cells():

@@ -44,3 +44,7 @@ class KnowledgeGraphRepository(ABC):
 
     @abstractmethod
     def summary(self, project_id: str) -> dict: ...
+
+    @abstractmethod
+    def project_llm_tokens(self, project_id: str) -> int:
+        """Tokens LLM consumidos por todas las ejecuciones documentales del proyecto."""

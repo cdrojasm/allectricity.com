@@ -522,6 +522,14 @@ class Neo4jKnowledgeGraph(KnowledgeGraphRepository):
                 "questions": questions, "open_conflicts": conflicts, "entities": entities,
                 "documents": documents}
 
+    def project_llm_tokens(self, project_id: str) -> int:
+        self.ensure_schema()
+        with self._session() as session:
+            return session.run(
+                "MATCH (r:ExtractionRun {project_id: $project_id}) "
+                "RETURN coalesce(sum(r.llm_tokens), 0) AS n", project_id=project_id
+            ).single()["n"]
+
     def list_runs(self, project_id: str, upload_id: str | None = None, limit: int = 50) -> list:
         self.ensure_schema()
         where = "AND r.upload_id = $upload_id " if upload_id else ""

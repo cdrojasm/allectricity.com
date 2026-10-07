@@ -216,6 +216,36 @@ def scan_file_upload(self, upload_id):
         )
 
 
+@celery_app.task(name="spat.reprocess_document", bind=True, autoretry_for=(RuntimeError,),
+                 retry_backoff=30, retry_jitter=True, max_retries=3)
+def reprocess_document(self, upload_id):
+    """Vuelve a extraer un documento disponible (p. ej. tras cambiar prompt, modelo, parser o
+    el límite de tokens). Si nada cambió, la ejecución ya existe y no se duplica."""
+    import logging
+    from time import time
+
+    store = upload_store()
+    with store.transaction() as db:
+        upload = db.one("file_uploads", id=upload_id)
+    if not upload or upload["status"] != "available":
+        return
+    storage = ObjectStorage()
+    maximum = int(os.getenv("UPLOAD_MAX_BYTES", str(20 * 1024 * 1024)))
+    data = storage.read_object(upload["target_bucket"], upload["object_key"], maximum)
+    try:
+        source, run = extract_knowledge(upload, data, upload["expected_mime"], knowledge_graph())
+    except ValueError as exc:
+        logging.getLogger(__name__).warning("reprocess %s rejected: %s", upload_id, exc)
+        return
+    if run["status"] == "already_processed":
+        return
+    with store.transaction(write=True) as db:
+        db.change("file_uploads", upload_id, updated_at=int(time()),
+                  ocr_confidence=source.ocr.get("mean_confidence"),
+                  ocr_low_confidence_ratio=source.ocr.get("low_confidence_ratio"),
+                  ocr_needs_review=source.ocr.get("needs_review", False))
+
+
 @celery_app.task(name="spat.reconcile_file_uploads")
 def reconcile_file_uploads():
     """Recover lost scan jobs and expire abandoned uploads without deleting their records."""
