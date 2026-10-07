@@ -14,6 +14,7 @@ from sqlalchemy import (
     CheckConstraint,
     JSON,
     Index,
+    text,
 )
 
 metadata = MetaData()
@@ -180,10 +181,15 @@ file_uploads = Table(
     Column("ocr_confidence", Float),
     Column("ocr_low_confidence_ratio", Float),
     Column("ocr_needs_review", Boolean, nullable=False, server_default="false"),
+    Column("attempt_count", BigInteger, nullable=False, server_default="0"),
+    Column("processing_started_at", BigInteger),
+    Column("last_error", Text),
+    Column("quarantine_deleted_at", BigInteger),
     Column("created_at", BigInteger, nullable=False),
     Column("updated_at", BigInteger, nullable=False),
-    CheckConstraint("status IN ('pending', 'scanning', 'available', 'rejected', 'failed')", name="ck_file_upload_status"),
+    CheckConstraint("status IN ('pending', 'scanning', 'available', 'rejected', 'failed', 'expired')", name="ck_file_upload_status"),
 )
+Index("ix_file_uploads_status_updated", file_uploads.c.status, file_uploads.c.updated_at)
 projects = Table(
     "projects",
     metadata,
@@ -210,6 +216,8 @@ artefacto_diseno_tierras = Table(
     Column("version", BigInteger, nullable=False),
     Column("name", String(160), nullable=False),
     Column("snapshot", JSON, nullable=False),
+    # {"kind": "user" | "agent", "run_id", "summary", "provenance": {path: {kind, ref}}}
+    Column("origin", JSON),
     Column("created_by", ForeignKey("users.id"), nullable=False),
     Column("created_at", BigInteger, nullable=False),
     UniqueConstraint("artifact_id", "version", name="uq_artefacto_diseno_tierras_version"),
@@ -264,9 +272,16 @@ chat_messages = Table(
     Column("updated_at", BigInteger, nullable=False),
     Column("status", String(20), nullable=False),
     Column("task_id", String(36)),
+    # Agent run that produced or consumed the message. No FK: agent_runs references
+    # chat_messages and is created by a later revision.
+    Column("run_id", String(36), index=True),
+    # Structured data for the client, e.g. {"kind": "artifact.updated", "artifact_id", "version", ...}.
+    Column("payload", JSON),
+    # Millisecond creation time: orders messages created within the same second.
+    Column("created_ms", BigInteger),
     CheckConstraint("source IN ('agent', 'user', 'notification')", name="ck_chat_message_source"),
     CheckConstraint("type IN ('text', 'image', 'audio', 'file')", name="ck_chat_message_type"),
-    CheckConstraint("status IN ('pending', 'processing', 'completed', 'failed')", name="ck_chat_message_status"),
+    CheckConstraint("status IN ('pending', 'processing', 'completed', 'failed', 'cancelled')", name="ck_chat_message_status"),
 )
 message_contents = Table(
     "message_contents",
@@ -279,6 +294,70 @@ message_contents = Table(
     Column("mime_type", String(120), nullable=False),
     Column("created_at", BigInteger, nullable=False),
     CheckConstraint("format IN ('image', 'file')", name="ck_message_content_format"),
+)
+AGENT_RUN_STATUSES = ("'queued', 'running', 'waiting_user', 'waiting_calculation', "
+                      "'cancelling', 'completed', 'failed', 'cancelled'")
+AGENT_ACTIVE_FILTER = "status NOT IN ('completed', 'failed', 'cancelled')"
+AGENT_MODES = "'consulta', 'asistido', 'autonomo'"
+agent_runs = Table(
+    "agent_runs",
+    metadata,
+    key(),
+    Column("conversation_id", ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True),
+    Column("project_id", ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True),
+    Column("trigger_message_id", ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False),
+    Column("artifact_id", String(36)),
+    Column("base_version", BigInteger),
+    Column("mode", String(20), nullable=False),
+    Column("status", String(24), nullable=False),
+    Column("plan", JSON, nullable=False),
+    Column("current_step", String(80)),
+    Column("draft_snapshot", JSON),
+    Column("pending_calculation_id", String(36)),
+    Column("pending_question", JSON),
+    Column("inbox", JSON, nullable=False),
+    Column("usage", JSON, nullable=False),
+    Column("error", Text),
+    Column("created_by", ForeignKey("users.id"), nullable=False),
+    Column("created_at", BigInteger, nullable=False),
+    Column("updated_at", BigInteger, nullable=False),
+    Column("finished_at", BigInteger),
+    CheckConstraint(f"status IN ({AGENT_RUN_STATUSES})", name="ck_agent_run_status"),
+    CheckConstraint(f"mode IN ({AGENT_MODES})", name="ck_agent_run_mode"),
+)
+# At most one non-terminal run per conversation.
+Index("uq_agent_runs_active", agent_runs.c.conversation_id, unique=True,
+      postgresql_where=text(AGENT_ACTIVE_FILTER), sqlite_where=text(AGENT_ACTIVE_FILTER))
+agent_events = Table(
+    "agent_events",
+    metadata,
+    key(),
+    Column("conversation_id", ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False),
+    Column("run_id", ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True),
+    Column("seq", BigInteger, nullable=False),
+    Column("type", String(40), nullable=False),
+    Column("level", String(12), nullable=False),
+    Column("title", String(200), nullable=False),
+    Column("detail", Text),
+    Column("payload", JSON, nullable=False),
+    Column("created_at", BigInteger, nullable=False),
+    UniqueConstraint("conversation_id", "seq", name="uq_agent_event_seq"),
+    CheckConstraint("level IN ('info', 'progress', 'warning', 'error', 'success')", name="ck_agent_event_level"),
+)
+agent_conversation_state = Table(
+    "agent_conversation_state",
+    metadata,
+    Column("id", ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True),
+    Column("project_id", ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True),
+    Column("artifact_id", String(36)),
+    Column("mode", String(20), nullable=False),
+    Column("summary", Text, nullable=False),
+    Column("assumptions", JSON, nullable=False),
+    Column("open_questions", JSON, nullable=False),
+    Column("decisions", JSON, nullable=False),
+    Column("last_event_seq", BigInteger, nullable=False),
+    Column("updated_at", BigInteger, nullable=False),
+    CheckConstraint(f"mode IN ({AGENT_MODES})", name="ck_agent_state_mode"),
 )
 rate_limits = Table(
     "rate_limits",

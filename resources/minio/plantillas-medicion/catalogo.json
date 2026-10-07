@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "templates": [
+    {
+      "id": "wenner",
+      "method": "wenner",
+      "title": "Método de Wenner",
+      "description": "Cuatro electrodos equiespaciados a una distancia a. Lectura de resistencia R por espaciamiento.",
+      "formula": "ρa = 2·π·a·R",
+      "files": [
+        {
+          "format": "xlsx",
+          "key": "wenner/plantilla_resistividad_wenner.xlsx",
+          "filename": "plantilla_resistividad_wenner.xlsx",
+          "size_bytes": 8467
+        },
+        {
+          "format": "csv",
+          "key": "wenner/plantilla_resistividad_wenner.csv",
+          "filename": "plantilla_resistividad_wenner.csv",
+          "size_bytes": 276
+        }
+      ]
+    },
+    {
+      "id": "schlumberger",
+      "method": "schlumberger",
+      "title": "Método de Schlumberger",
+      "description": "Electrodos de potencial fijos (MN) y de corriente que se alejan (AB/2). Útil para sondeos profundos.",
+      "formula": "ρa = π·R·((AB/2)² − (MN/2)²) / MN",
+      "files": [
+        {
+          "format": "xlsx",
+          "key": "schlumberger/plantilla_resistividad_schlumberger.xlsx",
+          "filename": "plantilla_resistividad_schlumberger.xlsx",
+          "size_bytes": 8908
+        },
+        {
+          "format": "csv",
+          "key": "schlumberger/plantilla_resistividad_schlumberger.csv",
+          "filename": "plantilla_resistividad_schlumberger.csv",
+          "size_bytes": 315
+        }
+      ]
+    },
+    {
+      "id": "tres-puntos",
+      "method": "three_point",
+      "title": "Tres puntos (caída de potencial con varilla)",
+      "description": "Varilla de prueba hincada a distintas longitudes; la resistencia se mide por caída de potencial.",
+      "formula": "ρa = 2·π·L·R / (ln(8·L/d) − 1)",
+      "files": [
+        {
+          "format": "xlsx",
+          "key": "tres-puntos/plantilla_resistividad_tres_puntos.xlsx",
+          "filename": "plantilla_resistividad_tres_puntos.xlsx",
+          "size_bytes": 8942
+        },
+        {
+          "format": "csv",
+          "key": "tres-puntos/plantilla_resistividad_tres_puntos.csv",
+          "filename": "plantilla_resistividad_tres_puntos.csv",
+          "size_bytes": 392
+        }
+      ]
+    },
+    {
+      "id": "polo-dipolo",
+      "method": "pole_dipole",
+      "title": "Polo–dipolo",
+      "description": "Un electrodo de corriente remoto y un dipolo de potencial de longitud a a n·a del polo.",
+      "formula": "ρa = 2·π·a·n·(n + 1)·R",
+      "files": [
+        {
+          "format": "xlsx",
+          "key": "polo-dipolo/plantilla_resistividad_polo_dipolo.xlsx",
+          "filename": "plantilla_resistividad_polo_dipolo.xlsx",
+          "size_bytes": 8471
+        },
+        {
+          "format": "csv",
+          "key": "polo-dipolo/plantilla_resistividad_polo_dipolo.csv",
+          "filename": "plantilla_resistividad_polo_dipolo.csv",
+          "size_bytes": 246
+        }
+      ]
+    }
+  ]
+}

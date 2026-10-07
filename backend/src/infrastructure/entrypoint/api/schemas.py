@@ -1,9 +1,17 @@
-from pydantic import BaseModel, Field, model_validator
+from typing import Literal
 
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from src.domain.spat.grid_geometry import MAX_CONDUCTORS, MAX_RODS, geometry_problems
 from src.infrastructure.calculations.safety_criteria import IEEE80_2013, SUPPORTED_STANDARDS
+from src.infrastructure.calculations.conductor_thermal import MATERIALS
 
 
-class ComplianceCriterion(BaseModel):
+class StrictRequestModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ComplianceCriterion(StrictRequestModel):
     criterion_id: str = Field(min_length=1, max_length=100)
     title: str = Field(min_length=1, max_length=240)
     description: str = Field(default="", max_length=4000)
@@ -12,7 +20,7 @@ class ComplianceCriterion(BaseModel):
     notes: str | None = Field(default=None, max_length=4000)
 
 
-class ComplianceStandard(BaseModel):
+class ComplianceStandard(StrictRequestModel):
     standard_id: str = Field(min_length=1, max_length=120)
     title: str = Field(min_length=1, max_length=240)
     edition: str | None = Field(default=None, max_length=80)
@@ -20,25 +28,59 @@ class ComplianceStandard(BaseModel):
     criteria: list[ComplianceCriterion] = Field(default_factory=list, max_length=100)
 
 
-class SoilLayerRequest(BaseModel):
+class SoilLayerRequest(StrictRequestModel):
     resistivity_ohm_m: float = Field(gt=0)
     depth_m: float | None = Field(default=None, gt=0)
+    material: str | None = Field(default=None, max_length=120)
 
 
-class SoilMeasurementRequest(BaseModel):
+class ArtifactSoilLayerRequest(SoilLayerRequest):
+    """A layer of the artifact's stratigraphy: it may be described by material and thickness
+    before its resistivity is known; the potential calculation requires every resistivity."""
+
+    resistivity_ohm_m: float | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def described(self):
+        if self.resistivity_ohm_m is None and not self.material:
+            raise ValueError("a soil layer needs its resistivity or at least its material")
+        return self
+
+
+class SoilMeasurementRequest(StrictRequestModel):
     spacing_m: float = Field(gt=0)
     apparent_resistivity_ohm_m: float = Field(gt=0)
     potential_spacing_m: float | None = Field(default=None, gt=0)
+    locator: str | None = Field(default=None, max_length=180)
 
 
-class SoilMeasurementsRequest(BaseModel):
+class SoilMeasurementsRequest(StrictRequestModel):
     array: str = Field(default="wenner", pattern="^(wenner|schlumberger)$")
     measurements: list[SoilMeasurementRequest] = Field(min_length=4, max_length=200)
     outlier_threshold: float = Field(default=0.15, gt=0, lt=1)
     layer_count: int = Field(default=2, ge=2, le=8)
+    source: dict | None = None
 
 
-class GridGeometryRequest(BaseModel):
+class SoilFileImportRequest(StrictRequestModel):
+    upload_id: str = Field(min_length=36, max_length=36)
+    sheet: str | None = Field(default=None, max_length=120)
+    spacing_column: str = Field(min_length=1, max_length=3)
+    value_column: str = Field(min_length=1, max_length=3)
+    potential_column: str | None = Field(default=None, max_length=3)
+    first_row: int = Field(ge=1)
+    last_row: int = Field(ge=1)
+    decimal: str = Field(default="auto", pattern="^(auto|,|\\.)$")
+    array: str = Field(default="wenner", pattern="^(wenner|schlumberger)$")
+    value_kind: str = Field(default="apparent_resistivity", pattern="^(apparent_resistivity|resistance)$")
+    spacing_unit: str = Field(default="m", pattern="^(m|cm|mm)$")
+    potential_spacing_unit: str = Field(default="m", pattern="^(m|cm|mm)$")
+    value_unit: str = Field(default="ohm_m", pattern="^(ohm_m|ohm_cm|ohm)$")
+    layer_count: int = Field(default=2, ge=2, le=8)
+    outlier_threshold: float = Field(default=0.15, gt=0, lt=1)
+
+
+class GridGeometryRequest(StrictRequestModel):
     length_m: float = Field(gt=0)
     width_m: float = Field(gt=0)
     burial_depth_m: float = Field(default=0.5, gt=0)
@@ -47,12 +89,81 @@ class GridGeometryRequest(BaseModel):
     rod_length_m: float = Field(default=2.4, gt=0)
 
 
-class FaultScenarioRequest(BaseModel):
+class PlanPoint(StrictRequestModel):
+    x: float = Field(ge=0, le=1e5, description="m desde la esquina de origen, a lo largo del largo")
+    y: float = Field(ge=0, le=1e5, description="m desde la esquina de origen, a lo largo del ancho")
+
+
+class ConductorLineRequest(StrictRequestModel):
+    start: PlanPoint
+    end: PlanPoint
+
+
+class RodRequest(PlanPoint):
+    length_m: float | None = Field(default=None, gt=0, le=100, description="Por defecto, rod_length_m")
+
+
+class ArtifactGeometryRequest(StrictRequestModel):
+    """Plan of the artifact's grid: regular (spacing per axis) or drawn conductor by conductor."""
+
+    length_m: float = Field(gt=0, le=1e5)
+    width_m: float = Field(gt=0, le=1e5)
+    burial_depth_m: float = Field(default=0.5, gt=0)
+    conductor_spacing_m: float | None = Field(default=None, gt=0, description="Retícula homogénea")
+    conductor_spacing_x_m: float | None = Field(default=None, gt=0,
+                                                description="Separación entre conductores medida a lo largo de X")
+    conductor_spacing_y_m: float | None = Field(default=None, gt=0,
+                                                description="Separación entre conductores medida a lo largo de Y")
+    conductors: list[ConductorLineRequest] = Field(default_factory=list, max_length=MAX_CONDUCTORS,
+                                                   description="Conductores trazados; reemplazan la retícula regular")
+    rods_count: int = Field(default=0, ge=0)
+    rod_length_m: float = Field(default=2.4, gt=0)
+    rods: list[RodRequest] = Field(default_factory=list, max_length=MAX_RODS,
+                                   description="Varillas en posiciones explícitas; reemplazan rods_count")
+
+    @model_validator(mode="after")
+    def plan_is_buildable(self):
+        problems = geometry_problems(self.model_dump(mode="json"))
+        if problems:
+            raise ValueError("; ".join(problems))
+        if self.rods:
+            self.rods_count = len(self.rods)
+        return self
+
+
+class FaultScenarioRequest(StrictRequestModel):
     current_a: float = Field(gt=0)
     clearing_time_s: float = Field(gt=0)
     surface_resistivity_ohm_m: float = Field(default=3000, gt=0)
     surface_thickness_m: float = Field(default=0.1, gt=0)
     body_weight_kg: float = Field(default=50, ge=50, le=70)
+
+
+class ArtifactFaultRequest(FaultScenarioRequest):
+    """Fault data of an artifact; it may stay incomplete until the calculation is requested."""
+
+    current_a: float | None = Field(default=None, gt=0)
+    clearing_time_s: float | None = Field(default=None, gt=0)
+
+
+class GroundingConductorRequest(StrictRequestModel):
+    material_id: str = Field(default="copper_hard_drawn", min_length=1, max_length=60)
+    cross_section_mm2: float = Field(default=86.590147, gt=0, le=10000)
+    joint_type: str = Field(default="bolted", pattern="^(bolted|brazed|welded|other)$")
+    maximum_temperature_c: float = Field(default=250, gt=-273.15, le=2000)
+    thermal_duration_s: float = Field(default=1.0, gt=0, le=60, description="t_c; independiente del tiempo de choque t_s")
+    ambient_temperature_c: float = Field(default=40, ge=-50, le=200)
+
+    @model_validator(mode="after")
+    def material_and_temperature_are_valid(self):
+        material = MATERIALS.get(self.material_id)
+        if not material:
+            raise ValueError(f"Material IEEE 80 no soportado: {self.material_id}")
+        if self.maximum_temperature_c > material["fusion_temp_c"]:
+            raise ValueError("La temperatura máxima supera la de fusión del material")
+        if self.maximum_temperature_c <= self.ambient_temperature_c:
+            raise ValueError("La temperatura máxima debe ser superior a la temperatura ambiente")
+        return self
 
 
 def default_grounding_compliance():
@@ -90,13 +201,20 @@ def default_grounding_compliance():
     ]
 
 
-class GroundingArtifactRequest(BaseModel):
+class GroundingArtifactRequest(StrictRequestModel):
+    """A version of the design. The grid, the soil or the fault data may be missing while the
+    design is built up in any order; the potential calculation refuses an incomplete artifact."""
+
+    schema_version: Literal["1.0"] = "1.0"
     name: str = Field(min_length=1, max_length=160)
-    geometry: GridGeometryRequest
-    soil_layers: list[SoilLayerRequest] = Field(min_length=1, max_length=8)
+    geometry: ArtifactGeometryRequest | None = None
+    soil_layers: list[ArtifactSoilLayerRequest] = Field(default_factory=list, max_length=8)
     soil_measurements: SoilMeasurementsRequest | None = None
-    fault: FaultScenarioRequest
-    compliance: list[ComplianceStandard] = Field(default_factory=default_grounding_compliance, max_length=30)
+    soil_model: dict | None = None
+    fault: ArtifactFaultRequest = Field(default_factory=ArtifactFaultRequest)
+    conductor: GroundingConductorRequest = Field(default_factory=GroundingConductorRequest)
+    compliance: list[ComplianceStandard] = Field(default_factory=default_grounding_compliance, max_length=30,
+                                                 validate_default=True)
 
 
 class ReturnPathRequest(BaseModel):

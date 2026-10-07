@@ -1,21 +1,26 @@
-"""Langfuse-prompted extraction and consolidation agents for document ingestion."""
+"""Langfuse-prompted extraction and consolidation agents for document ingestion.
+
+The extractor reads the source only through bounded search/read tools and returns a
+payload in the versioned extraction contract; it never writes to Neo4j. The consolidator
+can only flag claims for review and raise questions: it cannot accept, reject or drop them.
+"""
 
 import json
 import os
-import re
-from functools import lru_cache
+import time
 
+from src.domain.knowledge_graph.contract import (
+    EXTRACTION_SCHEMA, SCHEMA_VERSION, split_item_errors, structural_errors,
+)
+from src.domain.knowledge_graph.taxonomy import taxonomy_summary
+from src.domain.knowledge_graph.validation import validate_extraction
+from src.infrastructure.agents.runtime import (
+    clients as _clients, load_prompt as _load_prompt, new_usage as _new_usage,
+    run_tool_agent as _run_tool_agent, tool as _tool,
+)
 
-@lru_cache
-def _clients():
-    from langfuse import get_client
-    from openai import OpenAI
-
-    langfuse = get_client()
-    options = {"api_key": os.environ["LLM_API_KEY"]}
-    if os.getenv("LLM_BASE_URL"):
-        options["base_url"] = os.environ["LLM_BASE_URL"]
-    return langfuse, OpenAI(**options)
+MAX_SUBMISSIONS = 3
+READ_CHARS = 4000
 
 
 def enabled() -> bool:
@@ -29,256 +34,191 @@ def enabled() -> bool:
     ))
 
 
-def _load_prompt(name_env: str, default_name: str):
-    langfuse, _ = _clients()
-    name = os.getenv(name_env, default_name)
-    label = os.getenv("LANGFUSE_PROMPT_LABEL", "production")
-    version_env = name_env.replace("NAME", "VERSION")
-    version = os.getenv(version_env)
-    kwargs = {
-        "label": label,
-        "type": "chat",
-        "cache_ttl_seconds": int(os.getenv("LANGFUSE_PROMPT_CACHE_SECONDS", "300")),
+def model_name() -> str:
+    return os.getenv("LLM_MODEL", "gpt-4o-mini")
+
+
+def load_prompts() -> dict:
+    """Prompts del extractor y consolidador con su versión (forman parte del ID de ejecución)."""
+    extractor = _load_prompt("DOCUMENT_EXTRACTOR_PROMPT_NAME", "spat-document-extractor")
+    consolidator = _load_prompt("DOCUMENT_CONSOLIDATOR_PROMPT_NAME", "spat-document-consolidator")
+    return {
+        "extractor": extractor,
+        "consolidator": consolidator,
+        "meta": {
+            "extractor_prompt_name": extractor[0],
+            "extractor_prompt_version": extractor[1].version,
+            "consolidator_prompt_name": consolidator[0],
+            "consolidator_prompt_version": consolidator[1].version,
+            "prompt_label": os.getenv("LANGFUSE_PROMPT_LABEL", "production"),
+            "model": model_name(),
+        },
     }
-    if version:
-        kwargs.pop("label")
-        kwargs["version"] = int(version)
-    prompt = langfuse.get_prompt(name, **kwargs)
-    return prompt, prompt.compile()
 
 
-def _search_lines(text: str, query: str, limit: int = 8) -> dict:
-    lines = text.splitlines()
+def _search(source, query: str, limit: int = 8) -> dict:
     needle = query.casefold().strip()
     if not needle:
         return {"matches": []}
     matches = []
-    for index, line in enumerate(lines):
-        if needle in line.casefold():
-            matches.append({"line": index + 1, "text": line[:1200]})
-            if len(matches) >= limit:
-                break
+    for segment in source.segments:
+        text = source.segment_text(segment)
+        position = text.casefold().find(needle)
+        if position < 0:
+            continue
+        start, end = max(0, position - 250), min(len(text), position + len(needle) + 250)
+        matches.append({"segment": segment.id, "locator": segment.locator,
+                        "snippet": text[start:end], "ocr_quality": segment.quality})
+        if len(matches) >= limit:
+            break
     return {"matches": matches}
 
 
-def _read_lines(text: str, start_line: int, end_line: int) -> dict:
-    lines = text.splitlines()
-    start = max(1, min(start_line, len(lines) or 1))
-    end = max(start, min(end_line, start + 39, len(lines)))
-    return {"lines": [{"line": number, "text": lines[number - 1][:1200]}
-                       for number in range(start, end + 1)]}
+def _read(source, segment_id: str, offset: int = 0) -> dict:
+    segment = source.segment(segment_id)
+    if segment is None:
+        return {"error": "Unknown segment"}
+    text = source.segment_text(segment)
+    offset = max(0, min(int(offset or 0), len(text)))
+    end = min(len(text), offset + READ_CHARS)
+    return {"segment": segment.id, "locator": segment.locator, "offset": offset,
+            "text": text[offset:end], "next_offset": end if end < len(text) else None,
+            "ocr_quality": segment.quality}
 
 
-def _run_tool_agent(client, model, messages, tools, handlers, final_tool, max_rounds=6):
-    for _ in range(max_rounds):
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            temperature=0,
-        )
-        message = response.choices[0].message
-        if not message.tool_calls:
-            raise RuntimeError("Agent returned without its required structured result")
-        messages.append(message.model_dump(exclude_none=True))
-        final_result = None
-        for tool_call in message.tool_calls:
-            name = tool_call.function.name
-            try:
-                arguments = json.loads(tool_call.function.arguments or "{}")
-            except json.JSONDecodeError as exc:
-                raise RuntimeError(f"Agent emitted invalid arguments for {name}") from exc
-            if name not in handlers:
-                result = {"error": "Unknown tool"}
-            else:
-                result = handlers[name](arguments)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": json.dumps(result, ensure_ascii=False),
-            })
-            if name == final_tool:
-                final_result = result
-        if final_result is not None:
-            return final_result
-    raise RuntimeError("Agent exceeded its tool-call limit")
+def _outline(source, offset: int = 0, limit: int = 60) -> dict:
+    offset = max(0, int(offset or 0))
+    items = [{"segment": s.id, "locator": s.locator,
+              "preview": source.segment_text(s)[:100]}
+             for s in source.segments[offset:offset + limit]]
+    next_offset = offset + limit if offset + limit < len(source.segments) else None
+    return {"segments": items, "total": len(source.segments), "next_offset": next_offset}
 
 
-def _tool(name: str, description: str, properties: dict, required: list[str]):
-    return {
-        "type": "function",
-        "function": {
-            "name": name,
-            "description": description,
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required,
-                "additionalProperties": False,
-            },
-        },
-    }
-
-
-def _document_tools(text: str):
+def _document_tools(source):
     tools = [
-        _tool("search_document", "Find literal text in the source document.",
+        _tool("list_segments", "List source segments (page, sheet row, paragraph...) with "
+              "their locators.", {"offset": {"type": "integer"}}, []),
+        _tool("search_document", "Find literal text in the source; returns segment IDs.",
               {"query": {"type": "string"}}, ["query"]),
-        _tool("read_document_lines", "Read source lines by 1-based line number.",
-              {"start_line": {"type": "integer"}, "end_line": {"type": "integer"}},
-              ["start_line", "end_line"]),
+        _tool("read_segment", "Read a source segment by ID, in chunks of 4000 characters.",
+              {"segment": {"type": "string"}, "offset": {"type": "integer"}}, ["segment"]),
     ]
     handlers = {
-        "search_document": lambda args: _search_lines(text, args["query"]),
-        "read_document_lines": lambda args: _read_lines(
-            text, args["start_line"], args["end_line"]
-        ),
+        "list_segments": lambda args: _outline(source, args.get("offset", 0)),
+        "search_document": lambda args: _search(source, args["query"]),
+        "read_segment": lambda args: _read(source, args["segment"], args.get("offset", 0)),
     }
     return tools, handlers
 
 
-def _valid_extractions(raw: dict, text: str) -> list[dict]:
-    allowed = {"Transformer", "Motor", "Circuit", "GroundingGrid", "ElectricalParameter"}
-    results = []
-    for item in raw.get("findings", []):
-        if not isinstance(item, dict) or item.get("type") not in allowed:
-            continue
-        evidence = item.get("evidence", "")
-        name = str(item.get("name", "")).strip()
-        if not isinstance(evidence, str) or not evidence or len(evidence) > 1200:
-            continue
-        start = text.casefold().find(evidence.casefold())
-        if start < 0 or not name or name.casefold() not in evidence.casefold():
-            continue
-        end = start + len(evidence)
-        finding = {
-            "type": item["type"],
-            "name": name,
-            "start": start,
-            "end": end,
-            "source_excerpt": text[max(0, start - 100):min(len(text), end + 100)],
-            "extraction_method": "llm_extractor",
-            "needs_review": True,
-        }
-        if item["type"] == "ElectricalParameter":
-            value, unit = str(item.get("value", "")).strip(), str(item.get("unit", "")).strip()
-            if (not re.fullmatch(r"\d+(?:[.,]\d+)?", value) or not unit
-                    or value not in evidence or unit.casefold() not in evidence.casefold()):
-                continue
-            finding.update(value=value.replace(",", "."), unit=unit)
-        results.append(finding)
-    return results
+def run_llm_extraction(source, rule_payload: dict, filename: str, prompts: dict) -> dict:
+    """Extractor ReAct: devuelve el payload del contrato o errores explícitos."""
+    _, client = _clients()
+    _, _, extractor_messages = prompts["extractor"]
+    usage, started = _new_usage(), time.monotonic()
+    tools, handlers = _document_tools(source)
+    parameters = {key: value for key, value in EXTRACTION_SCHEMA.items()
+                  if key not in {"$schema", "$id", "title"}}
+    submit = {"type": "function", "function": {
+        "name": "submit_extraction",
+        "description": "Return grounded entities, attributes and relations in the extraction "
+                       "contract. Every finding needs evidence with an exact quote and locator.",
+        "parameters": parameters,
+    }}
+    attempts = {"count": 0, "errors": []}
 
+    def finalize(arguments):
+        attempts["count"] += 1
+        errors = structural_errors(arguments)
+        # Tras el último intento, los errores de ítems sueltos los descarta la validación;
+        # solo un payload inválido en su raíz anula la extracción.
+        attempts["errors"] = split_item_errors(arguments)[2] if errors else []
+        # Retroalimentación con la misma validación determinista que se aplicará después.
+        report = validate_extraction(arguments, source, project_id="preview", method="llm")
+        problems = errors + [f"{item['finding_id']}: {item['code']} — {item['message']}"
+                             for item in report["rejected"]]
+        if problems and attempts["count"] < MAX_SUBMISSIONS:
+            return False, {"accepted": False, "errors": problems[:60],
+                           "instruction": "These findings would be discarded. Fix them (copy "
+                           "quotes verbatim from read_segment, list every finding id in "
+                           "evidence.finding_ids, use the segment locator) or drop them, then "
+                           "call submit_extraction again with the full payload."}
+        return True, {"accepted": not errors}
 
-def run_document_agents(
-    text: str,
-    rule_findings: list[dict],
-    ocr: dict,
-    filename: str,
-    project_context: list[dict] | None = None,
-) -> dict:
-    """Run the ReAct extractor, then the consolidator; all LLM data stays provisional."""
-    langfuse, client = _clients()
-    model = os.getenv("LLM_MODEL", "gpt-4o-mini")
-
-    extractor_prompt, extractor_messages = _load_prompt(
-        "DOCUMENT_EXTRACTOR_PROMPT_NAME", "spat-document-extractor"
-    )
-    tools, handlers = _document_tools(text)
-    handlers["submit_findings"] = lambda args: args
-    submit_extraction = _tool(
-        "submit_findings", "Return grounded candidate findings and uncertainties.",
-        {"findings": {"type": "array", "items": {"type": "object",
-          "properties": {"type": {"type": "string"}, "name": {"type": "string"},
-            "value": {"type": "string"}, "unit": {"type": "string"},
-            "evidence": {"type": "string"}}, "required": ["type", "name", "evidence"],
-          "additionalProperties": False}},
-         "uncertainties": {"type": "array", "items": {"type": "string"}}},
-        ["findings", "uncertainties"],
-    )
-    extraction = _run_tool_agent(
-        client, model,
+    payload = _run_tool_agent(
+        client, model_name(),
         [*extractor_messages, {"role": "user", "content": json.dumps({
             "filename": filename,
-            "ocr_needs_review": ocr.get("needs_review", False),
-            "ocr_confidence": ocr.get("mean_confidence"),
-            "rule_candidates": rule_findings,
-            "next_step": "Inspect the source with tools, then call submit_findings.",
+            "schema_version": SCHEMA_VERSION,
+            "taxonomy": taxonomy_summary(),
+            "document": {"segments": len(source.segments), "coverage": source.coverage,
+                         "ocr": source.ocr},
+            "outline": _outline(source)["segments"],
+            "rule_candidates": rule_payload,
+            "next_step": "Inspect the source with tools, then call submit_extraction.",
         }, ensure_ascii=False)}],
-        [*tools, submit_extraction], handlers, "submit_findings",
+        [*tools, submit], handlers, "submit_extraction", finalize, usage,
     )
-    llm_findings = _valid_extractions(extraction, text)
-    findings = [dict(item, extraction_method="rules", needs_review=False)
-                for item in rule_findings] + llm_findings
-    for index, finding in enumerate(findings):
-        finding["finding_id"] = f"f{index + 1}"
+    usage["duration_seconds"] = round(time.monotonic() - started, 3)
+    usage["submissions"] = attempts["count"]
+    if attempts["errors"]:
+        return {"payload": None, "errors": attempts["errors"], "usage": usage}
+    return {"payload": payload, "errors": [], "usage": usage}
 
-    consolidator_prompt, consolidator_messages = _load_prompt(
-        "DOCUMENT_CONSOLIDATOR_PROMPT_NAME", "spat-document-consolidator"
-    )
-    consolidation_tools, consolidation_handlers = _document_tools(text)
-    consolidation_handlers["finalize_consolidation"] = lambda args: args
-    finalize = _tool(
-        "finalize_consolidation", "Return included finding IDs, review IDs and questions.",
-        {"include_ids": {"type": "array", "items": {"type": "string"}},
-         "review_ids": {"type": "array", "items": {"type": "string"}},
+
+def _claim_brief(claim: dict) -> dict:
+    if claim["kind"] == "entity":
+        content = f"{claim['entity_type']} «{claim['name']}»"
+    elif claim["kind"] == "attribute":
+        content = (f"{claim['subject_name']}.{claim['attribute']} = "
+                   f"{claim['value_literal']} {claim['unit_literal']}".strip())
+    else:
+        content = f"{claim['source_name']} {claim['relation_type']} {claim['target_name']}"
+    return {"claim_id": claim["claim_id"], "kind": claim["kind"], "content": content,
+            "status": claim["status"], "review_reasons": claim["review_reasons"],
+            "evidence": [{"quote": e["quote"][:400], "locator": e["locator"]}
+                         for e in claim["evidence"][:2]]}
+
+
+def run_llm_consolidation(source, claims: list, questions: list, project_context: list,
+                          filename: str, prompts: dict) -> dict:
+    """El consolidador solo puede marcar revisión y formular preguntas."""
+    _, client = _clients()
+    _, _, consolidator_messages = prompts["consolidator"]
+    usage, started = _new_usage(), time.monotonic()
+    tools, handlers = _document_tools(source)
+    finalize_tool = _tool(
+        "finalize_consolidation", "Return claim IDs that need review, questions and a summary.",
+        {"review_claim_ids": {"type": "array", "items": {"type": "string"}},
          "questions": {"type": "array", "items": {"type": "object",
              "properties": {"question": {"type": "string"},
-               "finding_ids": {"type": "array", "items": {"type": "string"}}},
-             "required": ["question", "finding_ids"], "additionalProperties": False}},
+                            "claim_ids": {"type": "array", "items": {"type": "string"}}},
+             "required": ["question", "claim_ids"], "additionalProperties": False}},
          "summary": {"type": "string"}},
-        ["include_ids", "review_ids", "questions", "summary"],
+        ["review_claim_ids", "questions", "summary"],
     )
-    consolidated = _run_tool_agent(
-        client, model,
+    result = _run_tool_agent(
+        client, model_name(),
         [*consolidator_messages, {"role": "user", "content": json.dumps({
             "filename": filename,
-            "findings": findings,
-            "existing_project_graph": project_context or [],
-            "extractor_uncertainties": extraction.get("uncertainties", []),
-            "ocr_needs_review": ocr.get("needs_review", False),
+            "claims": [_claim_brief(claim) for claim in claims],
+            "deterministic_questions": [q["question"] for q in questions],
+            "existing_project_graph": project_context,
             "instruction": "Use source tools to check conflicts before finalizing.",
         }, ensure_ascii=False)}],
-        [*consolidation_tools, finalize], consolidation_handlers, "finalize_consolidation",
+        [*tools, finalize_tool], handlers, "finalize_consolidation",
+        lambda arguments: (True, {"accepted": True}), usage,
     )
-    known = {finding["finding_id"] for finding in findings}
-    included = set(consolidated.get("include_ids", [])) & known
-    review = set(consolidated.get("review_ids", [])) & known
-    if not included:
-        included = known
-        review = known
-    selected = []
-    for finding in findings:
-        if finding["finding_id"] not in included:
-            continue
-        finding["needs_review"] = (
-            finding["needs_review"]
-            or finding["finding_id"] in review
-            or ocr.get("needs_review", False)
-        )
-        selected.append(finding)
-    valid_questions = []
-    for question in consolidated.get("questions", []):
-        ids = sorted(set(question.get("finding_ids", [])) & known)
-        text_question = str(question.get("question", "")).strip()
-        if text_question:
-            valid_questions.append({"question": text_question[:1000], "finding_ids": ids})
-
+    usage["duration_seconds"] = round(time.monotonic() - started, 3)
+    known = {claim["claim_id"] for claim in claims}
     return {
-        "findings": selected,
-        "consolidation": {
-            "summary": str(consolidated.get("summary", ""))[:3000],
-            "questions": valid_questions,
-            "extractor_prompt_name": os.getenv(
-                "DOCUMENT_EXTRACTOR_PROMPT_NAME", "spat-document-extractor"
-            ),
-            "extractor_prompt_version": extractor_prompt.version,
-            "consolidator_prompt_name": os.getenv(
-                "DOCUMENT_CONSOLIDATOR_PROMPT_NAME", "spat-document-consolidator"
-            ),
-            "consolidator_prompt_version": consolidator_prompt.version,
-            "prompt_label": os.getenv("LANGFUSE_PROMPT_LABEL", "production"),
-            "enabled": True,
-        },
+        "review_claim_ids": sorted(set(result.get("review_claim_ids", [])) & known),
+        "questions": [
+            {"question": str(q.get("question", "")).strip()[:1000],
+             "claim_ids": sorted(set(q.get("claim_ids", [])) & known)}
+            for q in result.get("questions", []) if str(q.get("question", "")).strip()
+        ],
+        "summary": str(result.get("summary", ""))[:3000],
+        "usage": usage,
     }

@@ -1,17 +1,37 @@
 """Versioned land grounding design artifact endpoints."""
 
 from time import time
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from hashlib import sha256
+from zipfile import BadZipFile
 
-from src.infrastructure.entrypoint.api.schemas import GroundingArtifactRequest, PotentialCalculationRequest, SoilMeasurementsRequest
-from src.infrastructure.calculations.soil_model import ResistivityMeasurement, fit_two_layer, to_soil_layers
-from src.infrastructure.calculations.n_layer_soil import fit_n_layer, soil_layers_record
-from src.infrastructure.entrypoint.worker.tasks import calculate_artifact_potential
+from src.application.use_cases import potential_calculations
+from src.domain.spat.artifact_contract import validate_artifact
+from src.infrastructure.entrypoint.api.schemas import (GroundingArtifactRequest, PotentialCalculationRequest,
+                                                       SoilFileImportRequest, SoilMeasurementsRequest)
+from src.domain.spat import soil_materials
+from src.infrastructure.calculations.soil_sounding import fit_sounding
+from src.application.use_cases.agent_runs import AgentRuns
+from src.infrastructure.entrypoint.worker.tasks import calculate_artifact_potential, enqueue_agent_step
 from src.infrastructure.security.middleware import require
+from src.infrastructure.entrypoint.api.file_routes import storage_client
+from src.infrastructure.processing.measurement_tables import XLSX_MIME, extract, read_table
+from src.domain.spat.soundings import apparent_resistivity
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/artefactos-diseno-tierras", tags=["artefactos-diseno-tierras"])
+catalog_router = APIRouter(prefix="/api/v1", tags=["catalogos"])
+
+
+@catalog_router.get("/materiales-suelo")
+def soil_material_table(q: str | None = None, resistividad_ohm_m: float | None = None,
+                        actor=Depends(require())):
+    """Indicative soil resistivity by material (orientation only; never replaces a sounding)."""
+    if resistividad_ohm_m is not None and resistividad_ohm_m <= 0:
+        raise HTTPException(422, "resistividad_ohm_m must be positive")
+    if q is None and resistividad_ohm_m is None:
+        return soil_materials.table()
+    return soil_materials.search(q, resistividad_ohm_m, limit=50)
 
 
 @router.post("/mediciones-suelo/ajustar")
@@ -25,32 +45,64 @@ def fit_soil_measurements(project_id: str, payload: SoilMeasurementsRequest, req
     """
     with request.app.state.services.store.transaction() as db:
         owned_project(db, project_id, actor)
-    readings = [ResistivityMeasurement(**item.model_dump()) for item in payload.measurements]
     try:
-        if payload.layer_count == 2:
-            fit = fit_two_layer(readings, payload.array, outlier_threshold=payload.outlier_threshold)
-            model_record = {"upper_resistivity_ohm_m": fit.model.rho1_ohm_m,
-                            "lower_resistivity_ohm_m": fit.model.rho2_ohm_m,
-                            "upper_thickness_m": fit.model.h_m}
-            layer_records = to_soil_layers(fit)
-            uncertainty = fit.relative_uncertainty_percent
-            forward_model = "two-layer-image-series"
-        else:
-            fit = fit_n_layer(readings, payload.layer_count, payload.array, outlier_threshold=payload.outlier_threshold)
-            layer_records = soil_layers_record(fit.model)
-            model_record = {"model": "n-layer", "layers": layer_records}
-            uncertainty = fit.relative_uncertainty_percent
-            forward_model = fit.forward_model
+        return fit_sounding([item.model_dump() for item in payload.measurements], payload.array,
+                            payload.layer_count, payload.outlier_threshold)
     except (ValueError, ArithmeticError) as exc:
         raise HTTPException(422, str(exc)) from exc
-    return {"model": model_record, "layer_count": payload.layer_count,
-            "soil_layers": layer_records, "array": fit.array,
-            "rms_error_percent": fit.rms_error_percent,
-            "uniform_resistivity_ohm_m": fit.uniform_resistivity_ohm_m,
-            "uniform_rms_error_percent": fit.uniform_rms_error_percent,
-            "relative_uncertainty_percent": uncertainty, "forward_model": forward_model,
-            "residuals_percent": fit.residuals_percent, "excluded": fit.excluded,
-            "warnings": fit.warnings}
+
+
+@router.post("/mediciones-suelo/archivo/ajustar")
+def fit_soil_file(project_id: str, payload: SoilFileImportRequest, request: Request,
+                  actor=Depends(require("designs:write"))):
+    """Import explicit CSV/XLSX columns from a scanned project upload and fit the sounding."""
+    with request.app.state.services.store.transaction() as db:
+        owned_project(db, project_id, actor)
+        upload = db.one("file_uploads", id=payload.upload_id, project_id=project_id,
+                        owner_id=actor.user_id)
+    if not upload or upload["status"] != "available":
+        raise HTTPException(404, "Scanned project file not found")
+    mime = upload["expected_mime"]
+    if mime not in {"text/csv", XLSX_MIME}:
+        raise HTTPException(415, "Only scanned CSV and XLSX files can be imported")
+    try:
+        data = storage_client().read_object(upload["target_bucket"], upload["object_key"], 25 * 1024 * 1024)
+        sheets = read_table(data, mime)
+        table = extract(sheets, sheet=payload.sheet, spacing_column=payload.spacing_column,
+                        value_column=payload.value_column, potential_column=payload.potential_column,
+                        first_row=payload.first_row, last_row=payload.last_row, decimal=payload.decimal)
+        factor = {"m": 1.0, "cm": 0.01, "mm": 0.001}[payload.spacing_unit]
+        potential_factor = {"m": 1.0, "cm": 0.01, "mm": 0.001}[payload.potential_spacing_unit]
+        value_factor = {"ohm_m": 1.0, "ohm_cm": 0.01, "ohm": 1.0}[payload.value_unit]
+        readings = []
+        for item in table["readings"]:
+            spacing = item["spacing_m"] * factor
+            potential = item.get("potential_spacing_m")
+            if potential is not None:
+                potential *= potential_factor
+            if payload.value_kind == "resistance":
+                if payload.value_unit != "ohm":
+                    raise ValueError("Resistance readings must use value_unit='ohm'")
+                rho = apparent_resistivity(payload.array, spacing, item["value"], potential)
+            else:
+                if payload.value_unit == "ohm":
+                    raise ValueError("Apparent resistivity readings need value_unit='ohm_m' or 'ohm_cm'")
+                rho = item["value"] * value_factor
+            reading = {"spacing_m": spacing, "apparent_resistivity_ohm_m": rho,
+                       "locator": item["locator"]}
+            if potential is not None:
+                reading["potential_spacing_m"] = potential
+            readings.append(reading)
+        source = {"kind": "file", "upload_id": payload.upload_id, "filename": upload["filename"],
+                  "mime_type": mime, "sha256": sha256(data).hexdigest(), "sheet": table["sheet"],
+                  "rows": [r["locator"] for r in readings],
+                  "skipped_rows": table["skipped_rows"], "value_kind": payload.value_kind,
+                  "spacing_unit": payload.spacing_unit, "value_unit": payload.value_unit}
+        fit = fit_sounding([{k: v for k, v in row.items() if k != "locator"} for row in readings],
+                           payload.array, payload.layer_count, payload.outlier_threshold)
+        return {**fit, "source": source, "measurements": readings}
+    except (ValueError, ArithmeticError, UnicodeDecodeError, BadZipFile) as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 def owned_project(db, project_id, actor):
@@ -61,50 +113,38 @@ def owned_project(db, project_id, actor):
 
 
 def snapshot(payload):
-    return payload.model_dump(mode="json")
+    return validate_artifact(payload.model_dump(mode="json"))
 
 
 @router.post("", status_code=201)
 def create_artifact(project_id: str, payload: GroundingArtifactRequest, request: Request, actor=Depends(require("designs:write"))):
-    now, artifact_id = int(time()), str(uuid4())
-    row = {"id": str(uuid4()), "project_id": project_id, "artifact_id": artifact_id,
-           "version": 1, "name": payload.name, "snapshot": snapshot(payload),
-           "created_by": actor.user_id, "created_at": now}
     with request.app.state.services.store.transaction(write=True) as db:
         owned_project(db, project_id, actor)
-        db.add("artefacto_diseno_tierras_counters", id=artifact_id, project_id=project_id, last_version=1)
-        db.add("artefacto_diseno_tierras", **row)
-    return row
+        return db.designs.create(project_id, payload.name, snapshot(payload), actor.user_id, {"kind": "user"})
 
 
 @router.get("")
 def list_artifacts(project_id: str, request: Request, actor=Depends(require("designs:read"))):
     with request.app.state.services.store.transaction() as db:
         owned_project(db, project_id, actor)
-        rows = db.many("artefacto_diseno_tierras", project_id=project_id, limit=10000)
-    newest = {}
-    for row in rows:
-        current = newest.get(row["artifact_id"])
-        if current is None or row["version"] > current["version"]:
-            newest[row["artifact_id"]] = row
-    return sorted(newest.values(), key=lambda row: row["created_at"], reverse=True)
+        return db.designs.latest_by_artifact(project_id)
 
 
 @router.get("/{artifact_id}/versions")
 def list_versions(project_id: str, artifact_id: str, request: Request, actor=Depends(require("designs:read"))):
     with request.app.state.services.store.transaction() as db:
         owned_project(db, project_id, actor)
-        rows = db.many("artefacto_diseno_tierras", project_id=project_id, artifact_id=artifact_id, limit=10000)
+        rows = db.designs.versions(project_id, artifact_id)
     if not rows:
         raise HTTPException(404, "Artifact not found")
-    return sorted(rows, key=lambda row: row["version"], reverse=True)
+    return rows
 
 
 @router.get("/{artifact_id}/versions/{version}")
 def get_version(project_id: str, artifact_id: str, version: int, request: Request, actor=Depends(require("designs:read"))):
     with request.app.state.services.store.transaction() as db:
         owned_project(db, project_id, actor)
-        row = db.one("artefacto_diseno_tierras", project_id=project_id, artifact_id=artifact_id, version=version)
+        row = db.designs.get_version(project_id, artifact_id, version)
     if not row:
         raise HTTPException(404, "Artifact version not found")
     return row
@@ -113,28 +153,32 @@ def get_version(project_id: str, artifact_id: str, version: int, request: Reques
 @router.post("/{artifact_id}/versions", status_code=201)
 @router.put("/{artifact_id}", status_code=201)
 def create_version(project_id: str, artifact_id: str, payload: GroundingArtifactRequest, request: Request, actor=Depends(require("designs:write"))):
-    now = int(time())
     with request.app.state.services.store.transaction(write=True) as db:
         owned_project(db, project_id, actor)
-        counter = db.one("artefacto_diseno_tierras_counters", id=artifact_id, project_id=project_id)
-        if not counter:
-            raise HTTPException(404, "Artifact not found")
-        row = {"id": str(uuid4()), "project_id": project_id, "artifact_id": artifact_id,
-               "version": counter["last_version"] + 1, "name": payload.name,
-               "snapshot": snapshot(payload), "created_by": actor.user_id, "created_at": now}
-        db.change("artefacto_diseno_tierras_counters", artifact_id, last_version=row["version"])
-        db.add("artefacto_diseno_tierras", **row)
-    return row
+        return db.designs.append_version(project_id, artifact_id, payload.name, snapshot(payload), actor.user_id,
+                                         {"kind": "user"})
+
+
+@router.post("/{artifact_id}/versions/{version}/restaurar", status_code=201)
+def restore_version(project_id: str, artifact_id: str, version: int, request: Request,
+                    actor=Depends(require("designs:write"))):
+    """Undo: append a new version with the snapshot of an earlier one (history is never rewritten)."""
+    with request.app.state.services.store.transaction(write=True) as db:
+        owned_project(db, project_id, actor)
+        row = db.designs.get_version(project_id, artifact_id, version)
+        if not row:
+            raise HTTPException(404, "Artifact version not found")
+        return db.designs.append_version(project_id, artifact_id, row["name"], row["snapshot"], actor.user_id,
+                                         {"kind": "user", "restored_from": version,
+                                                 "provenance": (row.get("origin") or {}).get("provenance")})
 
 
 @router.delete("/{artifact_id}/versions/{version}", status_code=204)
 def delete_version(project_id: str, artifact_id: str, version: int, request: Request, actor=Depends(require("designs:write"))):
     with request.app.state.services.store.transaction(write=True) as db:
         owned_project(db, project_id, actor)
-        row = db.one("artefacto_diseno_tierras", project_id=project_id, artifact_id=artifact_id, version=version)
-        if not row:
+        if not db.designs.delete_version(project_id, artifact_id, version):
             raise HTTPException(404, "Artifact version not found")
-        db.remove("artefacto_diseno_tierras", row["id"])
     return Response(status_code=204)
 
 
@@ -142,22 +186,19 @@ def delete_version(project_id: str, artifact_id: str, version: int, request: Req
 def request_potential_calculation(project_id: str, artifact_id: str, version: int, payload: PotentialCalculationRequest,
                                   request: Request, actor=Depends(require("designs:write"))):
     """Queue a potential-engine calculation for one immutable artifact version."""
-    now = int(time())
-    row = {"id": str(uuid4()), "project_id": project_id, "artifact_id": artifact_id, "artifact_version": version,
-           "status": "pending", "parameters": payload.model_dump(), "result": None, "trace": None, "error": None,
-           "created_by": actor.user_id, "created_at": now, "updated_at": now}
-    with request.app.state.services.store.transaction(write=True) as db:
+    store = request.app.state.services.store
+    with store.transaction(write=True) as db:
         owned_project(db, project_id, actor)
-        if not db.one("artefacto_diseno_tierras", project_id=project_id, artifact_id=artifact_id, version=version):
-            raise HTTPException(404, "Artifact version not found")
-        db.add("calculos_potencial_tierras", **row)
+        try:
+            row = potential_calculations.create_calculation(db, project_id, artifact_id, version,
+                                                            payload.model_dump(), actor.user_id)
+        except potential_calculations.CalculationBlocked as exc:
+            raise HTTPException(exc.status, exc.detail) from exc
     # Dispatch only after the database transaction has committed.
     try:
         calculate_artifact_potential.apply_async(args=[row["id"]], task_id=row["id"])
     except Exception as exc:
-        with request.app.state.services.store.transaction(write=True) as db:
-            db.change("calculos_potencial_tierras", row["id"], status="failed",
-                      error="No se pudo encolar el cálculo", updated_at=int(time()))
+        potential_calculations.mark_dispatch_failed(store, row["id"])
         raise HTTPException(503, "Unable to queue potential calculation") from exc
     return row
 
@@ -195,4 +236,11 @@ def cancel_potential_calculation(project_id: str, artifact_id: str, calculation_
         if row["status"] not in {"pending", "running"}:
             raise HTTPException(409, f"Calculation is already {row['status']}")
         db.change("calculos_potencial_tierras", calculation_id, status="cancelled", updated_at=int(time()))
-        return {**row, "status": "cancelled"}
+    # An agent run waiting for this calculation continues (and reports the cancellation).
+    run_id = AgentRuns(request.app.state.services.store).calculation_finished(calculation_id)
+    if run_id:
+        try:
+            enqueue_agent_step(run_id)
+        except Exception:
+            AgentRuns(request.app.state.services.store).fail(run_id, "Unable to queue agent step after cancellation")
+    return {**row, "status": "cancelled"}

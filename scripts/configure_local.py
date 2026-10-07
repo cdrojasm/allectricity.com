@@ -15,6 +15,7 @@ for key, value in {
     "__MINIO_SECRET_KEY__": secrets.token_urlsafe(36),
     "__MINIO_WEBHOOK_TOKEN__": secrets.token_urlsafe(32),
     "__NEO4J_PASSWORD__": secrets.token_urlsafe(32),
+    "__OCR_INTERNAL_TOKEN__": secrets.token_urlsafe(32),
 }.items():
     template = template.replace(key, value)
 try:

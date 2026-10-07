@@ -6,7 +6,10 @@ from math import cos, log2, pi, sin
 from time import monotonic, time
 from typing import Any
 
+from src.domain.spat import grid_geometry
+from src.domain.spat.artifact_contract import validate_document
 from src.infrastructure.calculations import safety_criteria
+from src.infrastructure.calculations.conductor_thermal import calculate_thermal_size, equivalent_radius_m
 from src.infrastructure.calculations.fault_current import ReturnPath, grid_current
 from src.infrastructure.calculations.potential_engine_client import (
     MAX_LAYERS,
@@ -19,6 +22,7 @@ from src.infrastructure.calculations.potential_engine_client import (
     SoilModel,
     TwoLayerSoil,
     interface_depths,
+    network_segments,
     point_batch_size,
     rectangular_grid_segments,
     soil_record,
@@ -137,9 +141,23 @@ def _solve(client, soil, segments, current, points, origin=INJECTION_ORIGIN):
 
 def _segments(geometry: dict[str, Any], parameters: dict[str, Any], soil: SoilModel, scale: float = 1.0):
     step = float(parameters["discretization_m"]) * scale
+    spacing_x, spacing_y = grid_geometry.spacings(geometry)
+    if grid_geometry.is_explicit(geometry) or spacing_x != spacing_y:
+        # Drawn conductors, explicit rods or a different spacing per axis: general network,
+        # centred on the outline like the regular mesh.
+        half_x, half_y = geometry["length_m"] / 2, geometry["width_m"] / 2
+        rods = grid_geometry.rod_points(geometry)
+        pieces = grid_geometry.split_lines(grid_geometry.conductor_lines(geometry), [(x, y) for x, y, _ in rods])
+        return network_segments(
+            lines=[((a[0] - half_x, a[1] - half_y), (b[0] - half_x, b[1] - half_y)) for a, b in pieces],
+            rods=[(x - half_x, y - half_y, length) for x, y, length in rods],
+            burial_depth_m=geometry["burial_depth_m"], conductor_radius_m=parameters["conductor_radius_m"],
+            group=GROUP, discretization_m=step, interface_depths_m=interface_depths(soil),
+            segmentation=parameters.get("segmentation", DEFAULT_SEGMENTATION),
+        )
     return rectangular_grid_segments(
         length_m=geometry["length_m"], width_m=geometry["width_m"],
-        conductor_spacing_m=geometry["conductor_spacing_m"], burial_depth_m=geometry["burial_depth_m"],
+        conductor_spacing_m=spacing_x, burial_depth_m=geometry["burial_depth_m"],
         conductor_radius_m=parameters["conductor_radius_m"], group=GROUP,
         rods_count=geometry.get("rods_count", 0), rod_length_m=geometry.get("rod_length_m", 2.4),
         discretization_m=step,
@@ -150,17 +168,25 @@ def _segments(geometry: dict[str, Any], parameters: dict[str, Any], soil: SoilMo
 
 def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: PotentialEngineClient) -> dict[str, Any]:
     """Return `{"result": ..., "trace": ...}` for an artifact snapshot and calculation parameters."""
+    missing = grid_geometry.missing_for_calculation(snapshot)
+    if missing:
+        raise UnsupportedModelError("El artefacto está incompleto para calcular; faltan: " + ", ".join(missing))
     geometry, fault = snapshot["geometry"], snapshot["fault"]
+    conductor = snapshot.get("conductor")
+    effective_parameters = parameters
+    if conductor:
+        # One section controls both the thermal check and the equivalent radius used by the field solver.
+        effective_parameters = {**parameters, "conductor_radius_m": equivalent_radius_m(float(conductor["cross_section_mm2"]))}
     soil = soil_model(snapshot["soil_layers"])
-    segments = _segments(geometry, parameters, soil)
+    segments = _segments(geometry, effective_parameters, soil)
     if len(segments) > MAX_SEGMENTS:
         raise UnsupportedModelError(
             f"La malla necesita {len(segments)} segmentos con discretización de "
-            f"{float(parameters['discretization_m']):g} m y el límite es {MAX_SEGMENTS}. Una discretización "
+            f"{float(effective_parameters['discretization_m']):g} m y el límite es {MAX_SEGMENTS}. Una discretización "
             "mayor reduce la precisión de las tensiones de paso."
         )
-    current, origin, fault_breakdown = _fault_current(fault, parameters, client, soil, segments)
-    field = _field(client, geometry, soil, segments, current, origin, float(parameters["surface_spacing_m"]))
+    current, origin, fault_breakdown = _fault_current(fault, effective_parameters, client, soil, segments)
+    field = _field(client, geometry, soil, segments, current, origin, float(effective_parameters["surface_spacing_m"]))
     first, group = field["first"], field["first"]["groups"][GROUP]
     result = {
         "soil": soil_record(soil),
@@ -172,19 +198,41 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
         "segment_count": len(segments),
         "segmentation": parameters.get("segmentation", DEFAULT_SEGMENTATION),
         "surface_point_count": field["point_count"],
+        "surface_potential": field["surface_potential"],
         "diagnostics": first["diagnostics"],
         "engine_warnings": first["warnings"],
         "model_warnings": MODEL_WARNINGS if fault_breakdown is None else MODEL_WARNINGS[1:],
         "fault_current": fault_breakdown,
     }
+    thermal_input = conductor or {
+        "material_id": "copper_hard_drawn",
+        "cross_section_mm2": pi * (float(parameters["conductor_radius_m"]) * 1000.0) ** 2,
+        "joint_type": "unspecified-legacy",
+        "maximum_temperature_c": 250.0,
+        "thermal_duration_s": float(fault["clearing_time_s"]),
+        "ambient_temperature_c": 40.0,
+    }
+    result["conductor_thermal"] = calculate_thermal_size(
+        current_a=current, duration_s=float(thermal_input["thermal_duration_s"]),
+        ambient_temp_c=float(thermal_input["ambient_temperature_c"]),
+        max_temp_c=float(thermal_input["maximum_temperature_c"]),
+        material_id=thermal_input["material_id"],
+        selected_section_mm2=float(thermal_input["cross_section_mm2"]),
+    )
+    result["conductor_thermal"]["joint_type"] = thermal_input["joint_type"]
     hashes = field["hashes"]
     if parameters.get("estimate_uncertainty"):
-        result["numerical_uncertainty"], extra = _uncertainty(client, geometry, parameters, soil, current, origin, field)
+        result["numerical_uncertainty"], extra = _uncertainty(client, geometry, effective_parameters, soil, current, origin, field)
         hashes = hashes + extra
     # IEEE 80 Cs uses the resistivity of the soil directly beneath the surface layer.
-    result["safety"] = _safety(result, fault, top_resistivity(soil), parameters)
-    trace = {**first["trace"], "parameters": parameters, "request_sha256_batches": hashes,
+    result["safety"] = _safety(result, fault, top_resistivity(soil), effective_parameters)
+    trace = {**first["trace"], "schema_version": "1.0", "parameters": effective_parameters,
+             "request_sha256_batches": hashes,
              "fault_current": fault_breakdown, "numerical_uncertainty": result.get("numerical_uncertainty")}
+    trace["conductor_thermal"] = result["conductor_thermal"]
+    result["schema_version"] = "1.0"
+    validate_document("calculation_result", result)
+    validate_document("calculation_trace", trace)
     return {"result": result, "trace": trace}
 
 
@@ -280,10 +328,23 @@ def _field(client, geometry, soil, segments, current, origin, spacing) -> dict[s
         for d in range(STEP_DIRECTIONS):
             difference = abs(v[pid] - probe_v[f"p{c}_{d}"])
             if difference > step_value:
-                step_value, step_from, step_to = difference, raster[pid][:2], probes[f"p{c}_{d}"][:2]
+                step_value, step_from, step_to = difference, list(raster[pid][:2]), list(probes[f"p{c}_{d}"][:2])
     return {
         "first": first,
         "gpr_v": gpr,
+        # This is the raster solved by the engine; step-search probes are not included.
+        "surface_potential": {
+            "spacing_m": spacing,
+            "x_min_m": -half_x - SURFACE_MARGIN_M,
+            "y_min_m": -half_y - SURFACE_MARGIN_M,
+            "grid_x_m": SURFACE_MARGIN_M,
+            "grid_y_m": SURFACE_MARGIN_M,
+            "grid_width_m": 2 * half_x,
+            "grid_height_m": 2 * half_y,
+            "nx": nx + 1,
+            "ny": ny + 1,
+            "values_v": [v[f"s{i}_{j}"] for j in range(ny + 1) for i in range(nx + 1)],
+        },
         "max_touch_v": {"value": gpr - v[touch_id], "x_m": raster[touch_id][0], "y_m": raster[touch_id][1]},
         "max_step_v": {"value": step_value, "from_m": step_from, "to_m": step_to},
         "point_count": len(raster) + len(probes),
@@ -315,8 +376,8 @@ def run_potential_calculation(store, calculation_id: str, client: PotentialEngin
         stale = calculation["status"] == "running" and now - calculation["updated_at"] > STALE_RUNNING_S
         if calculation["status"] != "pending" and not stale:
             return
-        artifact = db.one("artefacto_diseno_tierras", project_id=calculation["project_id"],
-                          artifact_id=calculation["artifact_id"], version=calculation["artifact_version"])
+        artifact = db.designs.get_version(calculation["project_id"], calculation["artifact_id"],
+                                          calculation["artifact_version"])
         db.change("calculos_potencial_tierras", calculation_id, status="running", updated_at=now)
 
     outcome: dict[str, Any] = {}

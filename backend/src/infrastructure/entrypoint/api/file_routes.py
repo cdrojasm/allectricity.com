@@ -26,6 +26,7 @@ ALLOWED_MIME = {
     "image/jpeg",
     "text/csv",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
 
 
@@ -60,12 +61,14 @@ async def minio_object_event(
             upload = db.one("file_uploads", quarantine_key=key)
             if not upload or upload["status"] not in {"pending", "failed"}:
                 continue
-            db.change("file_uploads", upload["id"], status="scanning", updated_at=int(time()))
+            db.change("file_uploads", upload["id"], status="scanning", updated_at=int(time()),
+                      processing_started_at=None, last_error=None)
         try:
             scan_file_upload.delay(upload["id"])
         except Exception as exc:
             with request.app.state.services.store.transaction(write=True) as db:
-                db.change("file_uploads", upload["id"], status="pending", updated_at=int(time()))
+                db.change("file_uploads", upload["id"], status="pending", updated_at=int(time()),
+                          last_error="No se pudo poner el archivo en cola. Vuelve a intentarlo.")
             raise HTTPException(503, "Unable to queue file processing") from exc
         queued += 1
     return {"queued": queued}
@@ -125,15 +128,69 @@ def complete_upload(
             return {"upload_id": upload_id, "status": "available"}
         if upload["status"] == "rejected":
             raise HTTPException(409, f"Upload is {upload['status']}")
+        if upload["status"] == "expired":
+            raise HTTPException(409, "Upload expired; upload the file again")
+        if upload["status"] == "failed":
+            raise HTTPException(409, "Upload failed; use the retry endpoint")
         if upload["status"] == "scanning":
             return {"upload_id": upload_id, "status": "scanning"}
-        db.change("file_uploads", upload_id, status="scanning", updated_at=int(time()))
+        db.change("file_uploads", upload_id, status="scanning", updated_at=int(time()),
+                  processing_started_at=None, last_error=None)
     try:
         scan_file_upload.delay(upload_id)
     except Exception as exc:
         with request.app.state.services.store.transaction(write=True) as db:
-            db.change("file_uploads", upload_id, status="pending", updated_at=int(time()))
+            db.change("file_uploads", upload_id, status="pending", updated_at=int(time()),
+                      last_error="No se pudo poner el archivo en cola. Se reintentará automáticamente.")
         raise HTTPException(503, "Unable to queue file scan") from exc
+    return {"upload_id": upload_id, "status": "scanning"}
+
+
+@router.post("/{upload_id}/retry", status_code=202)
+def retry_upload(upload_id: str, request: Request, actor=Depends(require("files:write"))):
+    store = request.app.state.services.store
+    with store.transaction() as db:
+        upload = db.one("file_uploads", id=upload_id, owner_id=actor.user_id)
+    if not upload:
+        raise HTTPException(404, "Upload not found")
+    if upload["status"] == "available":
+        return {"upload_id": upload_id, "status": "available"}
+    if upload["status"] != "failed":
+        raise HTTPException(409, f"Upload cannot be retried while it is {upload['status']}")
+
+    storage = storage_client()
+    if storage.exists(upload["target_bucket"], upload["object_key"]):
+        with store.transaction(write=True) as db:
+            current = db.one("file_uploads", id=upload_id, owner_id=actor.user_id)
+            if current and current["status"] == "failed":
+                db.change("file_uploads", upload_id, status="available", updated_at=int(time()),
+                          processing_started_at=None, last_error=None)
+        return {"upload_id": upload_id, "status": "available"}
+    if not storage.exists(storage.quarantine_bucket, upload["quarantine_key"]):
+        with store.transaction(write=True) as db:
+            current = db.one("file_uploads", id=upload_id, owner_id=actor.user_id)
+            if current and current["status"] == "failed":
+                db.change("file_uploads", upload_id, status="expired", updated_at=int(time()),
+                          processing_started_at=None,
+                          last_error="El archivo ya no está disponible en cuarentena. Vuelve a cargarlo.")
+        raise HTTPException(409, "The original upload is no longer available; upload the file again")
+
+    with store.transaction(write=True) as db:
+        current = db.one("file_uploads", id=upload_id, owner_id=actor.user_id)
+        if not current:
+            raise HTTPException(404, "Upload not found")
+        if current["status"] != "failed":
+            return {"upload_id": upload_id, "status": current["status"]}
+        db.change("file_uploads", upload_id, status="scanning", updated_at=int(time()),
+                  processing_started_at=None, last_error=None)
+    try:
+        scan_file_upload.delay(upload_id)
+    except Exception as exc:
+        with store.transaction(write=True) as db:
+            db.change("file_uploads", upload_id, status="failed", updated_at=int(time()),
+                      processing_started_at=None,
+                      last_error="No se pudo poner el archivo en cola. Vuelve a intentarlo.")
+        raise HTTPException(503, "Unable to queue file retry") from exc
     return {"upload_id": upload_id, "status": "scanning"}
 
 
@@ -150,4 +207,8 @@ def upload_status(
         "status": upload["status"],
         "ocr_confidence": upload.get("ocr_confidence"),
         "ocr_needs_review": upload.get("ocr_needs_review", False),
+        "attempt_count": upload.get("attempt_count", 0),
+        "last_error": upload.get("last_error"),
+        "created_at": upload["created_at"],
+        "updated_at": upload["updated_at"],
     }

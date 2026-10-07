@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "entities": [
+    {"id": "e1", "type": "Transformer", "name": "T1",
+     "confidence": {"level": "high", "reason": "Etiqueta explícita en el texto"}},
+    {"id": "e3", "type": "ElectricalPanel", "name": "TD-2",
+     "confidence": {"level": "high", "reason": "Etiqueta explícita en el texto"}}
+  ],
+  "attributes": [
+    {"id": "a1", "subject_id": "e1", "name": "rated_voltage", "value": "13,8", "unit": "kV",
+     "confidence": {"level": "high", "reason": "Valor y unidad junto al equipo"}}
+  ],
+  "relations": [
+    {"id": "r1", "type": "SUPPLIES", "source_id": "e1", "target_id": "e3",
+     "confidence": {"level": "medium", "reason": "Verbo «alimenta» explícito"}}
+  ],
+  "evidence": [
+    {"finding_ids": ["e1", "e3", "a1", "r1"],
+     "quote": "El transformador T1, 13,8 kV, alimenta el tablero TD-2",
+     "locator": {"page": 4}}
+  ],
+  "uncertainties": []
+}

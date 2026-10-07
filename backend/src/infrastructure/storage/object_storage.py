@@ -1,9 +1,14 @@
+import io
 import os
 import socket
 import struct
+import zipfile
+from datetime import timedelta
 
 import magic
 from minio import Minio
+from minio.commonconfig import REPLACE, CopySource
+from minio.error import S3Error
 
 
 class ObjectStorage:
@@ -20,18 +25,56 @@ class ObjectStorage:
             secure=secure,
         )
         public_endpoint = os.getenv("MINIO_PUBLIC_ENDPOINT")
-        self.signer = Minio(public_endpoint, access_key=access_key, secret_key=secret_key, secure=secure) if public_endpoint else self.client
+        # Con región fija el firmante no consulta el bucket: el endpoint público no es
+        # alcanzable desde el contenedor y solo se usa para firmar URLs del navegador.
+        self.signer = Minio(public_endpoint, access_key=access_key, secret_key=secret_key, secure=secure,
+                            region=os.getenv("MINIO_REGION", "us-east-1")) if public_endpoint else self.client
         self.quarantine_bucket = os.getenv("MINIO_QUARANTINE_BUCKET", "quarantine")
         self.allowed_buckets = {
             "documents": os.getenv("MINIO_DOCUMENTS_BUCKET", "documents"),
             "designs": os.getenv("MINIO_DESIGNS_BUCKET", "designs"),
+            "templates": os.getenv("MINIO_TEMPLATES_BUCKET", "plantillas"),
         }
 
     def presign_upload(self, key, mime_type):
-        return self.signer.presigned_put_object(self.quarantine_bucket, key, expires=900)
+        return self.signer.presigned_put_object(self.quarantine_bucket, key,
+                                                expires=timedelta(seconds=900))
+
+    def presign_download(self, bucket, key, filename=None):
+        if bucket not in self.allowed_buckets.values():
+            raise ValueError("Bucket is not readable")
+        headers = {"response-content-disposition": f'attachment; filename="{filename}"'} if filename else None
+        return self.signer.presigned_get_object(bucket, key, expires=timedelta(seconds=300),
+                                                response_headers=headers)
+
+    def missing_buckets(self):
+        """Buckets the deployment expects but MinIO does not have (empty when healthy)."""
+        expected = [self.quarantine_bucket, *self.allowed_buckets.values()]
+        return [bucket for bucket in expected if not self.client.bucket_exists(bucket)]
 
     def read(self, key, max_bytes):
-        response = self.client.get_object(self.quarantine_bucket, key)
+        return self._read(self.quarantine_bucket, key, max_bytes)
+
+    def read_object(self, bucket, key, max_bytes):
+        """Read a promoted (scanned) object from one of the allowed buckets."""
+        if bucket not in self.allowed_buckets.values():
+            raise ValueError("Bucket is not readable")
+        return self._read(bucket, key, max_bytes)
+
+    def exists(self, bucket, key):
+        try:
+            self.client.stat_object(bucket, key)
+            return True
+        except S3Error as exc:
+            if exc.code in {"NoSuchKey", "NoSuchObject"}:
+                return False
+            raise
+
+    def remove_quarantine(self, key):
+        self.client.remove_object(self.quarantine_bucket, key)
+
+    def _read(self, bucket, key, max_bytes):
+        response = self.client.get_object(bucket, key)
         try:
             data = response.read(max_bytes + 1)
             if len(data) > max_bytes:
@@ -43,6 +86,14 @@ class ObjectStorage:
 
     def detected_mime(self, data):
         detected = magic.from_buffer(data, mime=True)
+        # Some libmagic builds report DOCX as a generic ZIP; confirm the Word part exists.
+        if detected in {"application/zip", "application/octet-stream"} and data[:2] == b"PK":
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                    if "word/document.xml" in archive.namelist():
+                        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            except zipfile.BadZipFile:
+                pass
         # libmagic classifies plain CSV as text/plain; only accept UTF-8 text here.
         if detected == "text/plain" and b"\0" not in data:
             try:
@@ -80,8 +131,8 @@ class ObjectStorage:
         self.client.copy_object(
             target_bucket,
             object_key,
-            f"/{self.quarantine_bucket}/{key}",
+            CopySource(self.quarantine_bucket, key),
             metadata={"Content-Type": mime_type},
-            metadata_directive="REPLACE",
+            metadata_directive=REPLACE,
         )
         self.client.remove_object(self.quarantine_bucket, key)

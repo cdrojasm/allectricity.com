@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:spat:schema:artifact-diff:1.0",
+  "title": "SPAT design artifact diff",
+  "description": "Current API representation: an array of changed paths. Arrays and scalar values are compared as whole values.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["path", "before", "after"],
+    "properties": {
+      "path": {"type": "string", "minLength": 1},
+      "before": {},
+      "after": {}
+    },
+    "additionalProperties": false
+  }
+}

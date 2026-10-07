@@ -19,6 +19,8 @@ help:
 	  '  migrate        Run database migrations' \
 	  '  create-admin   Create the local admin user' \
 	  '  smoke-auth     Run the authentication smoke check' \
+	  '  smoke-local    Verify frontend, health per component and templates (temporary viewer)' \
+	  '  templates      Regenerate the soil-resistivity templates seeded into MinIO' \
 	  '  sync-prompts   Publish new Langfuse prompt versions with the staging label'
 
 .PHONY: local-up local-down local-build test lint
@@ -54,7 +56,7 @@ lint:
 	$(COMPOSE) --profile test build tests
 	$(COMPOSE) --profile test run --rm --no-deps tests ruff check --no-cache src tests --select E9,F63,F7,F82
 
-.PHONY: local-config migrate create-admin sync-prompts
+.PHONY: local-config migrate create-admin sync-prompts smoke-local templates
 local-config:
 	docker run --rm --name grounding-design-ai-config -v "$(CURDIR):/workspace" -w /workspace python:3.12-alpine python scripts/configure_local.py
 
@@ -70,3 +72,11 @@ sync-prompts:
 .PHONY: smoke-auth
 smoke-auth:
 	$(COMPOSE) exec -T api python -m scripts.smoke_auth
+
+smoke-local:
+	python3 scripts/smoke_local.py
+
+# Regenerates resources/minio/plantillas-medicion; `make local-up` mirrors it into MinIO.
+templates:
+	$(COMPOSE) run --rm --no-deps -v "$(CURDIR):/workspace" -w /workspace --entrypoint python worker scripts/generate_measurement_templates.py
+	$(COMPOSE) up -d --force-recreate minio-init

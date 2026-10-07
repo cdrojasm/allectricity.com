@@ -1,0 +1,81 @@
+%PDF-1.4
+%âãÏÓ
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 2 /Kids [5 0 R 7 0 R] >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 1029 >>
+stream
+BT 15 TL 56 740 Td
+/F2 12 Tf (Memoria de cálculo del sistema de puesta a tierra) Tj T*
+/F1 10.5 Tf (Proyecto: Subestación El Rosal 115/13,8 kV. Revisión B, junio de 2026.) Tj T*
+/F1 10.5 Tf (Norma de referencia: IEEE 80-2013.) Tj T*
+/F1 10.5 Tf () Tj T*
+/F2 12 Tf (1. Descripción de la instalación) Tj T*
+/F1 10.5 Tf (La Subestación El Rosal contiene el transformador T1 y el tablero TD-2.) Tj T*
+/F1 10.5 Tf (El transformador T1, 13,8 kV, alimenta el tablero TD-2.) Tj T*
+/F1 10.5 Tf (El transformador T1 tiene una potencia nominal de 5 MVA y frecuencia de 60 Hz.) Tj T*
+/F1 10.5 Tf (El tablero TD-2 está protegido por el interruptor 52-T1.) Tj T*
+/F1 10.5 Tf () Tj T*
+/F2 12 Tf (2. Escenario de falla de diseño) Tj T*
+/F1 10.5 Tf (Escenario: falla monofásica en barra de 115 kV.) Tj T*
+/F1 10.5 Tf (Corriente de falla a tierra If = 12,5 kA.) Tj T*
+/F1 10.5 Tf (Duración de choque t_s = 0,5 s; duración térmica t_c = 1,0 s.) Tj T*
+/F1 10.5 Tf (Factor de división de corriente Sf = 0,6 y factor de decremento Df = 1,05.) Tj T*
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 8 0 R >>
+endobj
+8 0 obj
+<< /Length 1096 >>
+stream
+BT 15 TL 56 740 Td
+/F2 12 Tf (3. Malla de puesta a tierra) Tj T*
+/F1 10.5 Tf (La malla principal es parte del sistema de puesta a tierra SPT-ER.) Tj T*
+/F1 10.5 Tf (La malla principal mide 60 m x 40 m, con retícula de 5 m.) Tj T*
+/F1 10.5 Tf (La malla principal está enterrada a 0,5 m de profundidad.) Tj T*
+/F1 10.5 Tf (Conductor de la malla principal: cobre desnudo calibre 4/0 AWG \(107,2 mm²\).) Tj T*
+/F1 10.5 Tf (La malla principal incluye 16 varillas de 2,4 m de longitud.) Tj T*
+/F1 10.5 Tf (Capa superficial de grava: resistividad 3000 ohm·m y espesor 0,15 m.) Tj T*
+/F1 10.5 Tf () Tj T*
+/F2 12 Tf (4. Suelo) Tj T*
+/F1 10.5 Tf (Resistividad equivalente del suelo uniforme: 150 ohm·m \(ver sondeo SEV-1\).) Tj T*
+/F1 10.5 Tf () Tj T*
+/F2 12 Tf (5. Resultados) Tj T*
+/F1 10.5 Tf (Resistencia de la malla principal calculada: 0,85 ohm.) Tj T*
+/F1 10.5 Tf (Elevación de potencial de tierra GPR de la malla principal: 6375 V.) Tj T*
+/F1 10.5 Tf (Tensión de contacto tolerable de la malla principal: 838 V.) Tj T*
+/F1 10.5 Tf (Tensión de paso tolerable de la malla principal: 2686 V.) Tj T*
+ET
+endstream
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000127 00000 n 
+0000000224 00000 n 
+0000000326 00000 n 
+0000000462 00000 n 
+0000001543 00000 n 
+0000001679 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R >>
+startxref
+2827
+%%EOF

@@ -40,10 +40,10 @@ entrypoint/API -> application (use cases + ports) -> domain
              infrastructure adapters
 ```
 
-El primer vertical disponible expone `POST /api/v1/designs/assess`: recibe
-geometría, capas de suelo y escenario de falla, y devuelve un artefacto de
-diseño con una evaluación preliminar. El estimador actual no es certificable;
-la implementación trazable de IEEE 80 está planificada en el backlog.
+`POST /api/v1/designs/assess` fue retirado (responde HTTP 410) porque utilizaba
+una aproximación de prefactibilidad sin trazabilidad. El flujo vigente crea un
+artefacto de diseño en `/api/v1/projects/{project_id}/artefactos-diseno-tierras`
+y encola su cálculo trazable en la ruta `.../{artifact_id}/versions/{version}/calculos-potencial`.
 
 ## Ejecutar en local
 
@@ -95,6 +95,18 @@ usa `http://localhost:19000` y su consola
 `MINIO_WEBHOOK_AUTH_TOKEN`, `NEO4J_USER` y `NEO4J_PASSWORD` en `.env`. Ajusta
 `MINIO_*` y `CLAMAV_*` en otros entornos. El límite local de carga es 20 MiB
 (`UPLOAD_MAX_BYTES`).
+
+### Plantillas de medición de resistividad
+
+Las plantillas de campo (Wenner, Schlumberger, tres puntos y polo–dipolo, en XLSX
+con instrucciones y fórmula de ρa, y en CSV separado por `;`) viven en el bucket
+privado `plantillas` de MinIO (`MINIO_TEMPLATES_BUCKET`). `minio-init` las siembra
+desde `resources/minio/plantillas-medicion/` con `mc mirror`, incluido el
+`catalogo.json` que la API lee. `GET /api/v1/plantillas-medicion` lista el catálogo
+y `GET /api/v1/plantillas-medicion/{id}/{xlsx|csv}` devuelve una URL firmada de 5
+minutos; solo se firman archivos del catálogo. En la UI aparecen en la pestaña
+**Mediciones** del proyecto. Para cambiarlas, edita
+`scripts/generate_measurement_templates.py` y ejecuta `make templates`.
 
 El servicio OCR expone `GET /health` y `POST /v1/ocr` (JSON con `image_base64` y
 `language`). El worker lo consume mediante `OCR_SERVICE_URL`; en local apunta a

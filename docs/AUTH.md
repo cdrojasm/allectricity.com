@@ -12,16 +12,29 @@ make create-admin   # email y contraseña por prompt; sin contraseñas por defec
 make test           # tests en contenedor contra PostgreSQL exclusivo de pruebas
 make lint           # análisis estático dentro del contenedor de pruebas
 make smoke-auth     # prueba HTTP/Celery/SMTP real, con cuenta temporal desactivada al terminar
+make smoke-local    # frontend, /health, /ready, salud por componente y plantillas (cuenta temporal)
+make templates      # regenera las plantillas de resistividad y las vuelve a sembrar en MinIO
 ```
 
 `make local-config` no sobrescribe un `.env` existente. Los secretos se generan
 sin imprimirlos, con permisos 0600; el archivo está excluido de Git y del build.
 `make local-down` detiene el despliegue y conserva los volúmenes.
+`make smoke-local` espera hasta un minuto a que el frontend y la API estén
+disponibles; usa `SPAT_FRONTEND_PORT` del entorno o de `.env`. Todo pasa por
+Nginx y por las URL firmadas de MinIO, como en el navegador: comprueba
+`index.html` y sus bundles, `/health` (vida) y `/ready` (base inicializada);
+luego crea un usuario `viewer` temporal dentro del contenedor de la API
+(`scripts/smoke_session.py`), inicia sesión, exige `ok` en cada componente
+requerido de `GET /api/v1/system/health` (PostgreSQL, MinIO y sus buckets,
+Redis, worker Celery, ClamAV, OCR, motor de potenciales; Neo4j es opcional) y
+descarga cada plantilla de resistividad. El usuario se desactiva al terminar,
+así que el resultado es repetible. `--public-only` omite la parte autenticada.
+El dashboard muestra el mismo estado por componente («Estado del sistema»).
 
 Todos los contenedores tienen prefijo `grounding-design-ai-`, igual que las
 imágenes propias, red y volúmenes. PostgreSQL/Redis no publican puertos al host.
 Frontend y API: `http://localhost:3000`; Nginx sirve la UI y expone `/api/`,
-`/docs`, `/openapi.json` y `/ready`. La API no publica un puerto de host.
+`/docs`, `/openapi.json`, `/health` y `/ready`. La API no publica un puerto de host.
 Correo local: `http://localhost:18025` (Mailpit, captura mensajes sin enviarlos
 a Internet). Cambiar `SPAT_FRONTEND_PORT` y `SPAT_MAIL_PORT` en `.env` si esos
 puertos ya están ocupados.

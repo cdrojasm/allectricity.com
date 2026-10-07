@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:spat:schema:calculation-trace:1.0",
+  "title": "SPAT potential calculation trace",
+  "type": "object",
+  "required": ["schema_version", "parameters"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "parameters": {"type": "object"},
+    "request_sha256_batches": {"type": "array", "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "fault_current": {"type": ["object", "null"]},
+    "numerical_uncertainty": {"type": ["object", "null"]},
+    "conductor_thermal": {"type": "object"}
+  },
+  "additionalProperties": true
+}

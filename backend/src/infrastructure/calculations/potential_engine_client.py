@@ -828,6 +828,44 @@ def rectangular_grid_segments(
     return result
 
 
+def network_segments(
+    *,
+    lines: list[tuple[tuple[float, float], tuple[float, float]]],
+    rods: list[tuple[float, float, float]],
+    burial_depth_m: float,
+    conductor_radius_m: float,
+    group: str = "grid",
+    discretization_m: float = 1.0,
+    segmentation: str = "uniform",
+    interface_depths_m: tuple[float, ...] | list[float] | None = None,
+) -> list[ElectrodeSegment]:
+    """Line elements for any network of straight buried conductors and vertical rods.
+
+    `lines` are node-to-node conductor pieces in plan coordinates (already cut at every
+    crossing, junction and rod top, see `grid_geometry.split_lines`); `rods` are (x, y, length).
+    Rods are cut at the soil interfaces like in `rectangular_grid_segments`.
+    """
+    if segmentation not in ("uniform", "graded"):
+        raise ValueError("segmentation must be 'uniform' or 'graded'")
+    if burial_depth_m <= 0 or conductor_radius_m <= 0 or discretization_m <= 0:
+        raise ValueError("burial depth, radius and discretization must be positive")
+    depths = sorted({float(d) for d in (interface_depths_m or ())})
+    z = -float(burial_depth_m)
+    pieces = [ElectrodeSegment(f"line{index}", group, "grid", (a[0], a[1], z), (b[0], b[1], z), conductor_radius_m)
+              for index, (a, b) in enumerate(lines)]
+    for index, (x, y, length) in enumerate(rods):
+        bottom = z - float(length)
+        nodes = [z] + [-d for d in depths if bottom < -d < z] + [bottom]
+        if min(a - b for a, b in zip(nodes, nodes[1:])) < MIN_LENGTH_TO_RADIUS * conductor_radius_m:
+            raise ValueError("a rod crosses a soil interface within 5 radii of its end or of another interface; "
+                             "adjust the rod length or the layer thicknesses")
+        for part, (top, low) in enumerate(zip(nodes, nodes[1:])):
+            pieces.append(ElectrodeSegment(f"rod{index}p{part}", group, "rod", (x, y, top), (x, y, low),
+                                           conductor_radius_m))
+    return discretize(pieces, Segmentation.for_discretization(segmentation, float(discretization_m)),
+                      [-d for d in depths])
+
+
 def rectangular_surface_points(
     *, x_min_m: float, x_max_m: float, y_min_m: float, y_max_m: float,
     spacing_m: float, z_m: float = 0.0,

@@ -1,0 +1,6 @@
+escenario,descripción,corriente de falla,unidad,t_s (s),t_c (s),norma
+F1,falla monofásica en barra de 115 kV,"12,5",kA,"0,5","1,0",IEEE 80-2013
+F2,falla monofásica en barra de 13.8 kV,"8,2",kA,"0,3","0,8",IEEE 80-2013
+F3,falla bifásica a tierra en barra de 13.8 kV,"1,250",A,"0,3","0,8",IEEE 80-2013
+F4,falla con despeje de respaldo,"9,0",kA,120,"1,0",IEEE 80-2013
+F5,falla monofásica en barra de 115 kV (estudio 2024),"11,8",kA,"0,5","1,0",IEEE 80-2000

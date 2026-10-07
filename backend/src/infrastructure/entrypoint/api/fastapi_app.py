@@ -12,25 +12,17 @@ from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
-from src.application.use_cases.assess_grounding_design import AssessGroundingDesign
 from src.domain.identity import ServiceError
-from src.domain.spat.models import (
-    FaultScenario,
-    GroundingDesign,
-    GridGeometry,
-    SoilLayer,
-)
-from src.infrastructure.calculations.ieee80_calculator import (
-    PreliminaryIEEE80Calculator,
-)
-from src.infrastructure.entrypoint.api.schemas import DesignRequest, ProjectRequest
+from src.infrastructure.entrypoint.api.schemas import ProjectRequest
 from src.infrastructure.entrypoint.api.identity_routes import router
 from src.infrastructure.entrypoint.api.file_routes import router as file_router
 from src.infrastructure.entrypoint.api.chat_routes import router as chat_router
-from src.infrastructure.entrypoint.api.artifact_routes import router as artifact_router
-from src.infrastructure.persistence.in_memory_design_repository import (
-    InMemoryDesignRepository,
+from src.infrastructure.entrypoint.api.agent_routes import router as agent_router
+from src.infrastructure.entrypoint.api.artifact_routes import catalog_router, router as artifact_router
+from src.infrastructure.entrypoint.api.knowledge_graph_routes import (
+    router as knowledge_graph_router,
 )
+from src.infrastructure.entrypoint.api.system_routes import router as system_router
 from src.infrastructure.security.container import build_services
 from src.infrastructure.security.middleware import (
     AuthenticationMiddleware,
@@ -56,16 +48,17 @@ def create_app(settings=None, services=None):
     app.include_router(router)
     app.include_router(file_router)
     app.include_router(chat_router)
+    app.include_router(agent_router)
     app.include_router(artifact_router)
+    app.include_router(catalog_router)
+    app.include_router(knowledge_graph_router)
+    app.include_router(system_router)
     app.state.geocoder_search_url = getattr(
         settings,
         "geocoder_search_url",
         os.getenv("SPAT_GEOCODER_SEARCH_URL", "https://nominatim.openstreetmap.org/search"),
     )
     app.state.geocoder_cache = {}
-    repository = InMemoryDesignRepository()
-    assess = AssessGroundingDesign(repository, PreliminaryIEEE80Calculator())
-    design_owners = {}
 
     @app.get("/api/v1/locations/search", tags=["locations"])
     def search_locations(
@@ -173,29 +166,14 @@ def create_app(settings=None, services=None):
                 raise HTTPException(503, "Database not initialized")
         return {"status": "ready"}
 
-    @app.post("/api/v1/designs/assess", status_code=201, tags=["designs"])
-    def create_design(request: DesignRequest, actor=Depends(require("designs:write"))):
-        design = GroundingDesign(
-            design_id=str(uuid4()),
-            name=request.name,
-            geometry=GridGeometry(**request.geometry.model_dump()),
-            soil_layers=[
-                SoilLayer(**layer.model_dump()) for layer in request.soil_layers
-            ],
-            fault=FaultScenario(**request.fault.model_dump()),
+    @app.post("/api/v1/designs/assess", status_code=410, tags=["designs"], deprecated=True)
+    def retired_design_assessment(actor=Depends(require())):
+        raise HTTPException(
+            410,
+            "Este estimador preliminar fue retirado. Use el flujo trazable de artefactos "
+            "POST /api/v1/projects/{project_id}/artefactos-diseno-tierras y "
+            "POST /api/v1/projects/{project_id}/artefactos-diseno-tierras/{artifact_id}/versions/{version}/calculos-potencial.",
         )
-        result = assess.execute(design)
-        design_owners[design.design_id] = actor.user_id
-        return asdict(result)
-
-    @app.get("/api/v1/designs/{design_id}", tags=["designs"])
-    def get_design(design_id: str, actor=Depends(require("designs:read"))):
-        design = repository.get(design_id)
-        if design is None or (
-            not actor.privileged and design_owners.get(design_id) != actor.user_id
-        ):
-            raise HTTPException(404, "Design not found")
-        return asdict(design)
 
     return app
 

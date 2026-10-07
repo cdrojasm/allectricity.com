@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "entities": [
+    {"id": "e1", "type": "NuclearReactor", "name": "T1",
+     "confidence": {"level": "high", "reason": "x"}}
+  ],
+  "attributes": [], "relations": [],
+  "evidence": [{"finding_ids": ["e1"], "quote": "transformador T1", "locator": {"page": 4}}],
+  "uncertainties": []
+}

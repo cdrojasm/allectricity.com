@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.1",
+  "entities": [
+    {"id": "transformer.T1", "type": "Transformer", "name": "T1",
+     "confidence": {"level": "high", "reason": "Etiqueta explícita"},
+     "evidence": [{"quote": "El transformador T1, 13,8 kV, alimenta el tablero TD-2",
+                   "locator": {"page": 4}}]},
+    {"id": "panel.TD-2", "type": "ElectricalPanel", "name": "TD-2",
+     "confidence": {"level": "high", "reason": "Etiqueta explícita"},
+     "evidence": [{"quote": "alimenta el tablero TD-2", "locator": {"page": 4}}]}
+  ],
+  "attributes": [
+    {"id": "T1:rated_voltage", "subject_id": "transformer.T1", "name": "rated_voltage",
+     "value": "13,8", "unit": "kV",
+     "confidence": {"level": "high", "reason": "Valor junto al equipo"},
+     "evidence": [{"quote": "El transformador T1, 13,8 kV", "locator": {"page": 4}}]}
+  ],
+  "relations": [
+    {"id": "T1-supplies-TD-2", "type": "SUPPLIES", "source_id": "transformer.T1",
+     "target_id": "panel.TD-2", "confidence": {"level": "medium", "reason": "«alimenta»"},
+     "evidence": [{"quote": "El transformador T1, 13,8 kV, alimenta el tablero TD-2",
+                   "locator": {"page": 4}}]}
+  ],
+  "uncertainties": []
+}

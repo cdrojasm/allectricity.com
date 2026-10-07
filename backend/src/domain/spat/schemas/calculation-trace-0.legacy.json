@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:spat:schema:calculation-trace:0.legacy",
+  "title": "Unversioned legacy SPAT potential calculation trace",
+  "description": "Historical trace payload preserved without reshaping during contract migration.",
+  "type": "object",
+  "properties": {"schema_version": {"const": "0.legacy"}},
+  "additionalProperties": true
+}

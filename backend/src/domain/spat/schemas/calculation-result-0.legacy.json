@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:spat:schema:calculation-result:0.legacy",
+  "title": "Unversioned legacy SPAT potential calculation result",
+  "description": "Historical result payload preserved without reshaping during contract migration.",
+  "type": "object",
+  "properties": {"schema_version": {"const": "0.legacy"}},
+  "additionalProperties": true
+}

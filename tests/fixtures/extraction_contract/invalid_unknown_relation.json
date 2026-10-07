@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "entities": [
+    {"id": "e1", "type": "Transformer", "name": "T1", "confidence": {"level": "high", "reason": "x"}},
+    {"id": "e2", "type": "ElectricalPanel", "name": "TD-2", "confidence": {"level": "high", "reason": "x"}}
+  ],
+  "attributes": [],
+  "relations": [{"id": "r1", "type": "IS_NEAR", "source_id": "e1", "target_id": "e2",
+                 "confidence": {"level": "low", "reason": "x"}}],
+  "evidence": [{"finding_ids": ["e1", "e2", "r1"], "quote": "T1 alimenta TD-2", "locator": {"page": 4}}],
+  "uncertainties": []
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:spat:schema:calculation-result:1.0",
+  "title": "SPAT potential calculation result",
+  "type": "object",
+  "required": ["schema_version", "soil", "injected_current_a", "grid_resistance_ohm", "gpr_v", "max_touch_v", "max_step_v", "conductor_thermal", "safety"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "soil": {"type": "object"},
+    "injected_current_a": {"type": "number", "exclusiveMinimum": 0},
+    "grid_resistance_ohm": {"type": ["number", "null"], "minimum": 0},
+    "gpr_v": {"type": "number"},
+    "max_touch_v": {"type": "object", "required": ["value", "x_m", "y_m"], "properties": {
+      "value": {"type": "number"}, "x_m": {"type": "number"}, "y_m": {"type": "number"}
+    }},
+    "max_step_v": {"type": "object", "required": ["value", "from_m", "to_m"], "properties": {
+      "value": {"type": "number"},
+      "from_m": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+      "to_m": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}
+    }},
+    "segment_count": {"type": "integer", "minimum": 0},
+    "segmentation": {"type": "string"},
+    "surface_point_count": {"type": "integer", "minimum": 0},
+    "surface_potential": {"type": "object"},
+    "diagnostics": {"type": "object"},
+    "engine_warnings": {"type": "array"},
+    "model_warnings": {"type": "array"},
+    "fault_current": {"type": ["object", "null"]},
+    "conductor_thermal": {"type": "object"},
+    "numerical_uncertainty": {"type": "object"},
+    "safety": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": true
+}

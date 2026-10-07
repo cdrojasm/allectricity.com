@@ -191,6 +191,14 @@ def _artifact(client, tokens, snapshot):
     return base, artifact
 
 
+def test_artifact_api_rejects_unknown_fields(env):
+    _, _, client, _, tokens, _ = env
+    project = client.post("/api/v1/projects", json={"name": "Subestación"}, headers=headers(tokens)).json()
+    base = f"/api/v1/projects/{project['id']}/artefactos-diseno-tierras"
+    response = client.post(base, json={**ANNEX_H_GRID1, "unexpected": True}, headers=headers(tokens))
+    assert response.status_code == 422
+
+
 def test_calculation_lifecycle_through_api(env, engine, monkeypatch):  # noqa: F811
     _, services, client, _, tokens, _ = env
     queued = []
@@ -215,7 +223,7 @@ def test_calculation_lifecycle_through_api(env, engine, monkeypatch):  # noqa: F
     assert detail["status"] == "completed" and detail["error"] is None
     assert math.isclose(detail["result"]["grid_resistance_ohm"], 1.0002, rel_tol=1e-3)
     assert detail["trace"]["solver_version"] and len(detail["trace"]["request_sha256"]) == 64
-    assert detail["trace"]["segments"][0]["radius_m"] == 0.00525
+    assert math.isclose(detail["trace"]["segments"][0]["radius_m"], 0.00525, rel_tol=1e-6)
     assert [(entry["standard"], entry["status"]) for entry in detail["result"]["safety"]] == [
         ("IEEE 80-2013", "cumple"), ("RETIE 2013", "no_evaluable")]
 

@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "entities": [
+    {"id": "f1", "type": "FaultScenario", "name": "falla monofásica en barra de 115 kV",
+     "confidence": {"level": "high", "reason": "Escenario nombrado en la memoria"}}
+  ],
+  "attributes": [
+    {"id": "a1", "subject_id": "f1", "name": "fault_current", "value": "12,5", "unit": "kA",
+     "confidence": {"level": "high", "reason": "Valor explícito"}},
+    {"id": "a2", "subject_id": "f1", "name": "shock_duration", "value": "0,5", "unit": "s",
+     "confidence": {"level": "medium", "reason": "Tiempo de despeje usado como t_s"}}
+  ],
+  "relations": [],
+  "evidence": [
+    {"finding_ids": ["f1", "a1", "a2"],
+     "quote": "falla monofásica en barra de 115 kV: If = 12,5 kA, tiempo de despeje 0,5 s",
+     "locator": {"page": 4}}
+  ],
+  "uncertainties": [
+    {"finding_ids": ["a2"], "description": "El documento no distingue t_s de t_c"}
+  ]
+}

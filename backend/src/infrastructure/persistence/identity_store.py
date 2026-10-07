@@ -2,11 +2,13 @@ from contextlib import contextmanager
 from sqlalchemy import create_engine, select, insert, update, delete, event
 from sqlalchemy.pool import StaticPool
 from src.infrastructure.persistence.identity_schema import TABLES
+from src.infrastructure.persistence.sql_design_repository import SQLDesignRepository
 
 
 class SQLRecords:
     def __init__(self, connection):
         self.connection = connection
+        self.designs = SQLDesignRepository(connection)
 
     def one(self, table, **filters):
         records = self.many(table, limit=1, **filters)
@@ -17,6 +19,15 @@ class SQLRecords:
         stmt = (
             select(t).filter_by(**filters).order_by(t.c.id).limit(limit).offset(offset)
         )
+        return [dict(row) for row in self.connection.execute(stmt).mappings()]
+
+    def ordered(self, table, column, *, after=None, limit=None, **filters):
+        """Records ordered by `column`, optionally only those with `column > after`."""
+        t = TABLES[table]
+        stmt = select(t).filter_by(**filters)
+        if after is not None:
+            stmt = stmt.where(t.c[column] > after)
+        stmt = stmt.order_by(t.c[column], t.c.id).limit(limit)
         return [dict(row) for row in self.connection.execute(stmt).mappings()]
 
     def add(self, table, **values):

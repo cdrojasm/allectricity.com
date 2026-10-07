@@ -16,6 +16,7 @@ ENV SPAT_POTENTIAL_ENGINE=/usr/local/bin/spat-potential-engine
 COPY backend/migrations ./migrations
 COPY backend/alembic.ini ./alembic.ini
 COPY scripts/smoke_auth.py ./scripts/smoke_auth.py
+COPY scripts/smoke_session.py ./scripts/smoke_session.py
 COPY scripts/sync_langfuse_prompts.py ./scripts/sync_langfuse_prompts.py
 COPY prompts ./prompts
 RUN pip install --no-cache-dir .

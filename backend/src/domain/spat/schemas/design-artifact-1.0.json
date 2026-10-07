@@ -1,0 +1,627 @@
+{
+  "$defs": {
+    "ArtifactFaultRequest": {
+      "additionalProperties": false,
+      "description": "Fault data of an artifact; it may stay incomplete until the calculation is requested.",
+      "properties": {
+        "current_a": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current A"
+        },
+        "clearing_time_s": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clearing Time S"
+        },
+        "surface_resistivity_ohm_m": {
+          "default": 3000,
+          "exclusiveMinimum": 0,
+          "title": "Surface Resistivity Ohm M",
+          "type": "number"
+        },
+        "surface_thickness_m": {
+          "default": 0.1,
+          "exclusiveMinimum": 0,
+          "title": "Surface Thickness M",
+          "type": "number"
+        },
+        "body_weight_kg": {
+          "default": 50,
+          "maximum": 70,
+          "minimum": 50,
+          "title": "Body Weight Kg",
+          "type": "number"
+        }
+      },
+      "title": "ArtifactFaultRequest",
+      "type": "object"
+    },
+    "ArtifactGeometryRequest": {
+      "additionalProperties": false,
+      "description": "Plan of the artifact's grid: regular (spacing per axis) or drawn conductor by conductor.",
+      "properties": {
+        "length_m": {
+          "exclusiveMinimum": 0,
+          "maximum": 100000.0,
+          "title": "Length M",
+          "type": "number"
+        },
+        "width_m": {
+          "exclusiveMinimum": 0,
+          "maximum": 100000.0,
+          "title": "Width M",
+          "type": "number"
+        },
+        "burial_depth_m": {
+          "default": 0.5,
+          "exclusiveMinimum": 0,
+          "title": "Burial Depth M",
+          "type": "number"
+        },
+        "conductor_spacing_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Retícula homogénea",
+          "title": "Conductor Spacing M"
+        },
+        "conductor_spacing_x_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Separación entre conductores medida a lo largo de X",
+          "title": "Conductor Spacing X M"
+        },
+        "conductor_spacing_y_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Separación entre conductores medida a lo largo de Y",
+          "title": "Conductor Spacing Y M"
+        },
+        "conductors": {
+          "description": "Conductores trazados; reemplazan la retícula regular",
+          "items": {
+            "$ref": "#/$defs/ConductorLineRequest"
+          },
+          "maxItems": 400,
+          "title": "Conductors",
+          "type": "array"
+        },
+        "rods_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Rods Count",
+          "type": "integer"
+        },
+        "rod_length_m": {
+          "default": 2.4,
+          "exclusiveMinimum": 0,
+          "title": "Rod Length M",
+          "type": "number"
+        },
+        "rods": {
+          "description": "Varillas en posiciones explícitas; reemplazan rods_count",
+          "items": {
+            "$ref": "#/$defs/RodRequest"
+          },
+          "maxItems": 500,
+          "title": "Rods",
+          "type": "array"
+        }
+      },
+      "required": [
+        "length_m",
+        "width_m"
+      ],
+      "title": "ArtifactGeometryRequest",
+      "type": "object"
+    },
+    "ArtifactSoilLayerRequest": {
+      "additionalProperties": false,
+      "description": "A layer of the artifact's stratigraphy: it may be described by material and thickness\nbefore its resistivity is known; the potential calculation requires every resistivity.",
+      "properties": {
+        "resistivity_ohm_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resistivity Ohm M"
+        },
+        "depth_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Depth M"
+        },
+        "material": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Material"
+        }
+      },
+      "title": "ArtifactSoilLayerRequest",
+      "type": "object"
+    },
+    "ComplianceCriterion": {
+      "additionalProperties": false,
+      "properties": {
+        "criterion_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Criterion Id",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Description",
+          "type": "string"
+        },
+        "status": {
+          "default": "pending",
+          "pattern": "^(pending|compliant|non_compliant|not_applicable)$",
+          "title": "Status",
+          "type": "string"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        }
+      },
+      "required": [
+        "criterion_id",
+        "title"
+      ],
+      "title": "ComplianceCriterion",
+      "type": "object"
+    },
+    "ComplianceStandard": {
+      "additionalProperties": false,
+      "properties": {
+        "standard_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Standard Id",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "edition": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Edition"
+        },
+        "applicability": {
+          "default": "conditional",
+          "pattern": "^(applicable|conditional|not_applicable)$",
+          "title": "Applicability",
+          "type": "string"
+        },
+        "criteria": {
+          "items": {
+            "$ref": "#/$defs/ComplianceCriterion"
+          },
+          "maxItems": 100,
+          "title": "Criteria",
+          "type": "array"
+        }
+      },
+      "required": [
+        "standard_id",
+        "title"
+      ],
+      "title": "ComplianceStandard",
+      "type": "object"
+    },
+    "ConductorLineRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/PlanPoint"
+        },
+        "end": {
+          "$ref": "#/$defs/PlanPoint"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "ConductorLineRequest",
+      "type": "object"
+    },
+    "GroundingConductorRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "material_id": {
+          "default": "copper_hard_drawn",
+          "maxLength": 60,
+          "minLength": 1,
+          "title": "Material Id",
+          "type": "string"
+        },
+        "cross_section_mm2": {
+          "default": 86.590147,
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Cross Section Mm2",
+          "type": "number"
+        },
+        "joint_type": {
+          "default": "bolted",
+          "pattern": "^(bolted|brazed|welded|other)$",
+          "title": "Joint Type",
+          "type": "string"
+        },
+        "maximum_temperature_c": {
+          "default": 250,
+          "exclusiveMinimum": -273.15,
+          "maximum": 2000,
+          "title": "Maximum Temperature C",
+          "type": "number"
+        },
+        "thermal_duration_s": {
+          "default": 1.0,
+          "description": "t_c; independiente del tiempo de choque t_s",
+          "exclusiveMinimum": 0,
+          "maximum": 60,
+          "title": "Thermal Duration S",
+          "type": "number"
+        },
+        "ambient_temperature_c": {
+          "default": 40,
+          "maximum": 200,
+          "minimum": -50,
+          "title": "Ambient Temperature C",
+          "type": "number"
+        }
+      },
+      "title": "GroundingConductorRequest",
+      "type": "object"
+    },
+    "PlanPoint": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "description": "m desde la esquina de origen, a lo largo del largo",
+          "maximum": 100000.0,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "description": "m desde la esquina de origen, a lo largo del ancho",
+          "maximum": 100000.0,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "PlanPoint",
+      "type": "object"
+    },
+    "RodRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "description": "m desde la esquina de origen, a lo largo del largo",
+          "maximum": 100000.0,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "description": "m desde la esquina de origen, a lo largo del ancho",
+          "maximum": 100000.0,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        },
+        "length_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Por defecto, rod_length_m",
+          "title": "Length M"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "RodRequest",
+      "type": "object"
+    },
+    "SoilMeasurementRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "spacing_m": {
+          "exclusiveMinimum": 0,
+          "title": "Spacing M",
+          "type": "number"
+        },
+        "apparent_resistivity_ohm_m": {
+          "exclusiveMinimum": 0,
+          "title": "Apparent Resistivity Ohm M",
+          "type": "number"
+        },
+        "potential_spacing_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Potential Spacing M"
+        },
+        "locator": {
+          "anyOf": [
+            {
+              "maxLength": 180,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locator"
+        }
+      },
+      "required": [
+        "spacing_m",
+        "apparent_resistivity_ohm_m"
+      ],
+      "title": "SoilMeasurementRequest",
+      "type": "object"
+    },
+    "SoilMeasurementsRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "array": {
+          "default": "wenner",
+          "pattern": "^(wenner|schlumberger)$",
+          "title": "Array",
+          "type": "string"
+        },
+        "measurements": {
+          "items": {
+            "$ref": "#/$defs/SoilMeasurementRequest"
+          },
+          "maxItems": 200,
+          "minItems": 4,
+          "title": "Measurements",
+          "type": "array"
+        },
+        "outlier_threshold": {
+          "default": 0.15,
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0,
+          "title": "Outlier Threshold",
+          "type": "number"
+        },
+        "layer_count": {
+          "default": 2,
+          "maximum": 8,
+          "minimum": 2,
+          "title": "Layer Count",
+          "type": "integer"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        }
+      },
+      "required": [
+        "measurements"
+      ],
+      "title": "SoilMeasurementsRequest",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A version of the design. The grid, the soil or the fault data may be missing while the\ndesign is built up in any order; the potential calculation refuses an incomplete artifact.",
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "geometry": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactGeometryRequest"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "soil_layers": {
+      "items": {
+        "$ref": "#/$defs/ArtifactSoilLayerRequest"
+      },
+      "maxItems": 8,
+      "title": "Soil Layers",
+      "type": "array"
+    },
+    "soil_measurements": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SoilMeasurementsRequest"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "soil_model": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Soil Model"
+    },
+    "fault": {
+      "$ref": "#/$defs/ArtifactFaultRequest"
+    },
+    "conductor": {
+      "$ref": "#/$defs/GroundingConductorRequest"
+    },
+    "compliance": {
+      "items": {
+        "$ref": "#/$defs/ComplianceStandard"
+      },
+      "maxItems": 30,
+      "title": "Compliance",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "title": "GroundingArtifactRequest",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:spat:schema:design-artifact:1.0"
+}
