@@ -453,6 +453,40 @@ def test_safety_calculation_suspends_and_resumes_with_the_result(chat):
     assert created["artifact_id"] == queued["artifact_id"]
 
 
+def test_calculation_is_not_repeated_for_the_same_version_and_parameters(chat):
+    services, client, tokens, project, conversation, _, _ = chat
+    calculation_setup(chat)
+    sent = send(client, tokens, conversation, "Calcula la seguridad")
+    dispatched = []
+    llm = calc_step(services, sent["run_id"], [
+        ("request_potential_calculation", {"x_over_r": 10}),
+        ("respond_to_user", {"text": "Calculando.", "waits_for": "calculation"}),
+    ], dispatched)
+    queued = tool_result(llm, 1)
+    with services.store.transaction(write=True) as db:
+        db.change("calculos_potencial_tierras", queued["calculation_id"], status="completed", result=RESULT)
+    AgentRuns(services.store).calculation_finished(queued["calculation_id"])
+
+    # On resume the model asks again for the same calculation (only the note differs): it gets the stored result.
+    llm = calc_step(services, sent["run_id"], [
+        ("request_potential_calculation", {"x_over_r": 10, "justification": "Datos confirmados por el usuario."}),
+        ("respond_to_user", {"text": "No cumple: contacto 980,4 V.", "waits_for": "nothing"}),
+    ], dispatched)
+    repeated = tool_result(llm, 1)
+    assert repeated["queued"] is False and repeated["already_calculated"] is True
+    assert repeated["calculation_id"] == queued["calculation_id"] and repeated["result"]["verdict"] == "no_cumple"
+    assert dispatched == [queued["calculation_id"]]
+    assert run_of(client, tokens, sent["run_id"])["status"] == "completed"
+
+    # Other parameters are a different calculation.
+    sent = send(client, tokens, conversation, "Calcula con X/R 14")
+    llm = calc_step(services, sent["run_id"], [
+        ("request_potential_calculation", {"x_over_r": 14}),
+        ("respond_to_user", {"text": "Calculando.", "waits_for": "calculation"}),
+    ], dispatched)
+    assert tool_result(llm, 1)["queued"] is True and len(dispatched) == 2
+
+
 def test_calculation_blocked_by_missing_and_unconfirmed_inputs(chat):
     services, client, tokens, project, conversation, _, _ = chat
     calculation_setup(chat, {"name": "Solo malla", "geometry": ARTIFACT["geometry"]})

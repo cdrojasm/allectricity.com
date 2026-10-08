@@ -96,6 +96,14 @@ def _errors(exc: ValidationError) -> list[str]:
     return [f"{'.'.join(str(p) for p in error['loc'])}: {error['msg']}" for error in exc.errors()]
 
 
+def _solver_inputs(parameters: dict) -> dict:
+    """Calculation parameters without the free-text notes, which do not change the result."""
+    inputs = {k: v for k, v in parameters.items() if k != "justification"}
+    if inputs.get("fault_split"):
+        inputs["fault_split"] = {k: v for k, v in inputs["fault_split"].items() if k != "split_factor_origin"}
+    return inputs
+
+
 class ArtifactWorkspace:
     """The run's draft of the artifact and the tools that read and change it."""
 
@@ -524,6 +532,18 @@ class ArtifactWorkspace:
             parameters = PotentialCalculationRequest.model_validate(options).model_dump()
         except ValidationError as exc:
             return {"queued": False, "errors": _errors(exc), "suggestion": "Corrige los parámetros del cálculo."}
+        with self.store.transaction() as db:
+            done = [row for row in db.many("calculos_potencial_tierras", project_id=self.run["project_id"],
+                                           artifact_id=self.artifact_id, artifact_version=self.base_version)
+                    if row["status"] == "completed" and _solver_inputs(row["parameters"]) == _solver_inputs(parameters)]
+        if done:
+            # The solver is deterministic: the same version and parameters give the same result.
+            latest = max(done, key=lambda row: row["updated_at"])
+            return {"queued": False, "already_calculated": True, "calculation_id": latest["id"],
+                    "version": self.base_version, "result": summarize_calculation(latest),
+                    "suggestion": "This version was already calculated with these parameters: report this result "
+                                  "and do not wait for a calculation. To recalculate, change the design or the "
+                                  "parameters first."}
         try:
             with self.store.transaction(write=True) as db:
                 row = potential_calculations.create_calculation(db, self.run["project_id"], self.artifact_id,
