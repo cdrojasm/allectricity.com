@@ -32,8 +32,8 @@ def is_critical(path: str) -> bool:
     return path in CRITICAL
 
 
-def check_change(path: str, source: dict) -> dict:
-    """Validate one change's path and source; returns the normalized provenance entry."""
+def check_change(path: str, source: dict, *, draft: bool = False) -> dict:
+    """Validate one change; critical assumptions require an explicit draft marker."""
     if not isinstance(path, str) or not any(path == p or (p.endswith(".") and path.startswith(p) and len(path) > len(p))
                                             for p in EDITABLE):
         raise PatchError(f"Path not editable by the agent: {path}")
@@ -42,13 +42,17 @@ def check_change(path: str, source: dict) -> dict:
     kind = (source or {}).get("kind")
     if kind not in SOURCE_KINDS:
         raise PatchError(f"{path}: every change needs a source kind among {sorted(SOURCE_KINDS)}")
-    if kind == "assumption" and is_critical(path):
+    if kind == "assumption" and is_critical(path) and not (draft and source.get("draft") is True):
         raise PatchError(f"{path} is a critical input: it needs project data (a user message, an accepted "
                          "claim or a confirmed document), never a typical value")
+    if kind == "assumption" and is_critical(path) and not str(source.get("note") or "").strip():
+        raise PatchError(f"{path}: a draft assumption needs a visible note")
     ref = source.get("ref")
     if kind != "assumption" and not ref:
         raise PatchError(f"{path}: source {kind} needs a ref (message id, claim id, document or tool result)")
     entry = {"kind": kind, "ref": ref}
+    if kind == "assumption" and is_critical(path):
+        entry["draft"] = True
     if source.get("note"):
         entry["note"] = str(source["note"])[:300]
     return entry

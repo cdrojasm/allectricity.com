@@ -251,6 +251,8 @@ class FaultSplitRequest(BaseModel):
 class PotentialCalculationRequest(BaseModel):
     """Engine parameters the artifact does not carry; all are recorded in the calculation trace."""
 
+    justification: str = Field(default="Configuración predeterminada validada por el motor.", min_length=10, max_length=500,
+                               description="Why these solver settings were selected; stored in the calculation trace")
     conductor_radius_m: float = Field(default=0.00525, ge=1e-4, le=0.5, description="Default: 2/0 AWG copper")
     discretization_m: float = Field(default=1.0, gt=0, le=20, description="Refinement length d; 1 m is the validated default")
     segmentation: str = Field(default="graded", pattern="^(uniform|graded)$",

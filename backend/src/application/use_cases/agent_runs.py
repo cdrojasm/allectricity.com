@@ -294,7 +294,8 @@ class AgentRuns:
             run = db.one("agent_runs", id=run_id)
             snapshot = change["snapshot"]
             origin = {"kind": "agent", "run_id": run_id, "summary": change["summary"],
-                      "provenance": change["provenance"]}
+                      "provenance": change["provenance"], "draft": change.get("draft", False),
+                      "draft_watermark": change.get("draft_watermark")}
             if change.get("artifact_id"):
                 row = db.designs.append_version(run["project_id"], change["artifact_id"], snapshot["name"], snapshot,
                                                 run["created_by"], origin, expected_version=change["base_version"])
@@ -310,7 +311,9 @@ class AgentRuns:
                        "previous_version": change.get("base_version"), "name": row["name"],
                        "summary": change["summary"], "changes": change["diff"],
                        "unconfirmed_critical": change["unconfirmed_critical"],
-                       "missing_for_calculation": change["missing_for_calculation"]}
+                       "missing_for_calculation": change["missing_for_calculation"],
+                       "draft": change.get("draft", False),
+                       "draft_watermark": change.get("draft_watermark")}
             created = "Se creó" if change.get("base_version") is None else "Se editó"
             self._post(db, run, "notification", f"{created} el artefacto «{row['name']}» (versión {row['version']}): "
                        f"{change['summary']}", payload=payload)
@@ -334,6 +337,15 @@ class AgentRuns:
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     total[key] = total.get(key, 0) + value
             self._change(db, run, usage=total)
+
+    def set_usage_fields(self, run_id: str, **fields) -> None:
+        """Persist structured per-run state alongside numeric usage totals."""
+        with self.store.transaction(write=True) as db:
+            run = db.one("agent_runs", id=run_id)
+            if not run:
+                return
+            usage = {**(run.get("usage") or {}), **fields}
+            self._change(db, run, usage=usage)
 
     def cancelling(self, run_id: str) -> bool:
         with self.store.transaction() as db:

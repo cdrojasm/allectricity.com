@@ -212,7 +212,7 @@ def test_calculation_lifecycle_through_api(env, engine, monkeypatch):  # noqa: F
     assert response.status_code == 202
     calculation = response.json()
     assert calculation["status"] == "pending" and queued == [([calculation["id"]], calculation["id"])]
-    assert calculation["parameters"] == {**PARAMETERS, "surface_spacing_m": 1.0,
+    assert calculation["parameters"] == {**PARAMETERS, "justification": "Configuración predeterminada validada por el motor.", "surface_spacing_m": 1.0,
                                          "safety_standards": ["IEEE 80-2013", "RETIE 2013"], "fault_split": None,
                                          "x_over_r": None, "system_frequency_hz": 60.0,
                                          "segmentation": "graded", "estimate_uncertainty": False}

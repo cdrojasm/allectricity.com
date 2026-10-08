@@ -28,6 +28,8 @@ from src.infrastructure.processing import measurement_tables
 from src.domain.spat.grid_geometry import (
     clip_conductors, explicit_conductors, geometry_problems, missing_for_calculation, rod_layout,
 )
+from src.domain.knowledge_graph.artifact_mapping import map_claims_to_artifact
+from src.domain.knowledge_graph.conflict_resolution import resolve_conflicts
 from src.domain.agent.run import AgentMode
 from src.infrastructure.agents import runtime
 from src.infrastructure.entrypoint.api.schemas import (
@@ -51,6 +53,7 @@ MAX_TABLE_BYTES = 5 * 1024 * 1024
 TABLE_MIMES = {"text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
 DESIGNER_ROUNDS = 6
 DESIGNER_PATHS = ("name", "geometry.", "conductor.")
+DEFAULT_DESIGN_ITERATIONS = 3
 
 
 def enabled() -> bool:
@@ -64,6 +67,25 @@ def enabled() -> bool:
 
 def model_for(env: str) -> str:
     return os.getenv(env) or os.getenv("LLM_MODEL", "gpt-4o-mini")
+
+
+def max_design_iterations() -> int:
+    """Return the safe per-run iteration cap; invalid configuration uses the default."""
+    try:
+        return max(0, int(os.getenv("DESIGN_MAX_ITERATIONS", str(DEFAULT_DESIGN_ITERATIONS))))
+    except (TypeError, ValueError):
+        return DEFAULT_DESIGN_ITERATIONS
+
+
+def calculation_score(summary: dict) -> float:
+    """Comparable safety margin for choosing the best non-compliant candidate."""
+    margins = [criterion.get("margin_percent") for standard in summary.get("standards", [])
+               for criterion in (standard.get("touch"), standard.get("step"))
+               if isinstance(criterion, dict) and isinstance(criterion.get("margin_percent"), (int, float))]
+    thermal = summary.get("conductor_thermal") or {}
+    if thermal.get("status") == "no_cumple":
+        margins.append(-1.0)
+    return min(margins) if margins else float("-inf")
 
 
 def _prompt_file(name: str) -> str:
@@ -228,7 +250,8 @@ class ArtifactWorkspace:
             try:
                 if allowed and not any(path == p or (p.endswith(".") and str(path).startswith(p)) for p in allowed):
                     raise PatchError(f"{path} is outside this agent's scope")
-                entry = check_change(path, change.get("source") or {})
+                entry = check_change(path, change.get("source") or {},
+                                     draft=(change.get("source") or {}).get("draft") is True)
                 if entry["kind"] == "user" and not self._is_user_message(entry["ref"]):
                     raise PatchError(f"{path}: {entry['ref']} is not a user message of this conversation")
             except PatchError as exc:
@@ -644,7 +667,10 @@ class ArtifactWorkspace:
                   "base_version": self.base_version, "snapshot": normalized,
                   "provenance": provenance, "diff": shown,
                   "unconfirmed_critical": check["unconfirmed_critical"],
-                  "missing_for_calculation": check["missing_for_calculation"]}
+                  "missing_for_calculation": check["missing_for_calculation"],
+                  "draft": bool(check["unconfirmed_critical"]),
+                  "draft_watermark": (f"Borrador · {len(check['unconfirmed_critical'])} supuesto(s) sin confirmar"
+                                      if check["unconfirmed_critical"] else None)}
         try:
             row = self.runs.apply_changes(self.run["id"], change)
         except ServiceError as exc:
@@ -854,19 +880,12 @@ class GroundingDesignAgent:
             if graph:
                 try:
                     context["sources"]["knowledge_graph"] = graph.summary(run["project_id"])
-                    claims = graph.list_claims(run["project_id"], limit=12)["items"]
-                    compact_claims = []
-                    for claim in claims:
-                        item = {key: claim.get(key) for key in ("claim_id", "kind", "status", "name", "attribute",
-                                                                 "value_literal", "unit_literal", "filename")
-                                if claim.get(key) is not None}
-                        evidence = claim.get("evidence") or []
-                        if evidence:
-                            item["evidence"] = [{"quote": str(row.get("quote") or "")[:500],
-                                                 "page": row.get("page"), "sheet": row.get("sheet"),
-                                                 "row": row.get("row")} for row in evidence[:2]]
-                        compact_claims.append(item)
-                    context["sources"]["recent_claims"] = compact_claims
+                    claims = graph.list_claims(run["project_id"], limit=5000)["items"]
+                    # PR-24: el orquestador recibe el resultado del mapeo completo, no una
+                    # muestra arbitraria de 12 afirmaciones recientes.
+                    context["sources"]["artifact_inputs"] = map_claims_to_artifact(claims)
+                    context["sources"]["input_resolution"] = resolve_conflicts(claims)
+                    context["sources"]["claims_count"] = len(claims)
                 finally:
                     graph.close()
         except Exception:
@@ -911,12 +930,22 @@ class GroundingDesignAgent:
         finished = workspace.calculation_result()
         if finished:
             context["finished_calculation"] = finished
+            best_candidate = self._record_design_candidate(run, runs, finished)
+            loop = self._automatic_iteration(client, prompts, workspace, run, runs, finished, mode, usage)
+            if loop is not None:
+                return loop
+            context["design_loop"] = self._design_loop_context(run, finished, best_candidate)
         messages = [*prompts["orchestrator"],
                     {"role": "system", "content": "Context: " + json.dumps(context, ensure_ascii=False) +
-                     "\nLong-term memory rule: reuse project_memory across all conversations. When the user confirms "
-                     "a durable decision, assumption or pending question, call save_project_memory and preserve "
-                     "other still-valid items. Cite exact user message ids from the history; never turn an "
-                     "unverified inference into a decision."},
+                     "\nConstruction rule: when artifact_inputs contain confirmed values, build in this order: "
+                     "map inputs, delegate soil_modeler for resistivity readings, delegate grid_designer for geometry, "
+                     "apply the resulting draft, then request_potential_calculation. Do not ask the user to retype "
+                     "a value already present in artifact_inputs; ask only for missing or conflicting inputs." +
+                     "\nLong-term memory rule: reuse project_memory across all conversations." + (
+                         "" if mode == AgentMode.CONSULTA else
+                         " When the user confirms a durable decision, assumption or pending question, call "
+                         "save_project_memory and preserve other still-valid items. Cite exact user message ids "
+                         "from the history; never turn an unverified inference into a decision.")},
                     *self._history(run)]
         tools = [runtime.tool("get_draft", "Artifact draft, sources and unconfirmed critical inputs.", {}, []),
                  runtime.tool("validate_draft", "Validate the draft against the artifact schema.", {}, [])]
@@ -926,19 +955,22 @@ class GroundingDesignAgent:
                                   ["query", "resistivity_ohm_m"]))
         handlers = {"get_draft": workspace.get_draft, "validate_draft": workspace.validate_tool,
                     "lookup_soil_material": workspace.lookup_material}
-        tools.append(runtime.tool("save_project_memory", "Save the concise, durable project context after the user confirms an important decision, assumption or pending question. Keep only current information; cite user message ids exactly. Do not save guesses as facts.", {
-            "summary": {"type": "string"},
-            "items": {"type": "array", "items": {"type": "object", "properties": {
-                "kind": {"type": "string", "enum": ["decision", "assumption", "open_question"]},
-                "text": {"type": "string"},
-                "source_message_ids": {"type": "array", "items": {"type": "string"}}},
-                "required": ["kind", "text", "source_message_ids"], "additionalProperties": False}},
-            "required": ["summary", "items"], "additionalProperties": False}, ["summary", "items"]))
-        handlers["save_project_memory"] = lambda args: self._save_project_memory(run, args)
+        if mode != AgentMode.CONSULTA:  # guardar memoria escribe en el proyecto
+            tools.append(runtime.tool("save_project_memory", "Save the concise, durable project context after the user confirms an important decision, assumption or pending question. Keep only current information; cite user message ids exactly. Do not save guesses as facts.", {
+                "summary": {"type": "string"},
+                "items": {"type": "array", "items": {"type": "object", "properties": {
+                    "kind": {"type": "string", "enum": ["decision", "assumption", "open_question"]},
+                    "text": {"type": "string"},
+                    "source_message_ids": {"type": "array", "items": {"type": "string"}}},
+                    "required": ["kind", "text", "source_message_ids"], "additionalProperties": False}}},
+                ["summary", "items"]))
+            handlers["save_project_memory"] = lambda args: self._save_project_memory(run, args)
         source = {"type": "object", "properties": {
             "kind": {"type": "string", "enum": ["user", "assumption"]},
             "ref": {"type": ["string", "null"], "description": "User message id for kind user"},
-            "note": {"type": ["string", "null"]}}, "required": ["kind", "ref", "note"], "additionalProperties": False}
+            "note": {"type": ["string", "null"]},
+            "draft": {"type": "boolean", "description": "Required for a visible critical assumption"}},
+            "required": ["kind", "ref", "note"], "additionalProperties": False}
         if mode != AgentMode.CONSULTA:
             tools += [
                 runtime.tool("use_artifact", "Select the project artifact this conversation works on.",
@@ -973,6 +1005,7 @@ class GroundingDesignAgent:
                              "'calculation' and you are resumed with the result. Optional values only when the user "
                              "gave them.", {
                                  "surface_spacing_m": {"type": "number", "enum": [0.25, 0.5, 1.0]},
+                                 "justification": {"type": "string", "description": "Why the solver settings fit this artifact; stored in the calculation trace"},
                                  "estimate_uncertainty": {"type": "boolean"},
                                  "discretization_m": {"type": "number"},
                                  "safety_standards": {"type": "array", "items": {"type": "string"},
@@ -1023,6 +1056,78 @@ class GroundingDesignAgent:
             # A queued calculation always suspends the run until its worker finishes.
             return StepOutcome(text, calculation_id=workspace.queued_calculation)
         return StepOutcome(text, wait_for_user=result.get("waits_for") == "answer")
+
+    @staticmethod
+    def _design_loop_context(run, finished, best_candidate=None) -> dict:
+        usage = run.get("usage") or {}
+        return {
+            "mode": run.get("mode"),
+            "iterations_used": int(usage.get("design_iterations", 0)),
+            "max_iterations": max_design_iterations(),
+            "best_candidate": best_candidate or usage.get("best_candidate"),
+            "current_score": calculation_score(finished),
+        }
+
+    def _record_design_candidate(self, run, runs, finished) -> dict:
+        """Keep the strongest result across suspended calculation steps."""
+        score = calculation_score(finished)
+        previous = (run.get("usage") or {}).get("best_candidate")
+        if previous and previous.get("score", float("-inf")) >= score:
+            return previous
+        candidate = {
+            "score": score,
+            "verdict": finished.get("verdict"),
+            "calculation_id": finished.get("calculation_id"),
+            "artifact_version": finished.get("artifact_version"),
+        }
+        runs.set_usage_fields(run["id"], best_candidate=candidate)
+        return candidate
+
+    def _automatic_iteration(self, client, prompts, workspace, run, runs, finished, mode, usage):
+        """Improve a failing autonomous design and suspend it on a new calculation."""
+        if mode != AgentMode.AUTONOMO or finished.get("verdict") != "no_cumple":
+            return None
+        used = int((run.get("usage") or {}).get("design_iterations", 0))
+        limit = max_design_iterations()
+        if used >= limit:
+            runs.progress(run["id"], EventType.STEP_COMPLETED,
+                          f"Bucle automático detenido tras {used} iteración(es)",
+                          level=EventLevel.WARNING,
+                          payload={"reason": "iteration_limit", "iterations": used, "max_iterations": limit})
+            return None
+        iteration = used + 1
+        runs.set_usage_fields(run["id"], design_iterations=iteration)
+        runs.progress(run["id"], EventType.SUBAGENT_STARTED,
+                      f"Iteración automática {iteration}/{limit}: ajustando la malla",
+                      level=EventLevel.PROGRESS,
+                      payload={"iteration": iteration, "max_iterations": limit})
+        task = ("El cálculo no cumple. Mejora la geometría conservando todos los datos críticos y las restricciones "
+                "del usuario. Prioriza la restricción dominante y aplica el cambio más conservador que pueda mejorar "
+                f"el margen. Resultado determinista: {json.dumps(finished, ensure_ascii=False)}")
+        designed = run_grid_designer(client, prompts, workspace, task, usage)
+        if not designed.get("applied"):
+            runs.progress(run["id"], EventType.SUBAGENT_COMPLETED,
+                          "No se pudo proponer una mejora automática",
+                          level=EventLevel.WARNING, payload={"iteration": iteration})
+            return None
+        saved = workspace.apply({"summary": f"Iteración automática {iteration}: mejora de seguridad"})
+        if "error" in saved:
+            runs.progress(run["id"], EventType.SUBAGENT_COMPLETED,
+                          "La mejora automática no pudo guardarse",
+                          level=EventLevel.WARNING,
+                          payload={"iteration": iteration, "error": saved["error"]})
+            return None
+        queued = workspace.request_calculation({})
+        if not queued.get("queued"):
+            return StepOutcome("No pude recalcular la mejora automática: "
+                               + "; ".join(queued.get("errors") or [queued.get("suggestion", "revisa los datos")]))
+        runs.progress(run["id"], EventType.SUBAGENT_COMPLETED,
+                      f"Iteración automática {iteration}/{limit} encolada",
+                      level=EventLevel.SUCCESS,
+                      payload={"iteration": iteration, "max_iterations": limit,
+                               "artifact_version": saved["version"], "calculation_id": queued["calculation_id"]})
+        return StepOutcome(f"Ajusté la malla en la iteración {iteration}/{limit} y lancé un nuevo cálculo.",
+                           calculation_id=queued["calculation_id"])
 
     def _analyze(self, client, prompts, workspace, runs, run, finished, usage) -> dict:
         runs.progress(run["id"], EventType.SUBAGENT_STARTED, "Analista de seguridad trabajando",

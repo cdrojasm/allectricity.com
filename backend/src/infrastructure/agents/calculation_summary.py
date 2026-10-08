@@ -12,7 +12,7 @@ def summarize(calculation: dict) -> dict:
     summary = {"calculation_id": calculation["id"], "status": calculation["status"],
                "artifact_version": calculation["artifact_version"], "error": calculation.get("error"),
                "parameters": {k: calculation["parameters"].get(k) for k in
-                              ("safety_standards", "x_over_r", "system_frequency_hz", "fault_split", "discretization_m")}}
+                              ("justification", "safety_standards", "x_over_r", "system_frequency_hz", "fault_split", "discretization_m")}}
     result = calculation.get("result")
     if calculation["status"] != "completed" or not result:
         summary["verdict"] = "no_evaluado"
