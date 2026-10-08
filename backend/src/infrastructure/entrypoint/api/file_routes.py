@@ -35,6 +35,7 @@ class UploadRequest(BaseModel):
     mime_type: str = Field(min_length=1, max_length=120)
     category: str = Field(pattern="^(documents|designs)$")
     project_id: str = Field(min_length=1, max_length=36)
+    retry_upload_id: str | None = Field(default=None, min_length=36, max_length=36)
 
 
 @router.post("/events/minio", include_in_schema=False)
@@ -91,21 +92,31 @@ def presign_upload(
     object_key = f"{actor.user_id}/{upload_id}.{suffix}"
     now = int(time())
     with request.app.state.services.store.transaction(write=True) as db:
-        db.add(
-            "file_uploads",
-            id=upload_id,
-            owner_id=actor.user_id,
-            project_id=payload.project_id,
-            filename=payload.filename,
-            quarantine_key=quarantine_key,
-            # Project chat uploads always enter the project's input documents bucket.
-            target_bucket=storage_client().allowed_buckets["documents"],
-            object_key=object_key,
-            expected_mime=payload.mime_type,
-            status="pending",
-            created_at=now,
-            updated_at=now,
-        )
+        existing = next((item for item in db.many("file_uploads", project_id=payload.project_id,
+                                                   owner_id=actor.user_id, limit=1000)
+                         if item["filename"].casefold() == payload.filename.casefold()), None)
+        if existing:
+            if payload.retry_upload_id != existing["id"] or existing["status"] != "expired":
+                raise HTTPException(409, "Ya existe un archivo con ese nombre en este proyecto.")
+            upload_id = existing["id"]
+            db.change("file_uploads", upload_id, quarantine_key=quarantine_key, object_key=object_key,
+                      expected_mime=payload.mime_type, status="pending", updated_at=now,
+                      last_error=None, processing_started_at=None, quarantine_deleted_at=None)
+        else:
+            db.add(
+                "file_uploads",
+                id=upload_id,
+                owner_id=actor.user_id,
+                project_id=payload.project_id,
+                filename=payload.filename,
+                quarantine_key=quarantine_key,
+                target_bucket=storage_client().allowed_buckets["documents"],
+                object_key=object_key,
+                expected_mime=payload.mime_type,
+                status="pending",
+                created_at=now,
+                updated_at=now,
+            )
     return {
         "upload_id": upload_id,
         "upload_url": storage_client().presign_upload(quarantine_key, payload.mime_type),
