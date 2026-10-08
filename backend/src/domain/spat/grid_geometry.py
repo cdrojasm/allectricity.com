@@ -199,6 +199,38 @@ def _point_segment_distance(point, line: Line) -> float:
     return hypot(point[0] - (x1 + t * dx), point[1] - (y1 + t * dy))
 
 
+def _point_in_structure(x: float, y: float, structure: dict) -> bool:
+    half_w, half_h = float(structure["width"]) / 2, float(structure["height"]) / 2
+    return (float(structure["x"]) - half_w + TOLERANCE_M < x < float(structure["x"]) + half_w - TOLERANCE_M
+            and float(structure["y"]) - half_h + TOLERANCE_M < y < float(structure["y"]) + half_h - TOLERANCE_M)
+
+
+def _segment_crosses_structure(line: Line, structure: dict) -> bool:
+    """Return true when a conductor enters an obstacle interior; its border is allowed."""
+    (x1, y1), (x2, y2) = line
+    if _point_in_structure(x1, y1, structure) or _point_in_structure(x2, y2, structure):
+        return True
+    half_w, half_h = float(structure["width"]) / 2, float(structure["height"]) / 2
+    left, right = float(structure["x"]) - half_w, float(structure["x"]) + half_w
+    bottom, top = float(structure["y"]) - half_h, float(structure["y"]) + half_h
+    dx, dy = x2 - x1, y2 - y1
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, x1 - left), (dx, right - x1), (-dy, y1 - bottom), (dy, top - y1)):
+        if abs(p) <= 1e-12:
+            if q < 0:
+                return False
+            continue
+        t = q / p
+        if p < 0:
+            t0 = max(t0, t)
+        else:
+            t1 = min(t1, t)
+    if t1 - t0 <= 1e-9:
+        return False
+    middle = (t0 + t1) / 2
+    return _point_in_structure(x1 + middle * dx, y1 + middle * dy, structure)
+
+
 def _collinear_overlap(a: Line, b: Line) -> bool:
     (ax1, ay1), (ax2, ay2) = a
     dx, dy = ax2 - ax1, ay2 - ay1
@@ -240,6 +272,9 @@ def geometry_problems(geometry: dict) -> list[str]:
             problems.append(f"geometry.conductors[{index}] leaves the grid outline (0..{length:g} x 0..{width:g} m)")
         if hypot(x2 - x1, y2 - y1) < TOLERANCE_M:
             problems.append(f"geometry.conductors[{index}] has zero length")
+        for structure_index, structure in enumerate(geometry.get("structures") or []):
+            if _segment_crosses_structure(line, structure):
+                problems.append(f"geometry.conductors[{index}] crosses structure [{structure_index}]")
     if geometry.get("conductors"):
         for i, a in enumerate(lines):
             for j in range(i + 1, len(lines)):
@@ -251,6 +286,14 @@ def geometry_problems(geometry: dict) -> list[str]:
     for index, (x, y, _) in enumerate(rods):
         if not any(_point_segment_distance((x, y), line) <= TOLERANCE_M for line in lines):
             problems.append(f"geometry.rods[{index}] at ({x:g}, {y:g}) does not touch any conductor")
+        for structure_index, structure in enumerate(geometry.get("structures") or []):
+            if _point_in_structure(x, y, structure):
+                problems.append(f"geometry.rods[{index}] is inside structure [{structure_index}]")
+    for structure_index, structure in enumerate(geometry.get("structures") or []):
+        half_w, half_h = float(structure["width"]) / 2, float(structure["height"]) / 2
+        if not (-TOLERANCE_M <= structure["x"] - half_w and structure["x"] + half_w <= length + TOLERANCE_M
+                and -TOLERANCE_M <= structure["y"] - half_h and structure["y"] + half_h <= width + TOLERANCE_M):
+            problems.append(f"geometry.structures[{structure_index}] leaves the grid outline")
     return problems
 
 

@@ -120,3 +120,23 @@ def test_exact_rod_count_on_junctions():
     assert len(rod_layout("count", geometry, count=4)) == 4
     with pytest.raises(ValueError, match="only 54 conductor junctions"):
         rod_layout("count", geometry, count=60)
+
+
+def test_structures_are_obstacles_for_conductors_and_rods():
+    geometry = {"length_m": 40, "width_m": 30, "conductors": [
+        {"start": {"x": 0, "y": 15}, "end": {"x": 40, "y": 15}},
+    ], "rods": [{"x": 0, "y": 15}], "structures": [
+        {"x": 20, "y": 15, "width": 10, "height": 6, "label": "Casa"},
+    ]}
+    problems = geometry_problems(geometry)
+    assert any("crosses structure [0]" in problem for problem in problems)
+
+    geometry["conductors"][0] = {"start": {"x": 0, "y": 12}, "end": {"x": 40, "y": 12}}
+    geometry["rods"] = [{"x": 0, "y": 12}]
+    assert geometry_problems(geometry) == []
+
+
+def test_structure_must_stay_inside_grid():
+    geometry = {"length_m": 40, "width_m": 30, "conductor_spacing_m": 10,
+                "structures": [{"x": 39, "y": 15, "width": 6, "height": 4}]}
+    assert any("structures[0] leaves" in problem for problem in geometry_problems(geometry))

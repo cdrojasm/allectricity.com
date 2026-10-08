@@ -146,6 +146,18 @@
           "maxItems": 500,
           "title": "Rods",
           "type": "array"
+        },
+        "structures": {
+          "description": "Elementos constructivos no atravesables",
+          "items": { "$ref": "#/$defs/StructureRequest" },
+          "maxItems": 500,
+          "title": "Structures",
+          "type": "array"
+        },
+        "background": {
+          "anyOf": [{ "$ref": "#/$defs/PlanBackgroundRequest" }, { "type": "null" }],
+          "default": null,
+          "description": "Plano de fondo calibrado"
         }
       },
       "required": [
@@ -442,6 +454,38 @@
         "y"
       ],
       "title": "RodRequest",
+      "type": "object"
+    },
+    "StructureRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "x": { "minimum": 0, "maximum": 100000.0, "type": "number" },
+        "y": { "minimum": 0, "maximum": 100000.0, "type": "number" },
+        "width": { "exclusiveMinimum": 0, "maximum": 100000.0, "type": "number" },
+        "height": { "exclusiveMinimum": 0, "maximum": 100000.0, "type": "number" },
+        "label": { "anyOf": [{ "maxLength": 160, "type": "string" }, { "type": "null" }], "default": null }
+      },
+      "required": ["x", "y", "width", "height"],
+      "title": "StructureRequest",
+      "type": "object"
+    },
+    "PlanBackgroundRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "upload_id": { "minLength": 36, "maxLength": 36, "type": "string" },
+        "source_page": { "anyOf": [{ "minimum": 1, "type": "integer" }, { "type": "null" }], "default": null },
+        "width_px": { "exclusiveMinimum": 0, "maximum": 100000, "type": "integer" },
+        "height_px": { "exclusiveMinimum": 0, "maximum": 100000, "type": "integer" },
+        "scale_m_per_pixel": { "exclusiveMinimum": 0, "maximum": 1000, "type": "number" },
+        "offset_x_m": { "type": "number", "default": 0 },
+        "offset_y_m": { "type": "number", "default": 0 },
+        "calibrated": { "type": "boolean", "default": true }
+        ,"calibration_points": { "type": "array", "maxItems": 2, "items": { "$ref": "#/$defs/PlanPoint" }, "default": [] }
+        ,"calibration_distance_m": { "anyOf": [{ "exclusiveMinimum": 0, "type": "number" }, { "type": "null" }], "default": null }
+        ,"pixel_distance": { "anyOf": [{ "exclusiveMinimum": 0, "type": "number" }, { "type": "null" }], "default": null }
+      },
+      "required": ["upload_id", "width_px", "height_px", "scale_m_per_pixel"],
+      "title": "PlanBackgroundRequest",
       "type": "object"
     },
     "SoilMeasurementRequest": {

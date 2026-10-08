@@ -103,6 +103,29 @@ class RodRequest(PlanPoint):
     length_m: float | None = Field(default=None, gt=0, le=100, description="Por defecto, rod_length_m")
 
 
+class StructureRequest(PlanPoint):
+    """Constructive element represented as a non-traversable rectangular obstacle."""
+
+    width: float = Field(gt=0, le=1e5)
+    height: float = Field(gt=0, le=1e5)
+    label: str | None = Field(default=None, max_length=160)
+
+
+class PlanBackgroundRequest(StrictRequestModel):
+    """Calibrated image/PDF page used only as a plan reference, never as solver geometry."""
+    upload_id: str = Field(min_length=36, max_length=36)
+    source_page: int | None = Field(default=None, ge=1)
+    width_px: int = Field(gt=0, le=100000)
+    height_px: int = Field(gt=0, le=100000)
+    scale_m_per_pixel: float = Field(gt=0, le=1000)
+    offset_x_m: float = 0
+    offset_y_m: float = 0
+    calibrated: bool = True
+    calibration_points: list[PlanPoint] = Field(default_factory=list, max_length=2)
+    calibration_distance_m: float | None = Field(default=None, gt=0)
+    pixel_distance: float | None = Field(default=None, gt=0)
+
+
 class ArtifactGeometryRequest(StrictRequestModel):
     """Plan of the artifact's grid: regular (spacing per axis) or drawn conductor by conductor."""
 
@@ -120,6 +143,9 @@ class ArtifactGeometryRequest(StrictRequestModel):
     rod_length_m: float = Field(default=2.4, gt=0)
     rods: list[RodRequest] = Field(default_factory=list, max_length=MAX_RODS,
                                    description="Varillas en posiciones explícitas; reemplazan rods_count")
+    structures: list[StructureRequest] = Field(default_factory=list, max_length=500,
+                                               description="Elementos constructivos no atravesables")
+    background: PlanBackgroundRequest | None = Field(default=None, description="Plano de fondo calibrado")
 
     @model_validator(mode="after")
     def plan_is_buildable(self):

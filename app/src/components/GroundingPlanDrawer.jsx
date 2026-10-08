@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Cable, CircleDot, Download, Maximize2, Minus, Plus, Square, Undo2, Redo2, X } from "lucide-react";
+import { AlertTriangle, Cable, CircleDot, Download, Maximize2, Minus, Plus, Square, Undo2, Redo2, X, Image, Upload } from "lucide-react";
 
 const VIEW = { x: 70, y: 55, width: 860, height: 530 };
-const emptyPlan = { length: 40, width: 30, spacing: 5, items: [] };
+const emptyPlan = { length: 40, width: 30, spacing: 5, items: [], background: null };
 function segmentIntersectsRect(a, b, rect) {
   const dx = b.x - a.x, dy = b.y - a.y;
   let low = 0, high = 1;
@@ -16,17 +16,34 @@ function segmentIntersectsRect(a, b, rect) {
 }
 
 function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
-  const storageKey = `grounding-plan:${projectId}`;
-  const [plan, setPlan] = useState(() => {
-    try { const stored = JSON.parse(localStorage.getItem(storageKey) || "{}"); return { ...emptyPlan, ...stored, items: Array.isArray(stored.items) ? stored.items.map(({ subtype, ...item }) => item.type === "conductor" ? { ...item, from: { x: Math.round(item.from.x), y: Math.round(item.from.y) }, to: { x: Math.round(item.to.x), y: Math.round(item.to.y) } } : item) : [] }; }
-    catch { return emptyPlan; }
-  });
+  const [plan, setPlan] = useState(emptyPlan);
+  const [artifact, setArtifact] = useState(null);
+  const [hydrated, setHydrated] = useState(false);
+  const [sourceFiles, setSourceFiles] = useState([]);
+  const [backgroundScale, setBackgroundScale] = useState("0.05");
+  const [backgroundUrl, setBackgroundUrl] = useState("");
+  const [backgroundFile, setBackgroundFile] = useState("");
+  const [backgroundPage, setBackgroundPage] = useState("1");
+  const [backgroundSize, setBackgroundSize] = useState(null);
+  const [calibrationMode, setCalibrationMode] = useState(false);
+  const [calibrationPoints, setCalibrationPoints] = useState([]);
+  const [calibrationDistance, setCalibrationDistance] = useState("10");
+  const [dxfFile, setDxfFile] = useState("");
+  const [visionProposal, setVisionProposal] = useState(null);
+  const [visionBusy, setVisionBusy] = useState(false);
+  const [saveState, setSaveState] = useState("saved");
+  const artifactRef = useRef(null);
+  const dirtyRef = useRef(false);
+  const planRef = useRef(plan);
+  const snapshotRef = useRef(null);
+  const saveTimerRef = useRef(null);
   useEffect(() => {
-    if (!conversation || localStorage.getItem(storageKey)) return;
+    if (!conversation) return;
     let live = true;
     (async () => {
       try {
         const headers = { Authorization: `Bearer ${token}` };
+        fetch(`/api/v1/projects/${projectId}/files`, { headers }).then((response) => response.ok ? response.json() : []).then(setSourceFiles).catch(() => {});
         const [stateResponse, artifactsResponse] = await Promise.all([
           fetch(`/api/v1/conversations/${conversation.id}/agent-state`, { headers }),
           fetch(`/api/v1/projects/${projectId}/artefactos-diseno-tierras`, { headers }),
@@ -35,20 +52,43 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
         const [state, artifacts] = await Promise.all([stateResponse.json(), artifactsResponse.json()]);
         const artifact = artifacts.find((row) => row.artifact_id === state.artifact_id) || (artifacts.length === 1 ? artifacts[0] : null);
         const geometry = artifact?.snapshot?.geometry;
-        if (!live || !geometry || localStorage.getItem(storageKey)) return;
+        if (!live) return;
+        artifactRef.current = artifact || null;
+        snapshotRef.current = artifact?.snapshot || null;
+        setArtifact(artifact || null);
+        if (!geometry) { setHydrated(true); return; }
         const spacing = geometry.conductor_spacing_m || geometry.conductor_spacing_x_m || 5;
         const items = [
           ...(geometry.conductors || []).map((line) => ({ id: crypto.randomUUID(), type: "conductor", from: { x: Math.round(line.start.x), y: Math.round(line.start.y) }, to: { x: Math.round(line.end.x), y: Math.round(line.end.y) } })),
           ...(geometry.rods || []).map((rod) => ({ id: crypto.randomUUID(), type: "electrode", x: rod.x, y: rod.y })),
+          ...(geometry.structures || []).map((item) => ({ id: crypto.randomUUID(), type: "structure", x: item.x, y: item.y, width: item.width, height: item.height, label: item.label || "" })),
         ];
-        const next = { length: geometry.length_m || emptyPlan.length, width: geometry.width_m || emptyPlan.width, spacing, items };
+        const next = { length: geometry.length_m || emptyPlan.length, width: geometry.width_m || emptyPlan.width, spacing, items, background: geometry.background || null };
         setPlan(next);
-        localStorage.setItem(storageKey, JSON.stringify(next));
+        planRef.current = next;
+        setHydrated(true);
         window.dispatchEvent(new CustomEvent("grounding-plan-updated", { detail: { projectId, plan: next } }));
+        if (geometry.background?.upload_id) {
+          (async () => {
+            const fileResponse = await fetch(`/api/v1/files/${geometry.background.upload_id}/download`, { headers });
+            if (!fileResponse.ok || !live) return;
+            const file = await fileResponse.json();
+            let url = file.url;
+            if (file.mime_type === "application/pdf") {
+              const page = Math.max(1, Number(geometry.background.source_page) || 1);
+              const previewResponse = await fetch(`/api/v1/files/${geometry.background.upload_id}/preview?page=${page}&dpi=144`, { headers });
+              if (!previewResponse.ok || !live) return;
+              url = URL.createObjectURL(await previewResponse.blob());
+            }
+            if (!live) return;
+            setBackgroundUrl(url);
+            setBackgroundSize({ width: geometry.background.width_px, height: geometry.background.height_px });
+          })().catch(() => {});
+        }
       } catch { /* Keep the editable default if the artifact is unavailable. */ }
     })();
     return () => { live = false; };
-  }, [conversation?.id, projectId, storageKey, token]);
+  }, [conversation?.id, projectId, token]);
   const [opened, setOpened] = useState(false);
   const [tool, setTool] = useState("select");
   const [anchor, setAnchor] = useState(null);
@@ -108,7 +148,135 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
     if (blockers.some((obstacle) => segmentIntersectsRect(conductor.from, conductor.to, worldRect(obstacle)))) issues.push({ id: conductor.id, text: "El conductor cruza un elemento constructivo no atravesable." });
   }
 
-  function persist(next) { setPlan(next); try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* Keep edits available in the current session if storage is unavailable. */ } window.dispatchEvent(new CustomEvent("grounding-plan-updated", { detail: { projectId, plan: next } })); }
+  function geometryFromPlan(value) {
+    return {
+      length_m: Number(value.length), width_m: Number(value.width), burial_depth_m: snapshotRef.current?.geometry?.burial_depth_m || 0.5,
+      conductor_spacing_m: Number(value.spacing),
+      conductors: value.items.filter((item) => item.type === "conductor").map((item) => ({ start: item.from, end: item.to })),
+      rods_count: value.items.filter((item) => item.type === "electrode").length,
+      rod_length_m: snapshotRef.current?.geometry?.rod_length_m || 2.4,
+      rods: value.items.filter((item) => item.type === "electrode").map((item) => ({ x: item.x, y: item.y })),
+      structures: value.items.filter((item) => item.type === "structure").map((item) => ({ x: item.x, y: item.y, width: item.width, height: item.height, label: item.label || null }))
+      , background: value.background || null
+    };
+  }
+  async function prepareBackground() {
+    const file = sourceFiles.find((item) => item.upload_id === backgroundFile && item.status === "available");
+    if (!file) return setMessage("Selecciona una imagen disponible en Fuentes.");
+    const headers = { Authorization: `Bearer ${token}` };
+    let previewUrl;
+    let sourcePage = null;
+    if (file.mime_type === "application/pdf") {
+      sourcePage = Math.max(1, Number(backgroundPage) || 1);
+      const response = await fetch(`/api/v1/files/${file.upload_id}/preview?page=${sourcePage}&dpi=144`, { headers });
+      if (!response.ok) return setMessage("No se pudo rasterizar esa página del PDF.");
+      previewUrl = URL.createObjectURL(await response.blob());
+    } else {
+      const download = await fetch(`/api/v1/files/${file.upload_id}/download`, { headers }).then((response) => response.ok ? response.json() : null);
+      if (!download) return setMessage("No se pudo abrir la imagen de fondo.");
+      previewUrl = download.url;
+    }
+    const image = new window.Image();
+    image.onload = () => { setBackgroundUrl(previewUrl); setBackgroundSize({ width: image.naturalWidth, height: image.naturalHeight }); setCalibrationPoints([]); setCalibrationMode(true); setMessage("Marca los dos extremos de una distancia conocida sobre la imagen."); };
+    image.onerror = () => setMessage("La imagen de fondo no se pudo cargar.");
+    image.src = previewUrl;
+  }
+  function captureCalibration(event) {
+    if (!calibrationMode || !backgroundSize) return false;
+    event.stopPropagation();
+    const point = toWorld(event);
+    setCalibrationPoints((current) => {
+      const next = current.length >= 2 ? [point] : [...current, point];
+      if (next.length === 2) setMessage("Introduce la distancia real y guarda la calibración.");
+      return next;
+    });
+    return true;
+  }
+  async function attachBackground() {
+    const headers = { Authorization: `Bearer ${token}` };
+    const file = sourceFiles.find((item) => item.upload_id === backgroundFile && item.status === "available");
+    if (!file || !artifactRef.current || calibrationPoints.length !== 2 || !backgroundSize) return setMessage("Marca dos puntos y escribe una distancia real antes de guardar.");
+    const pixelDistance = Math.hypot((calibrationPoints[1].x - calibrationPoints[0].x) / plan.length * backgroundSize.width, (calibrationPoints[1].y - calibrationPoints[0].y) / plan.width * backgroundSize.height);
+    const distance = Number(calibrationDistance);
+    const scale = distance > 0 && pixelDistance > 0 ? distance / pixelDistance : 0;
+    if (!scale) return setMessage("La distancia real debe ser positiva.");
+    setBackgroundScale(scale.toFixed(6));
+    const response = await fetch(`/api/v1/projects/${projectId}/artefactos-diseno-tierras/${artifactRef.current.artifact_id}/versions/${artifactRef.current.version}/background`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ upload_id: file.upload_id, source_page: file.mime_type === "application/pdf" ? Math.max(1, Number(backgroundPage) || 1) : null, width_px: backgroundSize.width, height_px: backgroundSize.height, scale_m_per_pixel: scale, calibration_points: calibrationPoints, calibration_distance_m: distance, pixel_distance: pixelDistance }) });
+    if (!response.ok) return setMessage("No se pudo calibrar el plano de fondo.");
+    const saved = await response.json();
+    artifactRef.current = saved; snapshotRef.current = saved.snapshot; setArtifact(saved); setPlan((current) => ({ ...current, background: saved.snapshot.geometry.background }));
+    setCalibrationMode(false); setCalibrationPoints([]);
+  }
+  async function importDxf() {
+    const file = sourceFiles.find((item) => item.upload_id === dxfFile && item.status === "available");
+    if (!file || !artifactRef.current) return setMessage("Selecciona un DXF analizado y un artefacto guardado.");
+    const response = await fetch(`/api/v1/projects/${projectId}/artefactos-diseno-tierras/${artifactRef.current.artifact_id}/import-dxf`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ upload_id: file.upload_id }) });
+    const proposal = await response.json().catch(() => ({}));
+    if (!response.ok) return setMessage(proposal.detail || "No se pudo leer el DXF.");
+    const geometry = proposal.geometry;
+    const items = [...(geometry.conductors || []).map((line) => ({ id: crypto.randomUUID(), type: "conductor", from: line.start, to: line.end })), ...(geometry.rods || []).map((rod) => ({ id: crypto.randomUUID(), type: "electrode", x: rod.x, y: rod.y }))];
+    persist({ ...plan, length: geometry.length_m, width: geometry.width_m, items });
+    setMessage(`DXF leído: ${items.length} elementos propuestos. Revisa y confirma el guardado.`);
+  }
+  async function proposePlanVision() {
+    const file = sourceFiles.find((item) => item.upload_id === backgroundFile && item.status === "available");
+    if (!file || !artifactRef.current) return setMessage("Selecciona un plano disponible y un artefacto guardado.");
+    if (!["application/pdf", "image/png", "image/jpeg"].includes(file.mime_type)) return setMessage("La lectura visual requiere un PDF, PNG o JPEG.");
+    setVisionBusy(true);
+    try {
+      const sourcePage = file.mime_type === "application/pdf" ? Math.max(1, Number(backgroundPage) || 1) : null;
+      const response = await fetch(`/api/v1/projects/${projectId}/artefactos-diseno-tierras/${artifactRef.current.artifact_id}/versions/${artifactRef.current.version}/plan-revision`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ upload_id: file.upload_id, source_page: sourcePage }) });
+      const proposal = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(proposal.detail || "No se pudo analizar el plano.");
+      setVisionProposal({ ...proposal.proposal, ...proposal, structures: proposal.proposal?.structures || [] });
+      setMessage("Revisión comparada y alerta publicada en el chat. Revisa y confirma los obstáculos antes de incorporarlos.");
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setVisionBusy(false);
+    }
+  }
+  function acceptVisionProposal() {
+    if (!visionProposal?.structures?.length) return setMessage("La propuesta no contiene obstáculos aplicables.");
+    const items = visionProposal.structures.map((item) => ({ id: crypto.randomUUID(), type: "structure", x: item.x, y: item.y, width: item.width, height: item.height, label: item.label || "Elemento constructivo" }));
+    persist({ ...plan, items: [...plan.items, ...items] });
+    setVisionProposal(null);
+    setStructures(true);
+    setMessage(`${items.length} obstáculos incorporados como propuesta editable. Revisa y guarda la versión.`);
+  }
+  function persist(next) {
+    planRef.current = next;
+    setPlan(next);
+    dirtyRef.current = true;
+    setSaveState("pending");
+    window.dispatchEvent(new CustomEvent("grounding-plan-updated", { detail: { projectId, plan: next } }));
+  }
+  useEffect(() => {
+    if (!hydrated || !dirtyRef.current) return undefined;
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
+      const current = planRef.current;
+      const base = snapshotRef.current || { schema_version: "1.0", soil_layers: [], fault: {}, conductor: {}, compliance: [] };
+      const payload = { ...base, name: base.name || `${projectName} · Plano`, geometry: geometryFromPlan(current) };
+      const root = `/api/v1/projects/${projectId}/artefactos-diseno-tierras`;
+      const url = artifactRef.current ? `${root}/${artifactRef.current.artifact_id}` : root;
+      try {
+        const response = await fetch(url, { method: artifactRef.current ? "PUT" : "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        if (!response.ok) throw new Error((await response.text()).slice(0, 180));
+        const saved = await response.json();
+        artifactRef.current = saved;
+        snapshotRef.current = saved.snapshot;
+        setArtifact(saved);
+        dirtyRef.current = false;
+        setSaveState("saved");
+        window.dispatchEvent(new CustomEvent("artifact-version-saved", { detail: saved }));
+      } catch (error) {
+        setSaveState("error");
+        setMessage(`No se pudo guardar el plano: ${error.message}`);
+      }
+    }, 650);
+    return () => clearTimeout(saveTimerRef.current);
+  }, [plan, hydrated, projectId, projectName, token]);
   function savePlan(update) {
     const next = typeof update === "function" ? update(plan) : { ...plan, ...update };
     setHistory((old) => ({ past: [...old.past, plan], future: [] })); persist(next);
@@ -127,6 +295,7 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
     function onKeyDown(event) {
       if (!opened || ["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName) || event.target.isContentEditable) return;
       const key = event.key.toLowerCase();
+      if (key === "escape") { event.preventDefault(); setOpened(false); setAnchor(null); setContextMenu(null); return; }
       if ((key === "delete" || key === "backspace") && selectedIds.length) { event.preventDefault(); deleteSelected(); return; }
       if (!(event.ctrlKey || event.metaKey)) return;
       if (key === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); }
@@ -141,7 +310,7 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keydown", onToolKey);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keydown", onToolKey); };
-  }, [opened, history, plan, selectedId, selectedIds, tool, anchor]);
+  }, [opened, history, plan, selectedId, selectedIds, tool, anchor, calibrationMode]);
   function beginGesture(event, item, mode = "move", corner = null) {
     event.preventDefault(); event.stopPropagation();
     const ids = selectedIds.includes(item.id) && selectedIds.length > 1 ? selectedIds : [item.id];
@@ -153,6 +322,7 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
     canvasRef.current?.setPointerCapture(event.pointerId);
   }
   function beginAreaSelection(event) {
+    if (calibrationMode) return;
     if (tool !== "select" || event.button !== 0 || event.target.closest?.("[data-item-id]")) return;
     const point = toUnboundedWorld(event);
     if (point.x < 0 || point.x > plan.length || point.y < 0 || point.y > plan.width) return;
@@ -324,9 +494,10 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
   }
   function renderCanvas() {
     const px = (x, y) => toCanvas(x, y);
-    return <svg ref={canvasRef} className="ground-plan-svg" style={zoom !== 1 ? { width: `${zoom * 100}%`, maxHeight: "none" } : undefined} viewBox="0 0 1000 690" onPointerDown={beginAreaSelection} onClick={place} onContextMenu={showContextMenu} onPointerMove={moveGesture} onPointerUp={endGesture} onPointerCancel={endGesture} role="application" aria-label="Plano de puesta a tierra editable">
+    return <svg ref={canvasRef} className="ground-plan-svg" style={zoom !== 1 ? { width: `${zoom * 100}%`, maxHeight: "none" } : undefined} viewBox="0 0 1000 690" onPointerDown={beginAreaSelection} onClick={(event) => { if (!captureCalibration(event)) place(event); }} onContextMenu={showContextMenu} onPointerMove={moveGesture} onPointerUp={endGesture} onPointerCancel={endGesture} role="application" aria-label="Plano de puesta a tierra editable">
       <defs><pattern id={`plan-dots-${projectId}`} width="16" height="16" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".8" fill="#dbe3df"/></pattern></defs>
-      <rect width="1000" height="690" fill={`url(#plan-dots-${projectId})`}/><rect x={drawing.x} y={drawing.y} width={drawing.width} height={drawing.height} fill="#fbfcfb" stroke="#b7c8c0" strokeWidth="1.5"/>
+      <rect width="1000" height="690" fill={`url(#plan-dots-${projectId})`}/>{backgroundUrl && (plan.background || backgroundSize) && <image href={backgroundUrl} x={drawing.x + (plan.background?.offset_x_m || 0) * unitsPerPixel} y={drawing.y + (plan.background?.offset_y_m || 0) * unitsPerPixel} width={plan.background ? plan.background.width_px * plan.background.scale_m_per_pixel * unitsPerPixel : drawing.width} height={plan.background ? plan.background.height_px * plan.background.scale_m_per_pixel * unitsPerPixel : drawing.height} opacity=".42" preserveAspectRatio="none"/>}<rect x={drawing.x} y={drawing.y} width={drawing.width} height={drawing.height} fill="#fbfcfb" fillOpacity={backgroundUrl ? ".35" : "1"} stroke="#b7c8c0" strokeWidth="1.5"/>
+      {calibrationPoints.map((point, index) => { const canvasPoint = toCanvas(point.x, point.y); return <g key={`calibration-${index}`}><circle cx={canvasPoint.x} cy={canvasPoint.y} r="7" fill="#d97706" stroke="white" strokeWidth="2"/><text x={canvasPoint.x + 10} y={canvasPoint.y - 10} fill="#9a3412" fontSize="13">{index + 1}</text></g>; })}
       <g stroke="#e4eae7" strokeWidth="1">{keyX.map((x,i)=>{const X=px(x,0).x;return <line key={`gx${i}`} x1={X} x2={X} y1={drawing.y} y2={drawing.y+drawing.height}/>;})}{keyY.map((y,i)=>{const Y=px(0,y).y;return <line key={`gy${i}`} x1={drawing.x} x2={drawing.x+drawing.width} y1={Y} y2={Y}/>;})}</g>
       {conductors&&drawnConductors.map((item)=>{const a=px(item.from.x,item.from.y),b=px(item.to.x,item.to.y);return <g key={item.id} data-item-id={item.id} className={selectedIds.includes(item.id)?"plan-selected":""} onPointerDown={(event)=>beginGesture(event,item,"move")}><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="plan-hit-target"/><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className={issues.some((issue)=>issue.id===item.id)?"plan-conductor invalid":"plan-conductor"}/><circle cx={a.x} cy={a.y} r="7" data-item-id={item.id} className="plan-endpoint plan-endpoint-hit" onPointerDown={(event)=>beginGesture(event,item,"endpoint","from")}/><circle cx={b.x} cy={b.y} r="7" data-item-id={item.id} className="plan-endpoint plan-endpoint-hit" onPointerDown={(event)=>beginGesture(event,item,"endpoint","to")}/></g>;})}
       {structures&&blockers.map((item)=>{const c=px(item.x,item.y),w=item.width*unitsPerPixel,h=item.height*unitsPerPixel,left=c.x-w/2,top=c.y-h/2;return <g key={item.id} data-item-id={item.id} className={selectedIds.includes(item.id)?"plan-selected":""} onPointerDown={(event)=>beginGesture(event,item,"move")}><rect x={left} y={top} width={w} height={h} rx="3" className={issues.some((issue)=>issue.id===item.id)?"plan-obstacle invalid":"plan-obstacle"}/><text x={c.x} y={c.y+4} textAnchor="middle" className="plan-obstacle-label">{item.label || "Elemento constructivo"}</text>{selectedIds.includes(item.id)&&selectedIds.length===1&&<><rect x={left-5} y={top-5} width="10" height="10" className="plan-resize-handle" aria-label="Redimensionar desde esquina superior izquierda" onPointerDown={(event)=>beginGesture(event,item,"resize","nw")}/><rect x={left+w-5} y={top+h-5} width="10" height="10" className="plan-resize-handle" aria-label="Redimensionar desde esquina inferior derecha" onPointerDown={(event)=>beginGesture(event,item,"resize","se")}/></>}</g>;})}
@@ -363,11 +534,12 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
         <details className="ground-plan-properties" open={propertiesOpen} onToggle={(event)=>setPropertiesOpen(event.currentTarget.open)}><summary>{selectedItem ? `Propiedades · ${selectedLabel}` : "Propiedades del elemento"}</summary>{selectedItem ? <div className="ground-plan-fields">{selectedItem.type === "conductor" ? <><strong>Punto inicial</strong>{field("X (m)","from.x",selectedItem.from.x,0,1)}{field("Y (m)","from.y",selectedItem.from.y,0,1)}<strong>Punto final</strong>{field("X (m)","to.x",selectedItem.to.x,0,1)}{field("Y (m)","to.y",selectedItem.to.y,0,1)}</> : <>{field("X (m)","x",selectedItem.x)}{field("Y (m)","y",selectedItem.y)}{selectedItem.type === "structure" && <><label>Etiqueta<input type="text" value={selectedItem.label || ""} placeholder="Elemento constructivo" onChange={(event)=>updateSelected("label",event.target.value)}/></label>{field("Largo (m)","width",selectedItem.width,plan.spacing,plan.spacing)}{field("Ancho (m)","height",selectedItem.height,plan.spacing,plan.spacing)}<small>Las dimensiones avanzan en pasos de {plan.spacing} m.</small></>}</>}<button className="button ground-plan-delete" onClick={deleteSelected}>Eliminar elemento</button></div> : <p>Selecciona un elemento en el plano o en la lista.</p>}</details>
         <h3 className="ground-plan-section-title">Elementos ({plan.items.length})</h3><ul className="ground-plan-object-list">{plan.items.map((item,index)=><li key={item.id}><button className={selectedIds.includes(item.id)?"selected":""} onClick={()=>{setSelectedId(item.id);setSelectedIds([item.id]);setPropertiesOpen(true);setTool("select");}}><span>{item.type==="conductor"?"Conductor":item.type==="electrode"?"Electrodo":item.label||"Elemento constructivo"} {index+1}</span><small>{item.type==="electrode"?`${item.x.toFixed(2)}, ${item.y.toFixed(2)} m`:item.type==="conductor"?`${item.from.x}, ${item.from.y} → ${item.to.x}, ${item.to.y} m`:`${item.width.toFixed(1)} × ${item.height.toFixed(1)} m`}</small></button></li>)}</ul>
         <h3 className="ground-plan-section-title">Geometría del plano</h3><div className="ground-plan-fields"><label>Largo (m)<input type="number" min="1" step="any" value={plan.length} onChange={(e)=>setGeometry("length",e.target.value)}/></label><label>Ancho (m)<input type="number" min="1" step="any" value={plan.width} onChange={(e)=>setGeometry("width",e.target.value)}/></label><label>Discretización (m)<input type="number" min="0.1" step="any" value={plan.spacing} onChange={(e)=>setGeometry("spacing",e.target.value)}/></label></div>
+        <h3 className="ground-plan-section-title">Plano de fondo y CAD</h3><div className="ground-plan-fields"><label>Fondo<select value={backgroundFile} onChange={(e)=>setBackgroundFile(e.target.value)}><option value="">Selecciona imagen o PDF</option>{sourceFiles.filter((file)=>file.status === "available" && ["application/pdf","image/png","image/jpeg"].includes(file.mime_type)).map((file)=><option key={file.upload_id} value={file.upload_id}>{file.filename}</option>)}</select></label>{sourceFiles.find((file)=>file.upload_id === backgroundFile)?.mime_type === "application/pdf"&&<label>Página PDF<input type="number" min="1" step="1" value={backgroundPage} onChange={(e)=>setBackgroundPage(e.target.value)}/></label>}<button className="button" onClick={prepareBackground}><Image size={14}/>Calibrar con dos puntos</button><button className="button" onClick={proposePlanVision} disabled={visionBusy}>{visionBusy ? "Analizando plano…" : "Proponer obstáculos con IA"}</button>{calibrationMode&&<><label>Distancia real (m)<input type="number" min="0.001" step="any" value={calibrationDistance} onChange={(e)=>setCalibrationDistance(e.target.value)}/></label><small>{calibrationPoints.length}/2 puntos marcados. Haz clic sobre los extremos de una cota conocida.</small><button className="button primary" disabled={calibrationPoints.length !== 2} onClick={attachBackground}>Guardar escala</button></>}{plan.background&&<small>Escala guardada: {plan.background.scale_m_per_pixel} m/píxel{plan.background.source_page ? ` · página ${plan.background.source_page}` : ""}</small>}<label>DXF<select value={dxfFile} onChange={(e)=>setDxfFile(e.target.value)}><option value="">Selecciona un DXF</option>{sourceFiles.filter((file)=>file.status === "available" && file.mime_type === "application/dxf").map((file)=><option key={file.upload_id} value={file.upload_id}>{file.filename}</option>)}</select></label><button className="button" onClick={importDxf}><Upload size={14}/>Importar propuesta DXF</button>{visionProposal&&<div className="ground-plan-vision-proposal"><strong>Revisión de propuesta</strong><span>{visionProposal.structures?.length || 0} obstáculos detectados{visionProposal.source_page ? ` · página ${visionProposal.source_page}` : ""}</span>{visionProposal.warnings?.map((warning, index)=><small key={index}>{warning}</small>)}{visionProposal.structures?.length > 0&&<ul>{visionProposal.structures.map((item, index)=><li key={`${item.x}-${item.y}-${index}`}>{item.label || "Elemento constructivo"} · {item.width} × {item.height} m · ({item.x}, {item.y}) m</li>)}</ul>}<div><button className="button primary" onClick={acceptVisionProposal}>Aceptar propuesta editable</button><button className="button" onClick={()=>setVisionProposal(null)}>Descartar</button></div></div>}</div>
         <h3 className="ground-plan-section-title">Visibilidad</h3><label className="ground-plan-check"><input type="checkbox" checked={conductors} onChange={(e)=>setConductors(e.target.checked)}/> Conductores</label><label className="ground-plan-check"><input type="checkbox" checked={structures} onChange={(e)=>setStructures(e.target.checked)}/> Elementos constructivos</label>
       </aside><div className="ground-plan-board"><div className={`ground-plan-canvas${zoom>1?" zoomed":""}`}>{renderCanvas()}</div><div className="ground-plan-help"><span>{tool==="conductor"?"Marca dos puntos; los extremos cercanos a electrodos se conectan automáticamente.":tool==="electrode"?"Coloca un electrodo en una celda. Solo se permite uno por celda.":tool==="structure"?"Coloca un elemento constructivo no atravesable.":"Elige una herramienta para editar el plano."}{message&&<strong className="ground-plan-message">{message}</strong>}</span><div className="ground-plan-zoom" role="group" aria-label="Controles de zoom"><button aria-label="Alejar" title="Alejar" onClick={()=>setZoom((value)=>Math.max(0.5,value-0.2))} disabled={zoom<=0.5}><Minus size={15}/></button><span>{Math.round(zoom*100)}%</span><button aria-label="Acercar" title="Acercar" onClick={()=>setZoom((value)=>Math.min(3,value+0.2))} disabled={zoom>=3}><Plus size={15}/></button><button onClick={()=>setZoom(1)} disabled={zoom===1}>Restablecer</button></div></div></div>
       <aside className="ground-plan-inspector"><h3>Previsualización de la malla</h3><div className="ground-plan-preview">{renderPreview()}<div className="ground-plan-preview-legend"><span><i className="conductor"/>Conductores</span><span><i className="electrode"/>Electrodos</span><span><i className="obstacle"/>Construcción</span></div></div><h3 className="ground-plan-inspector-rules">Reglas del plano</h3>{issues.length?<ul className="ground-plan-issues">{issues.map((issue,i)=><li key={`${issue.id}-${i}`}><AlertTriangle size={14}/>{issue.text}</li>)}</ul>:<p className="ground-plan-ok">Sin conflictos geométricos detectados.</p>}<p className="ground-plan-shortcuts">Ctrl/Cmd+Z deshacer · Ctrl/Cmd+Y rehacer</p></aside></div>
       {contextMenu&&<div className="ground-plan-context-menu" style={{left:contextMenu.x,top:contextMenu.y}} onClick={(event)=>event.stopPropagation()}><button disabled={!history.past.length} onClick={undo}><Undo2 size={14}/>Deshacer</button><button disabled={!history.future.length} onClick={redo}><Redo2 size={14}/>Rehacer</button><button onClick={()=>{activateTool("select");setContextMenu(null);}}><Maximize2 size={14}/>Seleccionar</button><details open={contextAddOpen} onMouseEnter={()=>setContextAddOpen(true)} onMouseLeave={()=>setContextAddOpen(false)}><summary onClick={(event)=>{event.preventDefault();setContextAddOpen(true);}}><Square size={14}/>Añadir</summary><div><button onClick={()=>{activateTool("conductor");setContextMenu(null);setContextAddOpen(false);}}><Cable size={14}/>Conductor</button><button disabled={selectedItem?.type === "electrode"} title={selectedItem?.type === "electrode" ? "Ya hay un electrodo seleccionado" : undefined} onClick={()=>{activateTool("electrode");setContextMenu(null);setContextAddOpen(false);}}><CircleDot size={14}/>Electrodo</button><button onClick={()=>{activateTool("structure");setContextMenu(null);setContextAddOpen(false);}}><Square size={14}/>Elemento constructivo</button></div></details></div>}
-      <footer className="ground-plan-footer">La discretización define las celdas y los puntos de conexión. El plano se guarda localmente en este navegador.<span>{issues.length?`${issues.length} conflictos`:"Sin conflictos"}</span></footer>
+      <footer className="ground-plan-footer">La discretización define las celdas y los puntos de conexión. {saveState === "pending" ? "Guardando versión…" : saveState === "error" ? "Error de guardado" : artifact ? `Versión ${artifact.version} guardada` : "Plano pendiente de guardar"}<span>{issues.length?`${issues.length} conflictos`:"Sin conflictos"}</span></footer>
     </section></div>}
   </>;
 }

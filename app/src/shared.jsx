@@ -8,6 +8,7 @@ export const mimeByExtension = {
   jpeg: "image/jpeg",
   csv: "text/csv",
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  dxf: "application/dxf",
 };
 export const uploadableMimeTypes = new Set(Object.values(mimeByExtension));
 export const uploadStatusLabels = {

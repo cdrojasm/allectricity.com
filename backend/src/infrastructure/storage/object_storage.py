@@ -86,6 +86,9 @@ class ObjectStorage:
 
     def detected_mime(self, data):
         detected = magic.from_buffer(data, mime=True)
+        # DXF is an ASCII CAD exchange format; libmagic reports it as image/vnd.dxf or text/plain.
+        if detected in {"text/plain", "image/vnd.dxf"} and b"SECTION" in data[:4096] and b"ENTITIES" in data:
+            return "application/dxf"
         # Some libmagic builds report DOCX as a generic ZIP; confirm the Word part exists.
         if detected in {"application/zip", "application/octet-stream"} and data[:2] == b"PK":
             try:

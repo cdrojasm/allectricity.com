@@ -20,6 +20,7 @@ from src.domain.knowledge_graph.source import Segment, SourceDocument
 PARSER_VERSION = "doc-sources/2"
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+DXF_MIME = "application/dxf"
 MIN_PAGE_TEXT = 20
 
 
@@ -362,6 +363,9 @@ def _parse_image(data: bytes, mime_type: str) -> SourceDocument:
 
 
 def parse_document(data: bytes, mime_type: str) -> SourceDocument:
+    if mime_type == DXF_MIME:
+        return SourceDocument("", [], mime_type, PARSER_VERSION,
+                              {"entities": "available to the plan importer"}, {})
     if mime_type == "application/pdf":
         return _parse_pdf(data)
     if mime_type == "text/csv":

@@ -5,7 +5,7 @@ from time import time
 from urllib.parse import unquote_plus
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from src.infrastructure.entrypoint.worker.tasks import scan_file_upload
@@ -27,6 +27,7 @@ ALLOWED_MIME = {
     "text/csv",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/dxf",
 }
 
 
@@ -125,6 +126,51 @@ def presign_upload(
         "required_headers": {},
         "status": "pending",
     }
+
+
+@router.get("/{upload_id}/download")
+def download_upload(upload_id: str, request: Request, actor=Depends(require("files:read"))):
+    """Return a short-lived URL for an available project source."""
+    with request.app.state.services.store.transaction() as db:
+        upload = db.one("file_uploads", id=upload_id, owner_id=actor.user_id, status="available")
+    if not upload:
+        raise HTTPException(404, "Available upload not found")
+    return {"upload_id": upload_id, "filename": upload["filename"], "mime_type": upload["expected_mime"],
+            "url": storage_client().presign_download(upload["target_bucket"], upload["object_key"], upload["filename"])}
+
+
+@router.get("/{upload_id}/preview")
+def preview_upload(upload_id: str, request: Request, page: int = 1, dpi: int = 144,
+                   actor=Depends(require("files:read"))):
+    """Render one PDF page to a bounded PNG for the plan-background editor."""
+    if page < 1 or not 72 <= dpi <= 240:
+        raise HTTPException(422, "page must be >= 1 and dpi must be between 72 and 240")
+    with request.app.state.services.store.transaction() as db:
+        upload = db.one("file_uploads", id=upload_id, owner_id=actor.user_id, status="available")
+    if not upload or upload["expected_mime"] != "application/pdf":
+        raise HTTPException(404, "Available PDF upload not found")
+    try:
+        import io
+        import pypdfium2
+        from PIL import Image
+
+        data = storage_client().read_object(upload["target_bucket"], upload["object_key"], 50 * 1024 * 1024)
+        document = pypdfium2.PdfDocument(data)
+        if page > len(document):
+            raise HTTPException(422, f"PDF has only {len(document)} page(s)")
+        pdf_page = document[page - 1]
+        bitmap = pdf_page.render(scale=dpi / 72, rotation=0, fill_color=(255, 255, 255, 255))
+        image = bitmap.to_pil().convert("RGB")
+        if image.width * image.height > 25_000_000:
+            raise HTTPException(413, "Rendered PDF page is too large; use a lower DPI")
+        output = io.BytesIO()
+        image.save(output, format="PNG", optimize=True)
+        return Response(content=output.getvalue(), media_type="image/png",
+                        headers={"Cache-Control": "private, max-age=300"})
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(422, "The PDF page could not be rasterized") from exc
 
 
 @router.post("/{upload_id}/complete", status_code=202)
