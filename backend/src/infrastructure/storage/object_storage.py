@@ -139,3 +139,8 @@ class ObjectStorage:
             metadata_directive=REPLACE,
         )
         self.client.remove_object(self.quarantine_bucket, key)
+
+    def write_object(self, bucket, key, data, content_type):
+        if bucket not in self.allowed_buckets.values():
+            raise ValueError("Bucket is not writable")
+        self.client.put_object(bucket, key, io.BytesIO(data), len(data), content_type=content_type)

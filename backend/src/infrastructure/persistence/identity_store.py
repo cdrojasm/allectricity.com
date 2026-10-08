@@ -5,6 +5,12 @@ from src.infrastructure.persistence.identity_schema import TABLES
 from src.infrastructure.persistence.sql_design_repository import SQLDesignRepository
 
 
+def _key(table):
+    """Columna de clave primaria (no todas las tablas usan `id`)."""
+    (column,) = table.primary_key.columns
+    return column
+
+
 class SQLRecords:
     def __init__(self, connection):
         self.connection = connection
@@ -17,7 +23,7 @@ class SQLRecords:
     def many(self, table, *, limit=None, offset=0, **filters):
         t = TABLES[table]
         stmt = (
-            select(t).filter_by(**filters).order_by(t.c.id).limit(limit).offset(offset)
+            select(t).filter_by(**filters).order_by(_key(t)).limit(limit).offset(offset)
         )
         return [dict(row) for row in self.connection.execute(stmt).mappings()]
 
@@ -27,7 +33,7 @@ class SQLRecords:
         stmt = select(t).filter_by(**filters)
         if after is not None:
             stmt = stmt.where(t.c[column] > after)
-        stmt = stmt.order_by(t.c[column], t.c.id).limit(limit)
+        stmt = stmt.order_by(t.c[column], _key(t)).limit(limit)
         return [dict(row) for row in self.connection.execute(stmt).mappings()]
 
     def add(self, table, **values):
@@ -36,11 +42,11 @@ class SQLRecords:
 
     def change(self, table, record_id, **values):
         t = TABLES[table]
-        self.connection.execute(update(t).where(t.c.id == record_id).values(**values))
+        self.connection.execute(update(t).where(_key(t) == record_id).values(**values))
 
     def remove(self, table, record_id):
         t = TABLES[table]
-        self.connection.execute(delete(t).where(t.c.id == record_id))
+        self.connection.execute(delete(t).where(_key(t) == record_id))
 
 
 class SQLIdentityStore:

@@ -5,9 +5,11 @@ import { IconButton } from "./shared.jsx";
 import { Login, ProjectsPage } from "./components/ProjectPages.jsx";
 import { DashboardPage } from "./components/DashboardPage.jsx";
 import { ProjectChatWorkspace } from "./components/ProjectChatWorkspace.jsx";
+import { PublicStudyPage } from "./components/StudyPage.jsx";
 import "./styles.css";
 
 function App() {
+  const publicStudy = window.location.pathname.match(/^\/e\/([^/]+)\/?$/);
   const [token, setToken] = useState(() => localStorage.getItem("spat_access_token"));
   const [user, setUser] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
@@ -17,6 +19,7 @@ function App() {
   const [activeProject, setActiveProject] = useState(null);
   useEffect(() => {
     let cancelled = false;
+    if (publicStudy) { setAuthChecking(false); return () => { cancelled = true; }; }
     if (!token) {
       localStorage.removeItem("spat_access_token");
       if (window.location.pathname !== "/login") window.history.replaceState({}, "", "/login");
@@ -51,7 +54,7 @@ function App() {
     localStorage.setItem(key, String(Date.now()));
   }, [user?.id]);
   useEffect(() => {
-    if (!token || !user) return undefined;
+    if (publicStudy || !token || !user) return undefined;
     let live = true;
     async function syncRoute() {
       const match = window.location.pathname.match(/^\/project\/([^/]+)\/?$/);
@@ -105,6 +108,7 @@ function App() {
     return () => clearTimeout(id);
   }, [notice]);
   if (authChecking) return <main className="login-page"><div className="login-loading">Loading your workspace…</div></main>;
+  if (publicStudy) return <PublicStudyPage slug={decodeURIComponent(publicStudy[1])} />;
   if (!token || !user) return <Login onLogin={acceptToken} />;
   return (
     <div className="app-shell">

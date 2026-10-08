@@ -14,6 +14,7 @@ PUBLIC = {
     ("POST", "/api/v1/auth/forgot-password"),
     ("POST", "/api/v1/auth/reset-password"),
 }
+PUBLIC_PREFIXES = ("/api/v1/public/studies/",)
 TRUSTED_WEBHOOKS = {("POST", "/api/v1/files/events/minio")}
 bearer = HTTPBearer(auto_error=False)
 
@@ -27,7 +28,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                 if (request.method, path) in TRUSTED_WEBHOOKS:
                     # The route validates MinIO's shared webhook token.
                     pass
-                elif (request.method, path) in PUBLIC:
+                elif (request.method, path) in PUBLIC or any(path.startswith(prefix) for prefix in PUBLIC_PREFIXES):
                     # Do not trust arbitrary X-Forwarded-For from clients.
                     peer = request.client.host if request.client else "unknown"
                     await run_in_threadpool(
@@ -76,7 +77,7 @@ def validate_endpoint_policies(app):
     for route in app.routes:
         if not isinstance(route, APIRoute) or not route.path.startswith("/api/"):
             continue
-        if all((method, route.path) in PUBLIC for method in route.methods):
+        if all((method, route.path) in PUBLIC or any(route.path.startswith(prefix) for prefix in PUBLIC_PREFIXES) for method in route.methods):
             continue
         if all((method, route.path) in TRUSTED_WEBHOOKS for method in route.methods):
             continue

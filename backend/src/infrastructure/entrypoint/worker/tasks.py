@@ -32,6 +32,39 @@ celery_app.conf.update(
 )
 
 
+@celery_app.task(name="spat.render_study_pdf", autoretry_for=(Exception,), retry_backoff=30, max_retries=2)
+def render_study_pdf(study_id):
+    """Render the public study route with Chromium and store the immutable PDF."""
+    from io import BytesIO
+    from src.infrastructure.storage.object_storage import ObjectStorage
+
+    store = upload_store()
+    with store.transaction() as db:
+        study = db.one("studies", id=study_id)
+    if not study or study["status"] != "published":
+        return
+    try:
+        from playwright.sync_api import sync_playwright
+        base = os.getenv("PUBLIC_APP_URL", "http://app:80").rstrip("/")
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            render_token = os.getenv("STUDY_RENDER_TOKEN", "")
+            page.goto(f"{base}/e/{study['slug']}?render_token={render_token}", wait_until="networkidle")
+            pdf = page.pdf(format="A4", print_background=True, margin={"top": "12mm", "right": "12mm", "bottom": "12mm", "left": "12mm"})
+            browser.close()
+        key = f"studies/{study['id']}.pdf"
+        storage = ObjectStorage()
+        storage.write_object(storage.allowed_buckets["designs"], key, pdf, "application/pdf")
+        current_time = int(now())
+        with store.transaction(write=True) as db:
+            db.change("studies", study_id, pdf_key=key, pdf_status="ready", pdf_error=None, pdf_updated_at=current_time)
+    except Exception as exc:
+        with store.transaction(write=True) as db:
+            db.change("studies", study_id, pdf_status="failed", pdf_error=str(exc)[:500], pdf_updated_at=int(now()))
+        raise
+
+
 class SMTPMailer:
     def send_reset(self, recipient, reset_url, message_id):
         host = os.environ["SMTP_HOST"]

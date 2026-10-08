@@ -23,6 +23,7 @@ from src.infrastructure.entrypoint.api.knowledge_graph_routes import (
     router as knowledge_graph_router,
 )
 from src.infrastructure.entrypoint.api.system_routes import router as system_router
+from src.infrastructure.entrypoint.api.study_routes import router as study_router, public_router as public_study_router
 from src.infrastructure.security.container import build_services
 from src.infrastructure.security.middleware import (
     AuthenticationMiddleware,
@@ -53,6 +54,8 @@ def create_app(settings=None, services=None):
     app.include_router(catalog_router)
     app.include_router(knowledge_graph_router)
     app.include_router(system_router)
+    app.include_router(study_router)
+    app.include_router(public_study_router)
     app.state.geocoder_search_url = getattr(
         settings,
         "geocoder_search_url",

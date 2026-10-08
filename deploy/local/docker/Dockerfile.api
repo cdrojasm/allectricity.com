@@ -19,7 +19,8 @@ COPY scripts/smoke_auth.py ./scripts/smoke_auth.py
 COPY scripts/smoke_session.py ./scripts/smoke_session.py
 COPY scripts/sync_langfuse_prompts.py ./scripts/sync_langfuse_prompts.py
 COPY prompts ./prompts
-RUN pip install --no-cache-dir .
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN pip install --no-cache-dir '.[parsers]' && playwright install --with-deps chromium
 RUN useradd --create-home --uid 10001 spat
 USER spat
 EXPOSE 8000
