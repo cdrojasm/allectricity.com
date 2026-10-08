@@ -10,6 +10,7 @@ missing, which only blocks the potential calculation.
 import json
 import os
 from pathlib import Path
+from time import time
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -816,9 +817,70 @@ class GroundingDesignAgent:
                 history.append({"role": "assistant", "content": message["text"]})
         return history
 
+    def _project_context(self, run, workspace) -> dict:
+        with self.store.transaction() as db:
+            memory = db.one("project_context_memory", project_id=run["project_id"])
+            files = db.many("file_uploads", project_id=run["project_id"], status="available", limit=None)
+        context = {
+            "mode": run["mode"],
+            "artifacts": workspace.artifacts_summary(),
+            "project_memory": memory or {"summary": "", "items": []},
+            "sources": {"files": [{"upload_id": row["id"], "filename": row["filename"],
+                                    "mime_type": row["expected_mime"]} for row in files]},
+        }
+        try:
+            from src.infrastructure.persistence.knowledge_graph_store import Neo4jKnowledgeGraph
+            graph = Neo4jKnowledgeGraph.from_env()
+            if graph:
+                try:
+                    context["sources"]["knowledge_graph"] = graph.summary(run["project_id"])
+                    claims = graph.list_claims(run["project_id"], limit=12)["items"]
+                    context["sources"]["recent_claims"] = [{
+                        key: claim.get(key) for key in ("claim_id", "kind", "status", "name", "attribute",
+                                                        "value_literal", "unit_literal", "filename", "evidence")
+                        if claim.get(key) is not None
+                    } for claim in claims]
+                finally:
+                    graph.close()
+        except Exception:
+            # Chat remains available when the optional graph service is offline.
+            pass
+        return context
+
+    def _save_project_memory(self, run, args) -> dict:
+        summary = str(args.get("summary") or "").strip()[:6000]
+        items = args.get("items") or []
+        if len(items) > 40:
+            return {"error": "At most 40 memory items are allowed"}
+        project_message_ids = set()
+        with self.store.transaction() as db:
+            conversations = db.many("conversations", project_id=run["project_id"], limit=None)
+            for conversation in conversations:
+                project_message_ids.update(row["id"] for row in db.many(
+                    "chat_messages", conversation_id=conversation["id"], source="user", limit=None))
+        normalized = []
+        for item in items:
+            kind = item.get("kind")
+            text = str(item.get("text") or "").strip()[:1000]
+            refs = list(dict.fromkeys(str(value) for value in (item.get("source_message_ids") or [])))
+            if kind not in {"decision", "assumption", "open_question"} or not text or not refs:
+                return {"error": "Each item needs a valid kind, text and at least one source message"}
+            if any(ref not in project_message_ids for ref in refs):
+                return {"error": "Memory sources must be user messages from this project"}
+            normalized.append({"kind": kind, "text": text, "source_message_ids": refs})
+        now = int(time())
+        with self.store.transaction(write=True) as db:
+            current = db.one("project_context_memory", project_id=run["project_id"])
+            values = {"summary": summary, "items": normalized, "updated_at": now}
+            if current:
+                db.change("project_context_memory", run["project_id"], **values)
+            else:
+                db.add("project_context_memory", project_id=run["project_id"], **values)
+        return {"saved": True, "items": len(normalized)}
+
     def _orchestrate(self, client, prompts, workspace, run, runs, usage) -> StepOutcome:
         mode = AgentMode(run["mode"])
-        context = {"mode": mode.value, "artifacts": workspace.artifacts_summary()}
+        context = self._project_context(run, workspace)
         finished = workspace.calculation_result()
         if finished:
             context["finished_calculation"] = finished
@@ -833,6 +895,15 @@ class GroundingDesignAgent:
                                   ["query", "resistivity_ohm_m"]))
         handlers = {"get_draft": workspace.get_draft, "validate_draft": workspace.validate_tool,
                     "lookup_soil_material": workspace.lookup_material}
+        tools.append(runtime.tool("save_project_memory", "Save the concise, durable project context after the user confirms an important decision, assumption or pending question. Keep only current information; cite user message ids exactly. Do not save guesses as facts.", {
+            "summary": {"type": "string"},
+            "items": {"type": "array", "items": {"type": "object", "properties": {
+                "kind": {"type": "string", "enum": ["decision", "assumption", "open_question"]},
+                "text": {"type": "string"},
+                "source_message_ids": {"type": "array", "items": {"type": "string"}}},
+                "required": ["kind", "text", "source_message_ids"], "additionalProperties": False}},
+            "required": ["summary", "items"], "additionalProperties": False}, ["summary", "items"]))
+        handlers["save_project_memory"] = lambda args: self._save_project_memory(run, args)
         source = {"type": "object", "properties": {
             "kind": {"type": "string", "enum": ["user", "assumption"]},
             "ref": {"type": ["string", "null"], "description": "User message id for kind user"},

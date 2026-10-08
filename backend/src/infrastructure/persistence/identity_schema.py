@@ -359,6 +359,14 @@ agent_conversation_state = Table(
     Column("updated_at", BigInteger, nullable=False),
     CheckConstraint(f"mode IN ({AGENT_MODES})", name="ck_agent_state_mode"),
 )
+project_context_memory = Table(
+    "project_context_memory",
+    metadata,
+    Column("project_id", ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True),
+    Column("summary", Text, nullable=False),
+    Column("items", JSON, nullable=False),
+    Column("updated_at", BigInteger, nullable=False),
+)
 rate_limits = Table(
     "rate_limits",
     metadata,

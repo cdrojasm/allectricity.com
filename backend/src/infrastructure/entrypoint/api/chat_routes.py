@@ -56,7 +56,16 @@ def create_conversation(project_id: str, payload: ConversationRequest, request: 
 def list_conversations(project_id: str, request: Request, actor=Depends(require())):
     with request.app.state.services.store.transaction() as db:
         owned_project(db, project_id, actor)
-        return db.many("conversations", project_id=project_id, limit=500)
+        return sorted(db.many("conversations", project_id=project_id, limit=500),
+                      key=lambda row: (row["updated_at"], row["created_at"], row["id"]), reverse=True)
+
+
+@router.get("/projects/{project_id}/memory")
+def project_memory(project_id: str, request: Request, actor=Depends(require())):
+    with request.app.state.services.store.transaction() as db:
+        owned_project(db, project_id, actor)
+        memory = db.one("project_context_memory", project_id=project_id)
+        return memory or {"project_id": project_id, "summary": "", "items": [], "updated_at": None}
 
 
 @router.get("/projects/{project_id}/files")
