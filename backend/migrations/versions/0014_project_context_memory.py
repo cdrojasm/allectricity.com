@@ -4,8 +4,8 @@ from alembic import op
 
 from src.infrastructure.persistence.identity_schema import project_context_memory
 
-revision = "0013_project_context_memory"
-down_revision = "0012_upload_recovery"
+revision = "0014_project_context_memory"
+down_revision = "0013_artifact_contracts"
 branch_labels = None
 depends_on = None
 
