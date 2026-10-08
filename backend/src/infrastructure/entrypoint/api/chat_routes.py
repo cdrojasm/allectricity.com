@@ -110,7 +110,10 @@ def create_message(conversation_id: str, payload: MessageRequest, request: Reque
             db.add("message_contents", id=str(uuid4()), message_id=message_id,
                    format="image" if upload["expected_mime"].startswith("image/") else "file",
                    upload_id=upload["id"], filename=upload["filename"], mime_type=upload["expected_mime"], created_at=now)
-        db.change("conversations", conversation_id, updated_at=now)
+        conversation_changes = {"updated_at": now}
+        if conversation.get("title") == "Nueva conversación" and payload.text.strip():
+            conversation_changes["title"] = payload.text.strip()[:60]
+        db.change("conversations", conversation_id, **conversation_changes)
         contents = db.many("message_contents", message_id=message_id)
         run, dispatch = AgentRuns(store).submit_message(db, conversation, message_id, actor.user_id)
         row["run_id"] = run["id"]

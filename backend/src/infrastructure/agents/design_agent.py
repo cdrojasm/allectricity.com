@@ -835,11 +835,18 @@ class GroundingDesignAgent:
                 try:
                     context["sources"]["knowledge_graph"] = graph.summary(run["project_id"])
                     claims = graph.list_claims(run["project_id"], limit=12)["items"]
-                    context["sources"]["recent_claims"] = [{
-                        key: claim.get(key) for key in ("claim_id", "kind", "status", "name", "attribute",
-                                                        "value_literal", "unit_literal", "filename", "evidence")
-                        if claim.get(key) is not None
-                    } for claim in claims]
+                    compact_claims = []
+                    for claim in claims:
+                        item = {key: claim.get(key) for key in ("claim_id", "kind", "status", "name", "attribute",
+                                                                 "value_literal", "unit_literal", "filename")
+                                if claim.get(key) is not None}
+                        evidence = claim.get("evidence") or []
+                        if evidence:
+                            item["evidence"] = [{"quote": str(row.get("quote") or "")[:500],
+                                                 "page": row.get("page"), "sheet": row.get("sheet"),
+                                                 "row": row.get("row")} for row in evidence[:2]]
+                        compact_claims.append(item)
+                    context["sources"]["recent_claims"] = compact_claims
                 finally:
                     graph.close()
         except Exception:
@@ -885,7 +892,11 @@ class GroundingDesignAgent:
         if finished:
             context["finished_calculation"] = finished
         messages = [*prompts["orchestrator"],
-                    {"role": "system", "content": "Context: " + json.dumps(context, ensure_ascii=False)},
+                    {"role": "system", "content": "Context: " + json.dumps(context, ensure_ascii=False) +
+                     "\nLong-term memory rule: reuse project_memory across all conversations. When the user confirms "
+                     "a durable decision, assumption or pending question, call save_project_memory and preserve "
+                     "other still-valid items. Cite exact user message ids from the history; never turn an "
+                     "unverified inference into a decision."},
                     *self._history(run)]
         tools = [runtime.tool("get_draft", "Artifact draft, sources and unconfirmed critical inputs.", {}, []),
                  runtime.tool("validate_draft", "Validate the draft against the artifact schema.", {}, [])]
