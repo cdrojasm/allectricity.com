@@ -1,5 +1,8 @@
 # Backlog de entrega — Agente SPAT
 
+> La visión y el backlog de producto (ids `PR-NN`) están en
+> [BACKLOG_PRODUCTO.md](BACKLOG_PRODUCTO.md); este documento cubre el backlog técnico.
+
 ## Objetivo y criterio de arquitectura
 
 El producto mantiene un único núcleo Python y se despliega como imagen OCI. La

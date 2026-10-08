@@ -1,0 +1,9 @@
+Te paso el sondeo Wenner SEV-1 (resistividad aparente):
+a = 1 m → 295,1 Ω·m
+a = 2 m → 225,0 Ω·m
+a = 3 m → 168,6 Ω·m
+a = 4 m → 136,1 Ω·m
+a = 6 m → 109,9 Ω·m
+a = 8 m → 102,0 Ω·m
+a = 12 m → 97,6 Ω·m
+a = 16 m → 96,4 Ω·m

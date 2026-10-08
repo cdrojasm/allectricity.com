@@ -1,0 +1,81 @@
+%PDF-1.4
+%âãÏÓ
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 2 /Kids [5 0 R 7 0 R] >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 1386 >>
+stream
+BT 15 TL 56 740 Td
+/F2 12 Tf (ESTUDIO DE CORTOCIRCUITO Y COORDINACIÓN DE PROTECCIONES) Tj T*
+/F2 12 Tf (Subestación La Esperanza 34,5/13,8 kV — Documento EC-02 rev. 1 \(2026-09-10\)) Tj T*
+/F1 10.5 Tf () Tj T*
+/F1 10.5 Tf (1. Alcance) Tj T*
+/F1 10.5 Tf (Corrientes de falla en barras de 34,5 kV y 13,8 kV para el diseño de la malla de puesta a tierra.) Tj T*
+/F1 10.5 Tf (Red equivalente del operador de red en el punto de conexión, escenario de máxima generación 2030.) Tj T*
+/F1 10.5 Tf () Tj T*
+/F1 10.5 Tf (2. Datos del sistema) Tj T*
+/F1 10.5 Tf (Frecuencia nominal: 60 Hz.) Tj T*
+/F1 10.5 Tf (Transformador T1: 10 MVA, 34,5/13,8 kV, Dyn1, Z = 8,0 %.) Tj T*
+/F1 10.5 Tf (Relación X/R en barra de 34,5 kV: 14.) Tj T*
+/F1 10.5 Tf () Tj T*
+/F1 10.5 Tf (3. Resultados de cortocircuito \(máxima\)) Tj T*
+/F1 10.5 Tf (Falla trifásica en barra de 34,5 kV: 9,2 kA.) Tj T*
+/F1 10.5 Tf (Falla monofásica a tierra en barra de 34,5 kV: 8,5 kA.) Tj T*
+/F1 10.5 Tf (Falla monofásica a tierra en barra de 13,8 kV: 6,1 kA \(neutro del T1 sólidamente aterrizado\).) Tj T*
+/F1 10.5 Tf () Tj T*
+/F1 10.5 Tf (4. Tiempos de despeje) Tj T*
+/F1 10.5 Tf (Protección principal \(relé 87T / 50N\): despeje total 0,5 s.) Tj T*
+/F1 10.5 Tf (Protección de respaldo \(51N aguas arriba\): 1,0 s.) Tj T*
+/F1 10.5 Tf (Para el dimensionamiento térmico del conductor se recomienda t_c = 1,0 s \(respaldo\).) Tj T*
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 8 0 R >>
+endobj
+8 0 obj
+<< /Length 830 >>
+stream
+BT 15 TL 56 740 Td
+/F1 10.5 Tf (5. Recomendaciones para la malla de puesta a tierra) Tj T*
+/F1 10.5 Tf (Factor de división de corriente S_f estimado: 0,62 \(cable de guarda en las dos líneas de 34,5 kV\).) Tj T*
+/F1 10.5 Tf (La corriente de diseño de la malla es la falla monofásica en 34,5 kV.) Tj T*
+/F1 10.5 Tf (Capa superficial: gravilla triturada de 0,15 m de espesor, resistividad húmeda 3000 ohm·m) Tj T*
+/F1 10.5 Tf (\(valor de catálogo del proveedor; no se ha medido en sitio\).) Tj T*
+/F1 10.5 Tf (Criterio de peso corporal: 50 kg \(conservador\).) Tj T*
+/F1 10.5 Tf () Tj T*
+/F1 10.5 Tf (6. Observaciones) Tj T*
+/F1 10.5 Tf (El escenario 2030 incluye el refuerzo de la línea La Esperanza - El Rosal.) Tj T*
+/F1 10.5 Tf (Estos valores deben ser validados por el ingeniero responsable antes de su uso en diseño.) Tj T*
+ET
+endstream
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000127 00000 n 
+0000000224 00000 n 
+0000000326 00000 n 
+0000000462 00000 n 
+0000001900 00000 n 
+0000002036 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R >>
+startxref
+2917
+%%EOF
