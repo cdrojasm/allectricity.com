@@ -71,6 +71,24 @@ def test_review_flow_through_api(env):  # noqa: F811
     assert client.get(f"{base}/runs", headers=headers(tokens)).json()["items"]
 
 
+def test_batch_review_accepts_multiple_claims_in_one_request(env):  # noqa: F811
+    _, services, client, _, tokens, _ = env
+    base, _, _ = _project(client, tokens, services)
+    claims = client.get(f"{base}/claims", params={"kind": "attribute", "limit": 50},
+                        headers=headers(tokens)).json()["items"]
+    claim_ids = [claim["claim_id"] for claim in claims[:4]]
+    response = client.post(
+        f"{base}/claims/decisions",
+        json={"items": [{"claim_id": claim_id, "decision": "accept", "reason": "Confirmado en bloque"}
+                         for claim_id in claim_ids]},
+        headers=headers(tokens))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == len(claim_ids) and body["succeeded"] == len(claim_ids)
+    assert body["failed"] == 0 and len(body["accepted"]) == len(claim_ids)
+
+
 def test_project_authorization_and_permissions(env):  # noqa: F811
     _, services, client, admin_actor, tokens, _ = env
     base, graph, _ = _project(client, tokens, services)

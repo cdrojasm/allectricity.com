@@ -303,24 +303,46 @@ function ClaimsTab({ request, base, summary, onOpenClaim, version }) {
   const [filters, setFilters] = useState({ status: "needs_review", kind: "", upload_id: "" });
   const [page, setPage] = useState({ items: [], total: 0, skip: 0, limit: 50 });
   const [error, setError] = useState("");
+  const [selected, setSelected] = useState([]);
+  const [batchReason, setBatchReason] = useState("Confirmado por el usuario");
+  const [batchBusy, setBatchBusy] = useState(false);
   async function load(skip = 0) {
     const params = new URLSearchParams({ limit: "50", skip: String(skip) });
     Object.entries(filters).forEach(([key, value]) => value && params.set(key, value));
-    try { setPage(await request(`${base}/claims?${params}`)); setError(""); }
+    try { setPage(await request(`${base}/claims?${params}`)); setSelected([]); setError(""); }
     catch (e) { setError(e.message); }
   }
   useEffect(() => { load(0); }, [filters, version]);
   const set = (key) => (event) => setFilters((old) => ({ ...old, [key]: event.target.value }));
+  const selectable = page.items.filter((claim) => ["proposed", "needs_review"].includes(claim.status));
+  const allSelected = selectable.length > 0 && selectable.every((claim) => selected.includes(claim.claim_id));
+  function toggleAll() {
+    setSelected(allSelected ? [] : selectable.map((claim) => claim.claim_id));
+  }
+  async function acceptSelected() {
+    if (!selected.length || batchReason.trim().length < 3) return;
+    setBatchBusy(true); setError("");
+    try {
+      const result = await request(`${base}/claims/decisions`, { method: "POST", body: JSON.stringify({
+        items: selected.map((claim_id) => ({ claim_id, decision: "accept", reason: batchReason.trim() }))
+      }) });
+      if (result.failed) setError(`${result.succeeded} confirmadas; ${result.failed} requieren revisión individual.`);
+      setSelected([]);
+      await load(page.skip);
+    } catch (e) { setError(e.message); }
+    finally { setBatchBusy(false); }
+  }
   return <div className="kg-tab-body">
     <div className="kg-filters">
       <select aria-label="Estado" value={filters.status} onChange={set("status")}><option value="">Todos los estados</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label} ({summary?.claims?.by_status?.[key] || 0})</option>)}</select>
       <select aria-label="Tipo" value={filters.kind} onChange={set("kind")}><option value="">Todos los tipos</option>{Object.entries(kindLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
       <select aria-label="Documento" value={filters.upload_id} onChange={set("upload_id")}><option value="">Todos los documentos</option>{summary?.documents?.map((d) => <option key={d.upload_id} value={d.upload_id}>{d.filename}</option>)}</select>
       <span className="kg-muted">{page.total} afirmaciones</span>
+      {selected.length > 0 && <><input aria-label="Motivo de confirmación múltiple" value={batchReason} onChange={(event) => setBatchReason(event.target.value)} /><button className="button primary" disabled={batchBusy || batchReason.trim().length < 3} onClick={acceptSelected}>{batchBusy ? "Confirmando…" : `Aceptar ${selected.length} seleccionadas`}</button></>}
     </div>
     {error && <div className="kg-alert"><AlertTriangle size={14}/>{error}</div>}
-    <div className="kg-table-wrap"><table className="kg-table"><thead><tr><th>Estado</th><th>Tipo</th><th>Afirmación</th><th>Evidencia</th><th>Documento</th><th>Método</th></tr></thead><tbody>
-      {page.items.length ? page.items.map((c) => <tr key={c.claim_id} onClick={() => onOpenClaim(c.claim_id)}><td><StatusBadge status={c.status}/></td><td>{kindLabels[c.kind]}</td><td><strong>{claimText(c)}</strong>{c.conflict_count > 0 && <span className="kg-pill conflict"><AlertTriangle size={10}/> {c.conflict_count} conflicto{c.conflict_count > 1 ? "s" : ""}</span>}{c.feeds_calculation && <span className="kg-pill calc">cálculo</span>}</td><td className="kg-quote-cell">{c.evidence?.[0] ? <>«{c.evidence[0].quote}»<small>{formatLocator(c.evidence[0].locator)}</small></> : <span className="warn">sin evidencia</span>}</td><td>{c.filename}</td><td>{c.methods?.join(", ")}</td></tr>) : <tr><td colSpan="6" className="kg-table-empty">No hay afirmaciones con estos filtros.</td></tr>}
+    <div className="kg-table-wrap"><table className="kg-table"><thead><tr><th><input aria-label="Seleccionar todas las afirmaciones confirmables" type="checkbox" checked={allSelected} onChange={toggleAll}/></th><th>Estado</th><th>Tipo</th><th>Afirmación</th><th>Evidencia</th><th>Documento</th><th>Método</th></tr></thead><tbody>
+      {page.items.length ? page.items.map((c) => <tr key={c.claim_id} onClick={() => onOpenClaim(c.claim_id)}><td><input aria-label={`Seleccionar ${claimText(c)}`} type="checkbox" disabled={!selectable.includes(c)} checked={selected.includes(c.claim_id)} onClick={(event) => event.stopPropagation()} onChange={() => setSelected((old) => old.includes(c.claim_id) ? old.filter((id) => id !== c.claim_id) : [...old, c.claim_id])}/></td><td><StatusBadge status={c.status}/></td><td>{kindLabels[c.kind]}</td><td><strong>{claimText(c)}</strong>{c.conflict_count > 0 && <span className="kg-pill conflict"><AlertTriangle size={10}/> {c.conflict_count} conflicto{c.conflict_count > 1 ? "s" : ""}</span>}{c.feeds_calculation && <span className="kg-pill calc">cálculo</span>}</td><td className="kg-quote-cell">{c.evidence?.[0] ? <>«{c.evidence[0].quote}»<small>{formatLocator(c.evidence[0].locator)}</small></> : <span className="warn">sin evidencia</span>}</td><td>{c.filename}</td><td>{c.methods?.join(", ")}</td></tr>) : <tr><td colSpan="7" className="kg-table-empty">No hay afirmaciones con estos filtros.</td></tr>}
     </tbody></table></div>
     {page.total > page.limit && <div className="kg-pager"><button className="button" disabled={page.skip === 0} onClick={() => load(Math.max(0, page.skip - page.limit))}>Anterior</button><span>{page.skip + 1}–{Math.min(page.total, page.skip + page.limit)} de {page.total}</span><button className="button" disabled={page.skip + page.limit >= page.total} onClick={() => load(page.skip + page.limit)}>Siguiente</button></div>}
   </div>;

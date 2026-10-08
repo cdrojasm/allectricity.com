@@ -24,6 +24,14 @@ class ClaimDecisionRequest(BaseModel):
     supersede_claim_ids: list[str] = Field(default_factory=list, max_length=20)
 
 
+class BatchClaimDecisionItem(ClaimDecisionRequest):
+    claim_id: str = Field(min_length=1, max_length=128)
+
+
+class BatchClaimDecisionRequest(BaseModel):
+    items: list[BatchClaimDecisionItem] = Field(min_length=1, max_length=50)
+
+
 class QuestionResolutionRequest(BaseModel):
     status: Literal["resolved", "dismissed"]
     resolution: str = Field(min_length=3, max_length=2000)
@@ -86,6 +94,29 @@ def decide_claim(project_id: str, claim_id: str, payload: ClaimDecisionRequest,
                              payload.supersede_claim_ids)
     except ReviewError as exc:
         raise _review_error(exc) from exc
+
+
+@router.post("/claims/decisions")
+def decide_claims(project_id: str, payload: BatchClaimDecisionRequest,
+                  request: Request, actor=Depends(require("designs:write"))):
+    """Registra varias confirmaciones en un solo viaje desde la UX.
+
+    Cada elemento conserva su resultado: un conflicto de una afirmación no oculta los
+    éxitos de las demás ni obliga a repetirlas individualmente.
+    """
+    review = KnowledgeReview(_graph(request, project_id, actor))
+    results, errors = [], []
+    for item in payload.items:
+        try:
+            results.append(review.decide(
+                project_id, item.claim_id, actor.user_id, item.decision, item.reason,
+                item.corrected_value, item.corrected_unit, item.supersede_claim_ids))
+        except ReviewError as exc:
+            errors.append({"claim_id": item.claim_id, "status": _ERRORS.get(exc.code, 422),
+                           "detail": {"message": exc.message, **exc.details} if exc.details
+                           else exc.message})
+    return {"accepted": results, "errors": errors, "total": len(payload.items),
+            "succeeded": len(results), "failed": len(errors)}
 
 
 @router.get("/questions")
