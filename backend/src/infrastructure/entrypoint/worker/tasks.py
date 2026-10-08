@@ -179,7 +179,8 @@ def scan_file_upload(self, upload_id):
         if detected != upload["expected_mime"]:
             raise ValueError("File content does not match the declared MIME type")
         storage.scan(data)
-        source, _ = extract_knowledge(upload, data, detected, knowledge_graph())
+        source, run = extract_knowledge(upload, data, detected, knowledge_graph())
+        announce_interrogation(store, upload, run)
         ocr = source.ocr
         storage.promote(
             upload["quarantine_key"], upload["target_bucket"], upload["object_key"], detected
@@ -239,11 +240,36 @@ def reprocess_document(self, upload_id):
         return
     if run["status"] == "already_processed":
         return
+    announce_interrogation(store, upload, run)
     with store.transaction(write=True) as db:
         db.change("file_uploads", upload_id, updated_at=int(time()),
                   ocr_confidence=source.ocr.get("mean_confidence"),
                   ocr_low_confidence_ratio=source.ocr.get("low_confidence_ratio"),
                   ocr_needs_review=source.ocr.get("needs_review", False))
+
+
+def announce_interrogation(store, upload: dict, run: dict) -> None:
+    """Publica el resumen estructurado en la conversación más reciente del proyecto."""
+    from time import time
+    from uuid import uuid4
+    from src.domain.knowledge_graph.interrogation import interrogation_text
+
+    interrogation = run.get("interrogation")
+    if not interrogation:
+        return
+    with store.transaction(write=True) as db:
+        states = db.many("agent_conversation_state", project_id=upload["project_id"], limit=100)
+        if not states:
+            return
+        state = max(states, key=lambda item: (item.get("updated_at", 0), item["id"]))
+        now = int(time())
+        payload = {**interrogation, "run_id": run.get("run_id"), "upload_id": upload.get("id"),
+                   "filename": upload.get("filename", "")}
+        db.add("chat_messages", id=str(uuid4()), conversation_id=state["id"], source="notification",
+               text=interrogation_text(interrogation, upload.get("filename", "")), type="text",
+               generated_at=now, created_at=now, updated_at=now, status="completed", task_id=None,
+               run_id=None, payload=payload, created_ms=now * 1000)
+        db.change("conversations", state["id"], updated_at=now)
 
 
 @celery_app.task(name="spat.reconcile_file_uploads")

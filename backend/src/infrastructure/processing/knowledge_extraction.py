@@ -13,6 +13,7 @@ from collections import Counter
 from src.domain.knowledge_graph.claims import NEEDS_REVIEW, claim_id, stable_key
 from src.domain.knowledge_graph.consolidation import consolidate
 from src.domain.knowledge_graph.contract import SCHEMA_VERSION
+from src.domain.knowledge_graph.interrogation import build_interrogation
 from src.domain.knowledge_graph.source import normalized_text
 from src.domain.knowledge_graph.taxonomy import TAXONOMY_VERSION
 from src.domain.knowledge_graph.validation import merge_claims, validate_extraction
@@ -142,13 +143,15 @@ def extract_knowledge(upload: dict, data: bytes, mime_type: str, graph, agents=d
                     "duration_seconds": round(time.time() - started, 3)},
         "claims": claims, "questions": questions,
     }
+    interrogation = build_interrogation(claims, questions)
+    run["interrogation"] = interrogation
     if graph is not None:
         _graph_call(graph.save_run, run)
     # Solo conteos y metadatos: nunca texto del documento en los logs (EG-13).
     logger.info("extraction run %s upload=%s status=%s claims=%s rejected=%d questions=%d "
                 "llm_tokens=%d llm_cost_usd=%s", run_id[:12], upload["id"], status, dict(counts),
                 len(rejected), len(questions), llm_tokens, llm_cost)
-    return source, {key: run[key] for key in ("run_id", "status", "metrics")}
+    return source, {key: run[key] for key in ("run_id", "status", "metrics", "interrogation")}
 
 
 def _tokens(usage: dict) -> int:

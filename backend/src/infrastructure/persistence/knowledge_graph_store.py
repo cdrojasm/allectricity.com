@@ -55,7 +55,7 @@ MIGRATIONS = (
 SCHEMA_VERSION = MIGRATIONS[-1][0]
 
 _JSON_FIELDS = ("confidence", "coverage", "ocr", "errors", "rejected", "notes", "metrics",
-                "locator")
+                "interrogation", "locator")
 _CLAIM_FIELDS = (
     "claim_id", "kind", "content_key", "status", "methods", "finding_ids", "review_reasons",
     "ocr_quality", "ocr_needs_review", "feeds_calculation", "entity_key", "entity_type", "name",
