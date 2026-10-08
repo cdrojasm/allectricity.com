@@ -193,6 +193,7 @@ function ProjectChatWorkspace({ project, token, userId, onBack, onNotice }) {
   }
   async function addFiles(fileList) {
     const seenNames = new Set(files.map((existing) => existing.filename.toLocaleLowerCase()));
+    const uploads = [];
     for (const file of Array.from(fileList)) {
       const normalizedName = file.name.toLocaleLowerCase();
       if (seenNames.has(normalizedName)) {
@@ -200,9 +201,10 @@ function ProjectChatWorkspace({ project, token, userId, onBack, onNotice }) {
         setError(message); onNotice(message); continue;
       }
       seenNames.add(normalizedName);
-      try { await uploadFile(file); }
-      catch (e) { setError(e.message); onNotice(e.message); }
+      // Each upload waits for its scan and processing, so they run side by side.
+      uploads.push(uploadFile(file).catch((e) => { setError(e.message); onNotice(e.message); }));
     }
+    await Promise.all(uploads);
   }
   function retryExpiredUpload(file) {
     const uploadId = expiredRetryId.current;
