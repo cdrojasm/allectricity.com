@@ -7,6 +7,10 @@ del extractor se derivan de aquí, de modo que el LLM nunca crea tipos arbitrari
 
 from dataclasses import dataclass, field
 
+# Cambia con cualquier ajuste de tipos, relaciones, atributos o unidades; entra en el ID de
+# ejecución para que reprocesar con otra taxonomía cree una ejecución nueva.
+TAXONOMY_VERSION = "taxonomy/1.1"
+
 # Categorías: objeto físico, dato medido, escenario/supuesto y salida calculada.
 PHYSICAL, MEASUREMENT, SCENARIO, CALCULATED = "physical", "measurement", "scenario", "calculated"
 # Orígenes admitidos de un nodo; los resultados de cálculo solo llegan del solver.
@@ -98,17 +102,15 @@ RELATION_RULES: dict[str, RelationRule] = {rule.name: rule for rule in (
 
 # Unidad literal (en minúsculas) -> (dimensión, unidad canónica, factor a SI).
 UNITS: dict[str, tuple[str, str, float]] = {
-    "v": ("voltage", "V", 1.0), "kv": ("voltage", "V", 1e3), "mv": ("voltage", "V", 1e6),
+    "v": ("voltage", "V", 1.0), "kv": ("voltage", "V", 1e3),
     "a": ("current", "A", 1.0), "ka": ("current", "A", 1e3),
     "w": ("active_power", "W", 1.0), "kw": ("active_power", "W", 1e3),
-    "mw": ("active_power", "W", 1e6),
     "va": ("apparent_power", "VA", 1.0), "kva": ("apparent_power", "VA", 1e3),
-    "mva": ("apparent_power", "VA", 1e6),
     "s": ("time", "s", 1.0), "ms": ("time", "s", 1e-3),
     "hz": ("frequency", "Hz", 1.0),
     "ω": ("resistance", "ohm", 1.0), "ohm": ("resistance", "ohm", 1.0),
     "ohms": ("resistance", "ohm", 1.0), "ohmios": ("resistance", "ohm", 1.0),
-    "mω": ("resistance", "ohm", 1e-3), "kω": ("resistance", "ohm", 1e3),
+    "kω": ("resistance", "ohm", 1e3),
     "ω·m": ("resistivity", "ohm·m", 1.0), "ω.m": ("resistivity", "ohm·m", 1.0),
     "ωm": ("resistivity", "ohm·m", 1.0), "ω-m": ("resistivity", "ohm·m", 1.0),
     "ω m": ("resistivity", "ohm·m", 1.0), "ohm·m": ("resistivity", "ohm·m", 1.0),
@@ -122,6 +124,17 @@ UNITS: dict[str, tuple[str, str, float]] = {
     "%": ("ratio", "1", 1e-2), "p.u.": ("ratio", "1", 1.0), "pu": ("ratio", "1", 1.0),
     "": ("ratio", "1", 1.0),
 }
+# Unidades donde «m» (mili) y «M» (mega) cambian el valor, tal como se escriben. Se buscan
+# respetando la mayúscula del prefijo: «mV» ≠ «MV»; «mva» (miliVA) no se acepta.
+PREFIXED_UNITS: dict[str, tuple[str, str, float]] = {
+    "mV": ("voltage", "V", 1e-3), "MV": ("voltage", "V", 1e6),
+    "mA": ("current", "A", 1e-3),
+    "mW": ("active_power", "W", 1e-3), "MW": ("active_power", "W", 1e6),
+    "MVA": ("apparent_power", "VA", 1e6),
+    "mΩ": ("resistance", "ohm", 1e-3), "MΩ": ("resistance", "ohm", 1e6),
+}
+_PREFIXED_KEYS = {unit[0] + unit[1:].casefold(): spec for unit, spec in PREFIXED_UNITS.items()}
+_PREFIX_SENSITIVE = {unit.casefold() for unit in PREFIXED_UNITS}
 
 
 @dataclass(frozen=True)
@@ -261,15 +274,26 @@ def parse_number(literal: str) -> tuple[float, tuple]:
 
 
 def normalize_unit(unit_literal: str) -> str:
-    return " ".join(unit_literal.split()).casefold()
+    """Clave de búsqueda de la unidad; conserva la mayúscula del prefijo m/M cuando importa."""
+    text = " ".join(unit_literal.split())
+    folded = text.casefold()
+    if folded in _PREFIX_SENSITIVE:
+        return text[0] + text[1:].casefold()
+    return folded
+
+
+def unit_spec(unit_literal: str) -> tuple[str, str, float] | None:
+    """(dimensión, unidad canónica, factor a SI) de una unidad literal, o None si es desconocida."""
+    key = normalize_unit(unit_literal)
+    return _PREFIXED_KEYS.get(key) or UNITS.get(key)
 
 
 def parse_quantity(literal: str, unit_literal: str) -> Quantity:
     value, notes = parse_number(literal)
-    unit_key = normalize_unit(unit_literal)
-    if unit_key not in UNITS:
+    spec = unit_spec(unit_literal)
+    if spec is None:
         raise ValueError(f"unidad desconocida «{unit_literal}»")
-    dimension, unit, factor = UNITS[unit_key]
+    dimension, unit, factor = spec
     return Quantity(literal, unit_literal, value, dimension, unit, value * factor, notes)
 
 
@@ -284,7 +308,8 @@ def taxonomy_summary() -> dict:
         },
         "attributes": {
             name: {"subjects": sorted(spec.subjects),
-                   "units": sorted({unit for unit, (dimension, _, _) in UNITS.items()
+                   "units": sorted({unit for unit, (dimension, _, _)
+                                    in (UNITS | PREFIXED_UNITS).items()
                                     if dimension in spec.dimensions and unit}),
                    **({"choices": list(spec.choices)} if spec.choices else {}),
                    **({"description": spec.description} if spec.description else {})}

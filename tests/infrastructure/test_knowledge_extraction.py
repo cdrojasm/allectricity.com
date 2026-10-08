@@ -145,6 +145,17 @@ def test_new_prompt_version_supersedes_open_claims_but_keeps_decisions():
     assert new_voltage["duplicate_of"] == [voltage["claim_id"]]
 
 
+def test_taxonomy_version_is_part_of_the_run_identity(monkeypatch):
+    from src.infrastructure.processing import knowledge_extraction
+
+    graph = InMemoryKnowledgeGraph()
+    _, first = extract_knowledge(upload(), MEMORIA, DOCX_MIME, graph, agents=FakeAgents(LLM_PAYLOAD))
+    assert graph.runs[first["run_id"]]["taxonomy_version"] == knowledge_extraction.TAXONOMY_VERSION
+    monkeypatch.setattr(knowledge_extraction, "TAXONOMY_VERSION", "taxonomy/test")
+    _, second = extract_knowledge(upload(), MEMORIA, DOCX_MIME, graph, agents=FakeAgents(LLM_PAYLOAD))
+    assert second["run_id"] != first["run_id"] and second["status"] != "already_processed"
+
+
 def test_conflicting_documents_require_explicit_human_replacement():
     graph = InMemoryKnowledgeGraph()
     extract_knowledge(upload(), MEMORIA, DOCX_MIME, graph, agents=FakeAgents(LLM_PAYLOAD))

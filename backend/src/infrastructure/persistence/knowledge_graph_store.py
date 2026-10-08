@@ -354,7 +354,7 @@ class Neo4jKnowledgeGraph(KnowledgeGraphRepository):
                 "CALL { WITH c OPTIONAL MATCH (q:ReviewQuestion)-[:ABOUT_CLAIM]->(c) "
                 "  RETURN collect(q {.*}) AS questions } "
                 "RETURN c {.*, filename: d.filename} AS claim, "
-                "r {.run_id, .method, .model, .parser_version, .schema_version, "
+                "r {.run_id, .method, .model, .parser_version, .taxonomy_version, .schema_version, "
                 "   .extractor_prompt_name, .extractor_prompt_version, "
                 "   .consolidator_prompt_name, .consolidator_prompt_version, .started_at, "
                 "   .status} AS run, evidence, conflicts, duplicates, superseded, decisions, "

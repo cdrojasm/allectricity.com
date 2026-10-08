@@ -9,7 +9,7 @@ import re
 
 from src.domain.knowledge_graph.contract import empty_extraction
 from src.domain.knowledge_graph.source import SourceDocument
-from src.domain.knowledge_graph.taxonomy import ATTRIBUTES, UNITS, normalize_unit
+from src.domain.knowledge_graph.taxonomy import ATTRIBUTES, unit_spec
 
 _RULE_CONFIDENCE = {"level": "medium", "reason": "Coincidencia de patrón determinista"}
 
@@ -77,7 +77,7 @@ def rules_extraction(source: SourceDocument) -> dict:
                 attribute = _attribute_for(match.group(1))
                 spec = ATTRIBUTES[attribute]
                 unit = match.group(3)
-                dimension = UNITS.get(normalize_unit(unit), ("",))[0]
+                dimension = (unit_spec(unit) or ("",))[0]
                 if subject_type not in spec.subjects or dimension not in spec.dimensions:
                     continue
                 attribute_id = f"a{len(payload['attributes']) + 1}"

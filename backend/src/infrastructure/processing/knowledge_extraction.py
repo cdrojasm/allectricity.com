@@ -14,6 +14,7 @@ from src.domain.knowledge_graph.claims import NEEDS_REVIEW, claim_id, stable_key
 from src.domain.knowledge_graph.consolidation import consolidate
 from src.domain.knowledge_graph.contract import SCHEMA_VERSION
 from src.domain.knowledge_graph.source import normalized_text
+from src.domain.knowledge_graph.taxonomy import TAXONOMY_VERSION
 from src.domain.knowledge_graph.validation import merge_claims, validate_extraction
 from src.infrastructure.processing import document_agents
 from src.infrastructure.processing.document_sources import PARSER_VERSION, parse_document
@@ -24,10 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 def run_identity(upload: dict, data: bytes, meta: dict) -> str:
-    """Misma entrada, parser, contrato, prompts y modelo ⇒ misma ejecución (idempotencia)."""
+    """Misma entrada, parser, taxonomía, contrato, prompts y modelo ⇒ misma ejecución."""
     return stable_key(
         "extraction-run", upload["id"], hashlib.sha256(data).hexdigest(), PARSER_VERSION,
-        RULES_VERSION, SCHEMA_VERSION, meta.get("extractor_prompt_name", ""),
+        RULES_VERSION, TAXONOMY_VERSION, SCHEMA_VERSION, meta.get("extractor_prompt_name", ""),
         meta.get("extractor_prompt_version", ""), meta.get("consolidator_prompt_name", ""),
         meta.get("consolidator_prompt_version", ""), meta.get("model", ""),
     )
@@ -128,8 +129,8 @@ def extract_knowledge(upload: dict, data: bytes, mime_type: str, graph, agents=d
         "object_key": upload.get("object_key"), "mime_type": mime_type,
         "content_sha256": hashlib.sha256(data).hexdigest(),
         "text_sha256": source.content_hash, "parser_version": PARSER_VERSION,
-        "rules_version": RULES_VERSION, "schema_version": SCHEMA_VERSION,
-        "method": "rules+llm" if use_agents else "rules", **meta,
+        "rules_version": RULES_VERSION, "taxonomy_version": TAXONOMY_VERSION,
+        "schema_version": SCHEMA_VERSION, "method": "rules+llm" if use_agents else "rules", **meta,
         "started_at": int(started), "finished_at": int(time.time()), "status": status,
         "coverage": source.coverage, "ocr": source.ocr, "errors": errors[:200],
         "rejected": rejected[:500], "notes": notes[:200], "summary": summary,

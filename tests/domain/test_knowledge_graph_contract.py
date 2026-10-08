@@ -162,6 +162,20 @@ def test_number_parsing_flags_ambiguous_thousands_separator():
         parse_quantity("10", "furlong")
 
 
+@pytest.mark.parametrize("unit, value_si", [
+    ("mV", 1e-3), ("MV", 1e6), ("kV", 1e3), ("KV", 1e3), ("mA", 1e-3), ("mW", 1e-3),
+    ("MW", 1e6), ("Mw", 1e6), ("MVA", 1e6), ("Mva", 1e6), ("mΩ", 1e-3), ("MΩ", 1e6),
+    ("mm", 1e-3), ("MM", 1e-3), ("m", 1.0), ("Ω·m", 1.0),
+])
+def test_unit_prefix_case_distinguishes_milli_from_mega(unit, value_si):
+    assert parse_quantity("1", unit).value_si == pytest.approx(value_si)
+
+
+def test_milli_volt_ampere_is_not_read_as_mega():
+    with pytest.raises(ValueError):
+        parse_quantity("1", "mva")
+
+
 def _attribute(claim_suffix, value_si, literal, status=NEEDS_REVIEW, entity="ent-t1"):
     claim = {"kind": "attribute", "entity_key": entity, "attribute": "rated_voltage",
              "value_si": value_si, "value_literal": literal, "unit_literal": "kV", "unit": "V",
