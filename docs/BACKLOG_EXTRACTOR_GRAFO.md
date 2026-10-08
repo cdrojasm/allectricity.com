@@ -17,21 +17,53 @@ se sobrescribe silenciosamente con otra extracción.
 
 ## Estado de partida
 
-- La carga asíncrona valida MIME y antivirus, procesa PDF (incluido OCR por
-  página), DOCX, CSV, XLSX e imágenes PNG/JPEG, y corre en Celery.
-- El extractor ReAct y el consolidador opcionales usan Langfuse y un proveedor
-  LLM compatible con OpenAI; sus salidas pasan validación determinista de
-  contrato, cita, evidencia y localizador.
+- La carga asíncrona valida MIME y antivirus y corre en Celery. Lee PDF (texto
+  nativo, tablas con líneas y OCR de páginas rasterizadas), DOCX, CSV, XLSX e
+  imágenes PNG/JPEG, con localizadores. Admite reintento, reconciliación y
+  reprocesamiento.
+- Un extractor ReAct, que navega el documento por segmentos con herramientas, y
+  un consolidador opcional usan Langfuse y un proveedor LLM compatible con
+  OpenAI. Sus salidas pasan validación determinista de contrato, cita, evidencia
+  y localizador. Cada ejecución registra tokens, coste y límites.
 - El pipeline persiste ejecuciones y afirmaciones idempotentes en Neo4j. La UI
-  permite consultar el grafo, abrir fuentes y resolver hallazgos/preguntas con
-  auditoría; los datos que alimentan cálculos siguen requiriendo revisión.
-- La brecha principal ya no es la fundación del grafo: falta sincronizar con
-  artefactos/solver, completar el esquema de dominio de puesta a tierra y cerrar
-  la cobertura de OCR/tablas PDF, evaluación de calidad y operación.
-- El backlog general registra DOCX, idempotencia y presentación/resolución de
-  preguntas como implementados parcialmente o disponibles. Sigue pendiente la
-  confirmación humana de parámetros críticos; OCR/tablas de PDF y recuperación
-  operativa conservan brechas.
+  permite consultar el grafo, abrir fuentes y resolver hallazgos y preguntas con
+  auditoría. Los datos que alimentan cálculos siguen requiriendo revisión.
+- La brecha principal es la **calidad medible de la extracción**: no hay
+  conjunto de evaluación, y el extractor usa por defecto un modelo pequeño
+  (`gpt-4o-mini`) con toda la taxonomía en una sola pasada.
+
+## Estrategia de extracción (decidida 2026-10-07)
+
+La calidad se gana con medición, buena lectura del documento, tareas enfocadas y
+verificación, no con arquitecturas de agentes más complejas. En orden de
+prioridad:
+
+1. **Evaluación primero.** Conjunto anotado, métricas por campo y bloqueo de
+   regresiones. Ningún cambio de modelo, prompt o arquitectura entra sin medirse.
+2. **Lectura de calidad.** Modelos multimodales sobre la imagen de la página
+   para tablas, unifilares y planos, en lugar de depender solo de OCR → texto.
+3. **Clasificación del documento y esquema por tipo.** Placa, informe de
+   sondeo, memoria de cálculo, unifilar, etc. Cada tipo activa solo los
+   perfiles de taxonomía que le corresponden.
+4. **Descomposición por pregunta, no por fragmento.** Varias pasadas enfocadas
+   (inventario de entidades, luego un perfil por pasada) sobre el **documento
+   completo** con caché del prompt. El inventario fija los IDs que usan las
+   pasadas siguientes. El ReAct por segmentos queda solo para documentos que no
+   caben en el contexto.
+5. **Verificación en capas.** Determinista (existente), verificador LLM de
+   soporte de cita, coherencia de ingeniería y coherencia entre documentos.
+6. **Confianza por acuerdo.** Doble extracción independiente de los parámetros
+   que alimentan cálculos. Si coinciden, la confianza es alta; si discrepan, van
+   directo a revisión. La confianza que declara el propio modelo no se usa para
+   decidir.
+7. **Revisión humana como ciclo de mejora.** Se prioriza por impacto, y cada
+   corrección alimenta el conjunto de evaluación y los ejemplos del prompt.
+8. **Identidad de entidades a nivel de proyecto**, sobre el grafo completo y
+   con confirmación humana.
+
+Los datos que ya entregan fuentes estructuradas (artefacto de diseño, ingesta de
+mediciones, solver) **no se extraen ni se remodelan en el grafo**: se sincronizan
+como referencias versionadas y sirven como contraste para la verificación.
 
 ## Alcance del grafo profesional de puesta a tierra
 
@@ -45,34 +77,34 @@ estructurado.
 |---|---|---|
 | Proyecto e instalación | `Project`, `Site`, `Substation`, zonas y equipos; `CONTAINS`, `LOCATED_AT` | Identificadores estables, ubicación, revisión y límites del proyecto. |
 | Topología eléctrica | barras, transformadores, alimentadores, circuitos, interruptores, fuentes y puntos de conexión; `CONNECTED_TO`, `SUPPLIES`, `PROTECTED_BY` | Dirección/terminales cuando aplique, estado operativo y fuente. Una relación inferida requiere evidencia o confirmación. |
-| Sistema de puesta a tierra | `GroundingSystem`, `GridConductor`, segmentos, uniones, `RodElectrode`, electrodos, bajantes, cercas, estructuras y conexiones; `PART_OF`, `JOINS`, `BONDED_TO`, `TERMINATES_AT` | Geometría 3D o coordenadas locales, unidad, material/sección cuando exista, profundidad/elevación y conexión. Distinguir elemento diseñado, instalado y observado. |
+| Sistema de puesta a tierra | `GroundingSystem`, `GridConductor`, `RodElectrode`, bajantes, cercas, estructuras y conexiones; `PART_OF`, `JOINS`, `BONDED_TO`, `TERMINATES_AT` | Material/sección, profundidad y conexión según el documento. La geometría detallada vive en el artefacto de diseño; el grafo guarda la referencia a su versión. Distinguir elemento diseñado, instalado y observado. |
 | Suelo | sondeo, lectura Wenner/Schlumberger, espaciamiento, resistividad aparente, capa/modelo de suelo; `MEASURED_AT`, `FITTED_AS`, `DERIVED_FROM` | Preservar lecturas originales y separarlas de parámetros ajustados; unidades, fecha, arreglo, método, incertidumbre y residuos. |
 | Escenario de falla | falla, escenario, corriente, duración, división de corriente, decremento y supuestos; `APPLIES_TO`, `USES_INPUT` | Valores con dimensión/unidad, condición, procedencia y edición normativa. Separar `t_s` de duración térmica `t_c`. |
-| Análisis y resultados | `DesignVersion`, `CalculationRun`, resultado de resistencia/GPR/paso/contacto, puntos críticos; `EVALUATES`, `PRODUCES`, `USES_SCENARIO` | Enlazar a entradas exactas, geometría y versión de solver/protocolo, norma/edición, trace e incertidumbre. Resultado derivado no se confunde con dato medido. |
+| Análisis y resultados | `DesignVersion`, `CalculationRun`, resultado resumido; `EVALUATES`, `PRODUCES`, `USES_SCENARIO` | Nodos de referencia sincronizados desde PostgreSQL (EG-20) con su ID de cálculo y trace; el detalle se consulta en la fuente. Un resultado derivado no se confunde con un dato medido ni con uno reportado por un documento. |
 | Fuentes y gobierno | documentos, revisiones, afirmaciones, evidencias, actores y decisiones; `SUPPORTED_BY`, `CONTRADICTS`, `REVIEWED_BY`, `SUPERSEDES` | Conservar historial, estado y auditoría. Ningún valor contradictorio se sobrescribe en silencio. |
 
-### Decisiones de producto y datos que deben cerrarse
+### Decisiones de producto y datos
 
-1. **Taxonomía y perfiles:** aprobar subtipos y atributos obligatorios con un
-   especialista en puesta a tierra. Distinguir objeto físico, dato medido,
-   afirmación documental y salida calculada.
-2. **Relaciones permitidas:** definir dirección, cardinalidad, compatibilidad de
-   extremos y terminales para relaciones como `CONNECTED_TO`, `BONDED_TO`,
-   `SUPPLIES`, `MEASURED_AT`, `FITTED_AS`, `EVALUATES` y `PRODUCES`. No aceptar
-   tipos de nodo o relación arbitrarios del LLM.
-3. **Geometría y coordenadas:** decidir sistema de coordenadas local/global,
-   unidades, precisión, datum, profundidad, elevación, segmentos y estrategia
-   para geometrías extensas (propiedades, nodos por segmento o referencia a
-   artefacto). Evitar que Neo4j sea el único almacén de geometrías pesadas.
+1. **Taxonomía por perfiles:** núcleo común (instalación y jerarquía espacial,
+   conectividad con bornes, tipo frente a instancia) más perfiles por dominio,
+   empezando por puesta a tierra. Cada perfil declara sus atributos
+   obligatorios por tipo, que alimentan el cierre de huecos. El especialista
+   debe aprobar los subtipos y atributos. *Pendiente.*
+2. **Relaciones permitidas:** dirección, cardinalidad y extremos por perfil. No
+   se aceptan tipos de nodo o relación arbitrarios del LLM. *Vigente.*
+3. **Geometría:** *decidido.* Vive en el artefacto de diseño con su sistema de
+   coordenadas; Neo4j solo guarda referencias versionadas y propiedades
+   consultables, nunca segmentos.
 4. **Granularidad de evidencia:** página y fragmento en PDF, hoja/fila/celda en
-   XLSX/CSV, página/región para OCR; offsets además del localizador legible.
-5. **Identidad y duplicados:** reglas de resolución por proyecto, alias y
-   conflictos; conservar identificadores y nombres originales.
-6. **Revisión:** definir estados de afirmación (`proposed`, `needs_review`,
-   `accepted`, `rejected`, `superseded`) y permisos/auditoría para decidirlos.
-7. **Integración de cálculos:** establecer qué resultados se replican como
-   nodos resumidos en Neo4j y cuáles se consultan por ID desde PostgreSQL/trace;
-   fijar retención, versionado e invalidación si cambian entradas.
+   XLSX/CSV, página/región en OCR y visión, más offsets. *Vigente.*
+5. **Identidad y duplicados:** se resuelven a nivel de proyecto con reglas, el
+   LLM con evidencia y confirmación humana. Se conservan los nombres originales.
+   *Vigente.*
+6. **Revisión:** estados `proposed`, `needs_review`, `accepted`, `rejected` y
+   `superseded`, priorizados por impacto en cálculos. *Vigente.*
+7. **Resultados de cálculo:** *decidido.* Se quedan en PostgreSQL y en el
+   trace; el grafo replica solo nodos resumidos con su ID, sincronizados por
+   EG-20.
 
 ## Épicas y tareas
 
@@ -87,23 +119,40 @@ estructurado.
 | EG-07 | P0 | ✅ | Persistencia idempotente en Neo4j | Usar claves estables por proyecto/documento/ejecución/hallazgo/evidencia y restricciones de unicidad. Reintentar una carga sin duplicar nodos o aristas; guardar nueva versión cuando cambien parser, prompt o modelo. Hacer atómica la persistencia de una ejecución y su resultado. |
 | EG-08 | P0 | ✅ | Revisión humana de hallazgos | API y UI para listar preguntas, abrir la evidencia en el documento, aceptar/rechazar/corregir afirmaciones y registrar usuario, fecha y motivo. Correcciones guardan el valor revisado y no borran el texto propuesto ni su evidencia. |
 | EG-09 | P1 | ✅ | Cobertura documental y OCR de PDF | DOCX, PDF con texto nativo y OCR por página implementados con localizadores. Las páginas sin texto se rasterizan con PDFium (escaneos y PDF vectoriales sin imagen embebida) antes del OCR; las tablas con líneas se extraen con pdfplumber por página/tabla/fila/celda sin duplicar el texto; la cobertura registra páginas fallidas, vacías, con tablas, calidad OCR por página y páginas de OCR dudoso. Tablas sin líneas y planos complejos quedan para EG-14. |
-| EG-10 | P1 | ◐ | Resolución de entidades y alias | Vincular menciones como `T1`, `TX-01` y el nombre de placa al mismo equipo solo con reglas/evidencia suficientes. Si hay ambigüedad, proponer candidato y pregunta; no fusionar entidades automáticamente por similitud débil. |
-| EG-11 | P1 | ◐ | Consultas de grafo y API de lectura | Exponer consultas de proyecto para mapa de activos/relaciones, detalle de afirmación con evidencia y conflictos, y filtros por estado/documento/tipo. Aplicar autorización por proyecto y límites de profundidad/tamaño. |
-| EG-12 | P1 | ⬜ | Evaluación de calidad del LLM | Crear conjunto versionado y revisado de documentos/hallazgos, medir precisión/recobrado por tipo, exactitud de evidencia, relaciones, abstención y resolución de duplicados. Comparar cambios de modelo/prompt y bloquear promoción si degradan umbrales acordados. |
 | EG-13 | P1 | ✅ | Observabilidad, coste y fallos | Cada ejecución registra modelo, versiones de prompt/esquema/parser, tokens por agente, coste estimado (`LLM_PRICE_*_USD_PER_MTOK`), duración, errores y conteos por estado; los logs solo llevan conteos. Límites `DOCUMENT_LLM_MAX_TOKENS_PER_FILE` y `DOCUMENT_LLM_MAX_TOKENS_PER_PROJECT`: al agotarse el del proyecto se extrae solo con reglas y queda registrado. Recuperación: reintentos automáticos, reconciliación periódica, reintento manual y `POST .../knowledge-graph/documents/{id}/reprocess`. |
-| EG-14 | P2 | ⬜ | Extracción multimodal de planos | Evaluar OCR/visión para tablas, diagramas unifilares y planos; mantener página/región y exigir revisión de relaciones topológicas. No inferir conexión eléctrica solo por proximidad visual sin evidencia/validación. |
-| EG-15 | P0 | ◐ | Esquema de dominio de puesta a tierra | Especificar e implementar nodos/relaciones para instalación, topología, componentes de malla, suelo, mediciones, escenarios de falla, versiones de diseño y ejecuciones de cálculo. Cada tipo declara propiedades/unidades requeridas, relaciones válidas y origen (LLM, usuario, importación o solver). Revisión por especialista antes de congelar v1. |
-| EG-16 | P0 | ⬜ | Representación geométrica vinculada al diseño | Modelar conductores como segmentos conectados, electrodos/varillas y puntos de unión con coordenadas, elevación/profundidad, sistema de referencia y unidades. Mantener un ID/versionado común con el artefacto geométrico; geometrías pesadas se guardan en el almacén de artefactos y Neo4j conserva referencias y propiedades para consultas. Validar continuidad/conexiones contra el contrato geométrico del diseño. |
-| EG-17 | P0 | ⬜ | Trazabilidad de mediciones y modelo de suelo | Ingerir lecturas originales con arreglo, espaciamiento, unidad, fecha, ubicación y evidencia; enlazar el ajuste/modelo estratificado sin reemplazar datos medidos. Guardar método/versión, residuos e incertidumbre del ajuste y permitir comparar modelos. |
-| EG-18 | P0 | ⬜ | Escenarios de falla y supuestos de cálculo | Crear nodos versionados de escenarios con corriente, duración, división de corriente, factores y supuestos/unidades, ligados al proyecto y diseño evaluado. Validar dominios y distinguir duración de choque `t_s` de duración térmica `t_c`; cada dato conserva su fuente y aceptación. |
-| EG-19 | P0 | ⬜ | Versionado de ejecuciones y resultados | Registrar cada cálculo como `CalculationRun` inmutable ligado a versión exacta de diseño, suelo, escenario, solver/protocolo y norma/edición. Guardar resultados resumidos (R, GPR, paso/contacto y localizaciones críticas) con IDs de trace/artefacto e incertidumbre. Un nuevo cálculo crea una nueva ejecución; no muta resultados anteriores. |
-| EG-20 | P1 | ⬜ | Sincronización Neo4j con artefactos de diseño y solver | Definir eventos/adaptadores desde las fuentes estructuradas del backend al grafo, con versionado e idempotencia. Diferenciar sincronización completa, pendiente y fallida; reconciliar y reintentar sin duplicados. No depender de la extracción LLM para datos que ya entrega el diseño, la ingesta geotécnica o el solver. |
-| EG-21 | P1 | ⬜ | Validaciones de dominio y consistencia del grafo | Validar unidades/dimensiones, conexiones de segmentos, pertenencia de equipos, compatibilidad escenario/cálculo y referencias a versiones existentes. Detectar desconexiones, datos incompatibles y resultados huérfanos; emitir diagnósticos explicables en vez de reparar silenciosamente el grafo. |
-| EG-22 | P1 | ⬜ | Consultas de ingeniería y vistas del grafo | Añadir consultas para seguir el camino de conexión a tierra, hallar componentes desconectados, comparar modelos de suelo/escenarios/versiones, localizar evidencia de entradas y navegar resultados con su trace. Limitar consultas por proyecto y devolver procedencia junto con cada valor. |
-| EG-23 | P1 | ◐ | Migración y restricciones Neo4j | Crear migraciones repetibles del esquema, restricciones de unicidad e índices para IDs de proyecto, documento, equipo, versión y ejecución; definir política ante datos antiguos y procedimiento de rollback/reconstrucción. Verificar consultas y rendimiento con un grafo representativo de tamaño acordado. |
+| EG-12 | P0 | ⬜ | Evaluación de calidad del LLM | **Primer paso de la estrategia.** Conjunto versionado y revisado, empezando por `docs/documentos_prueba/`. Mide precisión y recobrado por tipo y atributo, exactitud de evidencia, relaciones, abstención y duplicados, además de coste y latencia por documento. Compara modelos y prompts, fija la línea base actual y bloquea la promoción si se degradan los umbrales acordados. |
+| EG-24 | P0 | ⬜ | Correcciones de la taxonomía v1 | La unidad distingue los prefijos m y M (`mV` ≠ `MV`, `mΩ` ≠ `MΩ`). Se publica `TAXONOMY_VERSION` y se incluye en el ID de ejecución, para que cambiar la taxonomía cree ejecuciones nuevas al reprocesar. |
+| EG-25 | P0 | ⬜ | Selección de modelo por paso | Configurar el modelo por paso (clasificación, inventario, pasadas, verificación) y elegirlo con EG-12. El modelo pequeño actual queda solo donde las métricas lo justifiquen. |
+| EG-15 | P0 | ◐ | Taxonomía v2: núcleo y perfiles | Núcleo común (jerarquía espacial con los aspectos función/producto/ubicación, conectividad con bornes y fases, tipo frente a instancia) y perfil de puesta a tierra. El perfil cubre: esquema de conexión a tierra, aterrizamiento del neutro, cables de guarda y pantallas, estructuras metálicas, equipos a aterrizar con su ubicación respecto a la malla, elementos que transfieren potencial, mediciones de resistencia de malla y parámetros de tensiones tolerables y térmicos. Cada perfil declara atributos obligatorios por tipo. Requiere revisión del especialista antes de congelar; v1 está implementada. |
+| EG-26 | P0 | ⬜ | Clasificación de documentos y esquema por tipo | Clasificar cada documento (y, si es mixto, sus secciones) en tipos acordados. Cada tipo activa perfiles y campos esperados. La clasificación se guarda en la ejecución y se evalúa con EG-12. |
+| EG-27 | P0 | ⬜ | Pasadas enfocadas sobre el documento completo | Sustituye al ReAct por segmentos en documentos que caben en el contexto. Primero una pasada de inventario (entidades, jerarquía espacial y alias), que fija IDs; luego una pasada por perfil activo que referencia esos IDs; al final, una pasada de relaciones entre perfiles. Usa caché del prompt y el mismo contrato y validación. Reparte el límite de tokens del archivo entre pasadas, y el ID de ejecución incluye la versión del pipeline y de todos los prompts. Debe superar a la línea base de EG-12. |
+| EG-28 | P1 | ⬜ | Cierre de huecos dirigido | Comparar las entidades extraídas con los atributos obligatorios de su perfil (EG-15) y lanzar búsquedas acotadas por hueco («profundidad de enterramiento de G1»). Máximo 2 vueltas o hasta agotar el presupuesto; si un dato no aparece, se registra como ausente y no se inventa. |
+| EG-14 | P1 | ⬜ | Lectura multimodal de tablas, unifilares y planos | Enviar la imagen de la página a un modelo con visión cuando haya tablas sin líneas, unifilares o planos, conservando página y región. Las relaciones topológicas leídas de un dibujo siempre requieren revisión, y no se infiere una conexión eléctrica solo por proximidad visual. Se compara con OCR → texto en EG-12. |
+| EG-29 | P1 | ⬜ | Verificador de soporte de cita | Un paso LLM independiente confirma que la cita sostiene exactamente el valor, la unidad, el sujeto y la relación propuestos. Lo que no está soportado pasa a `needs_review` con el motivo, y nunca se borra en silencio. |
+| EG-30 | P1 | ⬜ | Doble extracción con acuerdo para parámetros de cálculo | Los atributos con `feeds_calculation` se extraen dos veces de forma independiente (otro modelo u otra formulación). El acuerdo, tras normalizar a SI, se registra como evidencia de confianza; el desacuerdo crea una pregunta con ambos valores y citas. La aceptación sigue siendo humana. |
+| EG-21 | P1 | ⬜ | Verificación de coherencia de ingeniería | Diagnósticos explicables, sin reparar nada en silencio: dimensiones y rangos; `t_c ≥ t_s`; S_f entre 0 y 1; resistencia reportada compatible con área y resistividad (Sverak); corriente de falla coherente con la potencia y la impedancia del transformador; valores del documento frente a fuentes estructuradas sincronizadas (EG-20). Cada diagnóstico se adjunta a las afirmaciones afectadas. |
+| EG-31 | P1 | ⬜ | Ciclo de mejora desde la revisión humana | Priorizar la cola de revisión por impacto (primero lo que alimenta cálculos, luego los conflictos). Las correcciones y rechazos, con su evidencia, se exportan como casos candidatos para EG-12 y como ejemplos para los prompts, tras curarlos. |
+| EG-10 | P1 | ◐ | Identidad de entidades a nivel de proyecto | Hoy se detectan posibles alias y se pregunta. Falta resolver sobre el grafo completo del proyecto (reglas, LLM con evidencia y confirmación humana) y permitir **confirmar la fusión** conservando nombres originales y procedencia. Nunca se fusiona por similitud débil. |
+| EG-20 | P1 | ⬜ | Sincronización con fuentes estructuradas | Eventos idempotentes desde artefactos de diseño, mediciones de suelo y cálculos hacia nodos de referencia versionados (`DesignVersion`, `SoilSurvey`/`SoilModel`, `FaultScenario`, `CalculationRun`) con su ID de origen, sin copiar geometrías ni resultados detallados. Estados: sincronizado, pendiente y fallido, con reintento. Habilita EG-21 y la regla de que un cálculo solo usa parámetros documentales aceptados. Absorbe lo útil de EG-16 a EG-19. |
+| EG-11 | P1 | ◐ | API de lectura para revisión | Ya hay mapa, afirmaciones con evidencia, preguntas, ejecuciones y filtros, con autorización por proyecto. Falta una vista de conflictos y diagnósticos (EG-21), la cola priorizada (EG-31) y límites de tamaño en el mapa. |
+| EG-23 | P1 | ◐ | Migración y reconstrucción Neo4j | Las restricciones e índices ya existen. Falta un procedimiento de reconstrucción del grafo por reprocesamiento cuando cambien la taxonomía o el pipeline (EG-24, EG-15), con la política sobre afirmaciones ya decididas, y una prueba de rendimiento con un proyecto representativo. |
 
-**Leyenda:** ✅ completo; ◐ parcial; ⬜ pendiente. Estados actualizados el 2026-10-05
-tras implementar la fundación, la extracción fiable y la persistencia (ver abajo).
+### Descartadas (2026-10-07)
+
+No contribuyen a la estrategia de extracción o se reemplazan por otra tarea:
+
+| ID | Tarea | Motivo |
+|---|---|---|
+| EG-16 | Geometría de la malla como segmentos en Neo4j | La geometría ya tiene su fuente de verdad en el artefacto de diseño (decisión 3). Duplicarla en el grafo añade sincronización sin mejorar la extracción. La referencia versionada queda en EG-20. |
+| EG-17 | Mediciones y modelo de suelo modelados en el grafo | Las lecturas y ajustes ya se ingieren y se guardan de forma estructurada. Solo se sincroniza su referencia (EG-20) para contrastar los valores de los documentos (EG-21). |
+| EG-18 | Escenarios de falla como nodos versionados propios | Los datos documentales de falla ya son atributos con procedencia; el escenario usado en un cálculo llega por EG-20. |
+| EG-19 | `CalculationRun` y resultados completos en Neo4j | Los cálculos son inmutables y trazables en PostgreSQL (decisión 7). El grafo solo necesita el nodo de referencia de EG-20. |
+| EG-22 | Consultas de ingeniería (camino a tierra, comparar modelos y escenarios) | Es una funcionalidad de producto sobre datos del diseño, no de la extracción. Si se retoma, debe consultar las fuentes estructuradas. |
+| — | Extracción jerárquica con sub-agentes por fragmento | Encadena errores y pierde el contexto entre secciones. La reemplazan las pasadas enfocadas sobre el documento completo (EG-27). Solo se reconsidera si EG-12 muestra que hace falta navegar colecciones que no caben en el contexto. |
+
+**Leyenda:** ✅ completo; ◐ parcial; ⬜ pendiente. Las tareas pendientes están en orden
+de prioridad. Estados actualizados el 2026-10-07; EG-24 a EG-31 se crearon con la
+estrategia de extracción. Los códigos son estables y no se reutilizan.
 
 ## Implementación v1 (2026-10-05)
 
@@ -153,45 +202,57 @@ Decisiones tomadas (provisionales hasta revisión del especialista, EG-15):
   celda (CSV), hoja/fila/celda (XLSX), párrafo o tabla/fila/celda (DOCX), además de
   offsets sobre el texto.
 
-Pendiente dentro de las tareas parciales: fusión confirmada de alias
-(EG-10); consultas de ingeniería (EG-11/EG-22);
-validación de la taxonomía con especialista (EG-15); rollback y pruebas de rendimiento
-(EG-23).
+Pendiente dentro de las tareas parciales: fusión confirmada de alias (EG-10);
+vista de conflictos y cola priorizada (EG-11); taxonomía v2 y revisión del
+especialista (EG-15); reconstrucción y rendimiento (EG-23).
 
 ## Orden recomendado de entrega
 
-1. **Fundación:** EG-01, EG-02 y EG-04. Acordar el contrato y procedencia antes
-   de ampliar lo que el LLM escribe.
-2. **Extracción fiable:** EG-03, EG-05 y EG-06. Expandir el flujo actual a
-   relaciones y hacer que toda propuesta sea comprobable y revisable.
-3. **Neo4j listo para operación:** EG-07 y EG-08. Garantizar reintentos,
-   auditoría y revisión de una persona de extremo a extremo.
-4. **Modelo profesional:** EG-15 a EG-19, coordinados con los contratos de
-   artefacto, suelo y solver. Resolver primero IDs, unidades y versionado.
-5. **Integración y producto:** EG-09 a EG-11 y EG-20 a EG-23.
-6. **Escala y mejora continua:** EG-12 a EG-14.
+Completado: fundación (EG-01, EG-02, EG-04), extracción fiable (EG-03, EG-05,
+EG-06), operación (EG-07, EG-08, EG-09, EG-13).
+
+1. **Medir:** EG-12 y EG-24. Línea base de la extracción actual con la
+   taxonomía corregida.
+2. **Palancas baratas:** EG-25 (modelo por paso) y EG-26 (clasificación).
+   Medir cada una contra la línea base.
+3. **Extracción enfocada:** EG-15 (taxonomía v2 con el especialista) y EG-27
+   (pasadas sobre el documento completo), seguidas de EG-28.
+4. **Verificación:** EG-29, EG-30 y EG-21, esta última con EG-20 como fuente
+   de contraste.
+5. **Lectura multimodal:** EG-14, cuando EG-12 muestre que las tablas y planos
+   concentran errores.
+6. **Ciclo y producto:** EG-31, EG-10, EG-11 y EG-23.
 
 ## Ejemplo de salida del extractor
 
 Para el texto «El transformador T1, 13,8 kV, alimenta el tablero TD-2» el LLM
-debería proponer algo equivalente a esto, citando el pasaje y el localizador:
+debería proponer esto (contrato 1.1, `tests/fixtures/extraction_contract/valid_inline_evidence_1_1.json`).
+La tensión es un atributo de T1, no una entidad, y cada hallazgo lleva su propia
+cita y localizador:
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "entities": [
-    {"id": "e1", "type": "Transformer", "name": "T1"},
-    {"id": "e2", "type": "ElectricalParameter", "name": "tension", "value": "13.8", "unit": "kV"},
-    {"id": "e3", "type": "ElectricalPanel", "name": "TD-2"}
+    {"id": "transformer.T1", "type": "Transformer", "name": "T1",
+     "confidence": {"level": "high", "reason": "Etiqueta explícita"},
+     "evidence": [{"quote": "El transformador T1, 13,8 kV, alimenta el tablero TD-2",
+                   "locator": {"page": 4}}]},
+    {"id": "panel.TD-2", "type": "ElectricalPanel", "name": "TD-2",
+     "confidence": {"level": "high", "reason": "Etiqueta explícita"},
+     "evidence": [{"quote": "alimenta el tablero TD-2", "locator": {"page": 4}}]}
+  ],
+  "attributes": [
+    {"id": "T1:rated_voltage", "subject_id": "transformer.T1", "name": "rated_voltage",
+     "value": "13,8", "unit": "kV",
+     "confidence": {"level": "high", "reason": "Valor junto al equipo"},
+     "evidence": [{"quote": "El transformador T1, 13,8 kV", "locator": {"page": 4}}]}
   ],
   "relations": [
-    {"id": "r1", "type": "SUPPLIES", "source_id": "e1", "target_id": "e3"},
-    {"id": "r2", "type": "HAS_PARAMETER", "source_id": "e1", "target_id": "e2"}
-  ],
-  "evidence": [
-    {"finding_ids": ["e1", "e2", "e3", "r1", "r2"],
-     "quote": "El transformador T1, 13,8 kV, alimenta el tablero TD-2",
-     "locator": {"page": 4}}
+    {"id": "T1-supplies-TD-2", "type": "SUPPLIES", "source_id": "transformer.T1",
+     "target_id": "panel.TD-2", "confidence": {"level": "medium", "reason": "«alimenta»"},
+     "evidence": [{"quote": "El transformador T1, 13,8 kV, alimenta el tablero TD-2",
+                   "locator": {"page": 4}}]}
   ],
   "uncertainties": []
 }
@@ -205,12 +266,17 @@ afirmación a `accepted`; el sistema nunca reemplaza el valor previo en silencio
 
 ## Criterio de terminado del caso de uso
 
-Subir un PDF escaneado o digital o DOCX, obtener
-hallazgos tipados con relación y referencia navegable a la fuente, persistirlos
-en Neo4j de manera idempotente, ver duplicados/conflictos, resolverlos desde la
-interfaz con auditoría y consultar después el grafo por proyecto. Además, los
-componentes, geometría, mediciones, modelos de suelo, escenarios y ejecuciones
-de cálculo deben enlazarse con sus versiones exactas y procedencia. El grafo
-debe detectar datos huérfanos o incompatibles sin corregirlos en silencio. Los
-parámetros extraídos que consumen cálculos requieren aceptación humana explícita;
-las salidas del solver se registran como resultados derivados inmutables.
+Subir un PDF escaneado o digital, un DOCX o una hoja de cálculo y obtener
+hallazgos tipados con relaciones y referencia navegable a la fuente. Los
+hallazgos se persisten en Neo4j de forma idempotente, los duplicados y
+conflictos se ven y se resuelven desde la interfaz con auditoría, y después se
+consulta el grafo por proyecto.
+
+La calidad de la extracción se mide en EG-12 por tipo de documento, con
+umbrales acordados que bloquean regresiones. Los parámetros que alimentan
+cálculos llevan verificación de cita, acuerdo de doble extracción y diagnósticos
+de coherencia de ingeniería, y siempre requieren aceptación humana explícita.
+Los datos del diseño, las mediciones y el solver llegan al grafo como
+referencias versionadas desde sus fuentes estructuradas, nunca reconstruidos
+por el LLM. Las salidas del solver se registran como resultados derivados
+inmutables.
