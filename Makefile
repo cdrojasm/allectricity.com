@@ -21,7 +21,8 @@ help:
 	  '  smoke-auth     Run the authentication smoke check' \
 	  '  smoke-local    Verify frontend, health per component and templates (temporary viewer)' \
 	  '  templates      Regenerate the soil-resistivity templates seeded into MinIO' \
-	  '  sync-prompts   Publish new Langfuse prompt versions with the staging label'
+	  '  sync-prompts   Publish new Langfuse prompt versions with the staging label' \
+	  '  eval-extraction Evaluate document extraction against the gold set (ARGS=...)'
 
 .PHONY: local-up local-down local-build test lint
 
@@ -56,7 +57,7 @@ lint:
 	$(COMPOSE) --profile test build tests
 	$(COMPOSE) --profile test run --rm --no-deps tests ruff check --no-cache src tests --select E9,F63,F7,F82
 
-.PHONY: local-config migrate create-admin sync-prompts smoke-local templates
+.PHONY: local-config migrate create-admin sync-prompts smoke-local templates eval-extraction
 local-config:
 	docker run --rm --name grounding-design-ai-config -v "$(CURDIR):/workspace" -w /workspace python:3.12-alpine python scripts/configure_local.py
 
@@ -68,6 +69,9 @@ create-admin:
 
 sync-prompts:
 	$(COMPOSE) run --rm --no-deps worker python scripts/sync_langfuse_prompts.py
+
+eval-extraction:
+	$(COMPOSE) run --rm --no-deps -v "$(CURDIR):/workspace" -w /workspace --entrypoint python worker scripts/evaluate_extraction.py $(ARGS)
 
 .PHONY: smoke-auth
 smoke-auth:

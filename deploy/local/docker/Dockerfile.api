@@ -31,5 +31,7 @@ RUN pip install --no-cache-dir '.[dev]'
 COPY tests ./tests
 COPY services/potential_engine/validation/reference_cases.json ./services/potential_engine/validation/reference_cases.json
 COPY pytest.ini ./pytest.ini
+COPY docs/documentos_prueba ./docs/documentos_prueba
+COPY evaluation ./evaluation
 USER spat
 CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]

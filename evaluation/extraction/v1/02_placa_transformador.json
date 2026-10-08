@@ -1,0 +1,25 @@
+{
+  "file": "docs/documentos_prueba/02_placa_transformador_T-01.docx",
+  "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "doc_type": "placa_equipo",
+  "entities": [
+    {"ref": "T-01", "type": "Transformer", "names": ["T-01"], "locator": {"paragraph": 2}},
+    {"ref": "TD-2", "type": "ElectricalPanel", "names": ["TD-2"], "locator": {"paragraph": 5}},
+    {"ref": "El Rosal", "type": "Substation", "names": ["Subestación El Rosal", "El Rosal"], "locator": {"paragraph": 2}, "optional": true}
+  ],
+  "attributes": [
+    {"subject": "T-01", "name": "rated_power", "value_si": 5e6, "locator": {"table": 1, "row": 2}},
+    {"subject": "T-01", "name": "rated_voltage", "value_si": 13200, "locator": [{"table": 1, "row": 3}, {"paragraph": 6}]},
+    {"subject": "T-01", "name": "rated_voltage", "value_si": 115000, "locator": {"table": 1, "row": 4}},
+    {"subject": "T-01", "name": "impedance_percent", "value_si": 0.065, "locator": {"table": 1, "row": 5}},
+    {"subject": "T-01", "name": "frequency", "value_si": 60, "locator": {"table": 1, "row": 6}}
+  ],
+  "relations": [
+    {"type": "SUPPLIES", "source": "T-01", "target": "TD-2", "locator": {"paragraph": 5}},
+    {"type": "CONTAINS", "source": "El Rosal", "target": "T-01", "locator": {"paragraph": 2}, "optional": true}
+  ],
+  "forbidden": [],
+  "questions": [
+    {"kind": "alias", "mentions": ["T-01", "T1"]}
+  ]
+}

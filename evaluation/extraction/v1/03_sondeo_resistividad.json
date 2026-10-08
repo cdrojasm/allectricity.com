@@ -1,0 +1,57 @@
+{
+  "file": "docs/documentos_prueba/03_sondeo_resistividad_SEV-1.xlsx",
+  "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "doc_type": "sondeo_resistividad",
+  "entities": [
+    {"ref": "SEV-1", "type": "SoilSurvey", "names": ["SEV-1"], "locator": {"sheet": "SEV-1 Wenner", "row": 1}},
+    {"ref": "L1", "type": "ResistivityReading", "names": ["L1"], "locator": {"sheet": "SEV-1 Wenner", "row": 6}},
+    {"ref": "L2", "type": "ResistivityReading", "names": ["L2"], "locator": {"sheet": "SEV-1 Wenner", "row": 7}},
+    {"ref": "L3", "type": "ResistivityReading", "names": ["L3"], "locator": {"sheet": "SEV-1 Wenner", "row": 8}},
+    {"ref": "L4", "type": "ResistivityReading", "names": ["L4"], "locator": {"sheet": "SEV-1 Wenner", "row": 9}},
+    {"ref": "L5", "type": "ResistivityReading", "names": ["L5"], "locator": {"sheet": "SEV-1 Wenner", "row": 10}},
+    {"ref": "L6", "type": "ResistivityReading", "names": ["L6"], "locator": {"sheet": "SEV-1 Wenner", "row": 11}},
+    {"ref": "L7", "type": "ResistivityReading", "names": ["L7"], "locator": {"sheet": "SEV-1 Wenner", "row": 12}, "optional": true},
+    {"ref": "modelo SEV-1", "type": "SoilModel", "names": null, "locator": {"sheet": "Modelo ajustado", "row": 1}},
+    {"ref": "Capa 1", "type": "SoilLayer", "names": ["Capa 1"], "locator": {"sheet": "Modelo ajustado", "row": 3}},
+    {"ref": "Capa 2", "type": "SoilLayer", "names": ["Capa 2"], "locator": {"sheet": "Modelo ajustado", "row": 4}},
+    {"ref": "El Rosal", "type": "Substation", "names": ["Subestación El Rosal", "El Rosal"], "locator": {"sheet": "SEV-1 Wenner", "row": 1}, "optional": true}
+  ],
+  "attributes": [
+    {"subject": "SEV-1", "name": "array_type", "value": "wenner", "locator": {"sheet": "SEV-1 Wenner", "row": 2}},
+    {"subject": "SEV-1", "name": "measurement_date", "value": "2026-05-14", "locator": {"sheet": "SEV-1 Wenner", "row": 3}},
+    {"subject": "L1", "name": "probe_spacing", "value_si": 1, "locator": {"sheet": "SEV-1 Wenner", "row": 6}},
+    {"subject": "L1", "name": "apparent_resistivity", "value_si": 182.4, "locator": {"sheet": "SEV-1 Wenner", "row": 6}},
+    {"subject": "L2", "name": "probe_spacing", "value_si": 2, "locator": {"sheet": "SEV-1 Wenner", "row": 7}},
+    {"subject": "L2", "name": "apparent_resistivity", "value_si": 171.0, "locator": {"sheet": "SEV-1 Wenner", "row": 7}},
+    {"subject": "L3", "name": "probe_spacing", "value_si": 4, "locator": {"sheet": "SEV-1 Wenner", "row": 8}},
+    {"subject": "L3", "name": "apparent_resistivity", "value_si": 152.3, "locator": {"sheet": "SEV-1 Wenner", "row": 8}},
+    {"subject": "L4", "name": "probe_spacing", "value_si": 8, "locator": {"sheet": "SEV-1 Wenner", "row": 9}},
+    {"subject": "L4", "name": "apparent_resistivity", "value_si": 131.8, "locator": {"sheet": "SEV-1 Wenner", "row": 9}},
+    {"subject": "L5", "name": "probe_spacing", "value_si": 16, "locator": {"sheet": "SEV-1 Wenner", "row": 10}},
+    {"subject": "L5", "name": "apparent_resistivity", "value_si": 118.5, "locator": {"sheet": "SEV-1 Wenner", "row": 10}},
+    {"subject": "L6", "name": "probe_spacing", "value_si": 32, "locator": {"sheet": "SEV-1 Wenner", "row": 11}},
+    {"subject": "L6", "name": "apparent_resistivity", "value_si": 112.9, "locator": {"sheet": "SEV-1 Wenner", "row": 11}},
+    {"subject": "L7", "name": "probe_spacing", "value_si": 64, "locator": {"sheet": "SEV-1 Wenner", "row": 12}, "optional": true},
+    {"subject": ["L1", "L2", "L3", "L4", "L5", "L6", "SEV-1"], "name": "array_type", "value": "wenner", "optional": true},
+    {"subject": "Capa 1", "name": "layer_resistivity", "value_si": 190, "locator": {"sheet": "Modelo ajustado", "row": 3}},
+    {"subject": "Capa 1", "name": "layer_thickness", "value_si": 2.8, "locator": {"sheet": "Modelo ajustado", "row": 3}},
+    {"subject": "Capa 2", "name": "layer_resistivity", "value_si": 110, "locator": {"sheet": "Modelo ajustado", "row": 4}}
+  ],
+  "relations": [
+    {"type": "FITTED_AS", "source": "SEV-1", "target": "modelo SEV-1", "locator": {"sheet": "Modelo ajustado", "row": 1}},
+    {"type": "PART_OF", "source": "Capa 1", "target": "modelo SEV-1"},
+    {"type": "PART_OF", "source": "Capa 2", "target": "modelo SEV-1"},
+    {"type": "PART_OF", "source": "L1", "target": "SEV-1", "optional": true},
+    {"type": "PART_OF", "source": "L2", "target": "SEV-1", "optional": true},
+    {"type": "PART_OF", "source": "L3", "target": "SEV-1", "optional": true},
+    {"type": "PART_OF", "source": "L4", "target": "SEV-1", "optional": true},
+    {"type": "PART_OF", "source": "L5", "target": "SEV-1", "optional": true},
+    {"type": "PART_OF", "source": "L6", "target": "SEV-1", "optional": true},
+    {"type": "PART_OF", "source": "L7", "target": "SEV-1", "optional": true},
+    {"type": "MEASURED_AT", "source": "SEV-1", "target": "El Rosal", "optional": true}
+  ],
+  "forbidden": [
+    {"kind": "attribute", "subject": "L7", "name": "apparent_resistivity", "reason": "Lectura negativa (−15 ohm·m): el validador la rechaza por rango."}
+  ],
+  "questions": []
+}

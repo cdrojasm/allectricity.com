@@ -1,0 +1,38 @@
+{
+  "file": "docs/documentos_prueba/04_escenarios_falla.csv",
+  "mime_type": "text/csv",
+  "doc_type": "escenarios_falla",
+  "entities": [
+    {"ref": "F1", "type": "FaultScenario", "names": ["F1", "falla monofásica en barra de 115 kV"], "locator": {"row": 2}},
+    {"ref": "F2", "type": "FaultScenario", "names": ["F2", "falla monofásica en barra de 13.8 kV"], "locator": {"row": 3}},
+    {"ref": "F3", "type": "FaultScenario", "names": ["F3", "falla bifásica a tierra en barra de 13.8 kV"], "locator": {"row": 4}},
+    {"ref": "F4", "type": "FaultScenario", "names": ["F4", "falla con despeje de respaldo"], "locator": {"row": 5}},
+    {"ref": "F5", "type": "FaultScenario", "names": ["F5", "falla monofásica en barra de 115 kV (estudio 2024)"], "locator": {"row": 6}}
+  ],
+  "attributes": [
+    {"subject": "F1", "name": "fault_current", "value_si": 12500, "locator": {"row": 2}},
+    {"subject": "F1", "name": "shock_duration", "value_si": 0.5, "locator": {"row": 2}},
+    {"subject": "F1", "name": "thermal_duration", "value_si": 1.0, "locator": {"row": 2}},
+    {"subject": "F1", "name": "standard_edition", "value": "IEEE 80-2013", "locator": {"row": 2}},
+    {"subject": "F2", "name": "fault_current", "value_si": 8200, "locator": {"row": 3}},
+    {"subject": "F2", "name": "shock_duration", "value_si": 0.3, "locator": {"row": 3}},
+    {"subject": "F2", "name": "thermal_duration", "value_si": 0.8, "locator": {"row": 3}},
+    {"subject": "F2", "name": "standard_edition", "value": "IEEE 80-2013", "locator": {"row": 3}},
+    {"subject": "F3", "name": "fault_current", "values_si": [1.25, 1250], "locator": {"row": 4}},
+    {"subject": "F3", "name": "shock_duration", "value_si": 0.3, "locator": {"row": 4}},
+    {"subject": "F3", "name": "thermal_duration", "value_si": 0.8, "locator": {"row": 4}},
+    {"subject": "F3", "name": "standard_edition", "value": "IEEE 80-2013", "locator": {"row": 4}},
+    {"subject": "F4", "name": "fault_current", "value_si": 9000, "locator": {"row": 5}},
+    {"subject": "F4", "name": "thermal_duration", "value_si": 1.0, "locator": {"row": 5}},
+    {"subject": "F4", "name": "standard_edition", "value": "IEEE 80-2013", "locator": {"row": 5}},
+    {"subject": "F5", "name": "fault_current", "value_si": 11800, "locator": {"row": 6}},
+    {"subject": "F5", "name": "shock_duration", "value_si": 0.5, "locator": {"row": 6}},
+    {"subject": "F5", "name": "thermal_duration", "value_si": 1.0, "locator": {"row": 6}},
+    {"subject": "F5", "name": "standard_edition", "value": "IEEE 80-2000", "locator": {"row": 6}}
+  ],
+  "relations": [],
+  "forbidden": [
+    {"kind": "attribute", "subject": "F4", "name": "shock_duration", "reason": "t_s = 120 s fuera de rango (máximo 10 s): el validador la rechaza."}
+  ],
+  "questions": []
+}

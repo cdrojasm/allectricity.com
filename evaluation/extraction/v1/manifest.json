@@ -1,0 +1,21 @@
+{
+  "version": "extraction-eval/1",
+  "review": {
+    "status": "draft",
+    "note": "Anotado a partir de docs/documentos_prueba/README.md; pendiente de revisión del especialista (EG-12, EG-15)."
+  },
+  "cases": [
+    {
+      "id": "el_rosal",
+      "description": "Subestación El Rosal: seis documentos ficticios cargados en orden en un mismo proyecto.",
+      "documents": [
+        "01_memoria_calculo.json",
+        "02_placa_transformador.json",
+        "03_sondeo_resistividad.json",
+        "04_escenarios_falla.json",
+        "05_inspeccion_escaneada.json",
+        "06_nota_tecnica.json"
+      ]
+    }
+  ]
+}

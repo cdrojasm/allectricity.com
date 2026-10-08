@@ -1,0 +1,20 @@
+{
+  "description": "Umbrales de promoción de la extracción (EG-12). Provisionales hasta acordarlos con el especialista; las rutas son métricas de report.metrics.",
+  "max": {
+    "invariants.accepted": 0,
+    "invariants.calculation_inputs_not_in_review": 0
+  },
+  "min": {
+    "abstention": 1.0
+  },
+  "max_drop": {
+    "overall.f1": 0.02,
+    "entities.recall": 0.03,
+    "attributes.precision": 0.02,
+    "attributes.recall": 0.03,
+    "relations.precision": 0.03,
+    "relations.recall": 0.05,
+    "evidence_accuracy": 0.02,
+    "question_recall": 0.0
+  }
+}

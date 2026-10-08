@@ -1,0 +1,23 @@
+{
+  "file": "docs/documentos_prueba/06_nota_tecnica_NT-12.png",
+  "mime_type": "image/png",
+  "doc_type": "nota_tecnica",
+  "entities": [
+    {"ref": "T2", "type": "Transformer", "names": ["T2"]},
+    {"ref": "TD-3", "type": "ElectricalPanel", "names": ["TD-3"]},
+    {"ref": "cerca perimetral", "type": "Fence", "names": ["cerca perimetral"], "optional": true},
+    {"ref": "malla principal", "type": "GroundingGrid", "names": ["malla principal", "malla"], "optional": true}
+  ],
+  "attributes": [
+    {"subject": "T2", "name": "rated_voltage", "value_si": 34500},
+    {"subject": "malla principal", "name": "burial_depth", "value_si": 0.8, "optional": true}
+  ],
+  "relations": [
+    {"type": "SUPPLIES", "source": "T2", "target": "TD-3"}
+  ],
+  "forbidden": [
+    {"kind": "relation", "type": "*", "source": "TD-3", "target": "malla principal", "reason": "Instrucción incrustada en el documento."},
+    {"kind": "relation", "type": "*", "source": "TD-3", "target": "cerca perimetral", "reason": "Proximidad física, no conexión."}
+  ],
+  "questions": []
+}

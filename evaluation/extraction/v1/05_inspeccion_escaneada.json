@@ -1,0 +1,28 @@
+{
+  "file": "docs/documentos_prueba/05_informe_inspeccion_escaneado.pdf",
+  "mime_type": "application/pdf",
+  "doc_type": "informe_inspeccion",
+  "entities": [
+    {"ref": "BJ-1", "type": "DownConductor", "names": ["BJ-1"], "locator": {"page": 1}},
+    {"ref": "malla principal", "type": "GroundingGrid", "names": ["malla principal"], "locator": {"page": 1}},
+    {"ref": "E-4", "type": "Structure", "names": ["E-4"], "locator": {"page": 1}},
+    {"ref": "cerca perimetral", "type": "Fence", "names": ["cerca perimetral"], "locator": {"page": 1}},
+    {"ref": "V-9", "type": "RodElectrode", "names": ["V-9"], "locator": {"page": 1}},
+    {"ref": "El Rosal", "type": "Substation", "names": ["Subestación El Rosal", "El Rosal"], "locator": {"page": 1}, "optional": true}
+  ],
+  "attributes": [
+    {"subject": "malla principal", "name": "reported_grid_resistance", "value_si": 1.2, "locator": {"page": 1}},
+    {"subject": "V-9", "name": "burial_depth", "value_si": 0.4, "locator": {"page": 1}, "optional": true},
+    {"subject": "malla principal", "name": "reported_grid_resistance", "value_si": 1.8, "locator": {"page": 2}, "optional": true}
+  ],
+  "relations": [
+    {"type": "BONDED_TO", "source": "BJ-1", "target": "malla principal", "locator": {"page": 1}},
+    {"type": "TERMINATES_AT", "source": "BJ-1", "target": "E-4", "locator": {"page": 1}},
+    {"type": "BONDED_TO", "source": "cerca perimetral", "target": "malla principal", "locator": {"page": 1}},
+    {"type": "CONTAINS", "source": "El Rosal", "target": "malla principal", "optional": true}
+  ],
+  "forbidden": [],
+  "questions": [
+    {"kind": "conflict", "mentions": ["malla principal", "reported_grid_resistance"]}
+  ]
+}

@@ -28,9 +28,9 @@ se sobrescribe silenciosamente con otra extracción.
 - El pipeline persiste ejecuciones y afirmaciones idempotentes en Neo4j. La UI
   permite consultar el grafo, abrir fuentes y resolver hallazgos y preguntas con
   auditoría. Los datos que alimentan cálculos siguen requiriendo revisión.
-- La brecha principal es la **calidad medible de la extracción**: no hay
-  conjunto de evaluación, y el extractor usa por defecto un modelo pequeño
-  (`gpt-4o-mini`) con toda la taxonomía en una sola pasada.
+- La brecha principal es la **calidad de la extracción**. Ya se mide (EG-12, ver
+  «Evaluación de la extracción»), pero el extractor usa por defecto un modelo
+  pequeño (`gpt-4o-mini`) con toda la taxonomía en una sola pasada.
 
 ## Estrategia de extracción (decidida 2026-10-07)
 
@@ -120,8 +120,8 @@ estructurado.
 | EG-08 | P0 | ✅ | Revisión humana de hallazgos | API y UI para listar preguntas, abrir la evidencia en el documento, aceptar/rechazar/corregir afirmaciones y registrar usuario, fecha y motivo. Correcciones guardan el valor revisado y no borran el texto propuesto ni su evidencia. |
 | EG-09 | P1 | ✅ | Cobertura documental y OCR de PDF | DOCX, PDF con texto nativo y OCR por página implementados con localizadores. Las páginas sin texto se rasterizan con PDFium (escaneos y PDF vectoriales sin imagen embebida) antes del OCR; las tablas con líneas se extraen con pdfplumber por página/tabla/fila/celda sin duplicar el texto; la cobertura registra páginas fallidas, vacías, con tablas, calidad OCR por página y páginas de OCR dudoso. Tablas sin líneas y planos complejos quedan para EG-14. |
 | EG-13 | P1 | ✅ | Observabilidad, coste y fallos | Cada ejecución registra modelo, versiones de prompt/esquema/parser, tokens por agente, coste estimado (`LLM_PRICE_*_USD_PER_MTOK`), duración, errores y conteos por estado; los logs solo llevan conteos. Límites `DOCUMENT_LLM_MAX_TOKENS_PER_FILE` y `DOCUMENT_LLM_MAX_TOKENS_PER_PROJECT`: al agotarse el del proyecto se extrae solo con reglas y queda registrado. Recuperación: reintentos automáticos, reconciliación periódica, reintento manual y `POST .../knowledge-graph/documents/{id}/reprocess`. |
-| EG-12 | P0 | ⬜ | Evaluación de calidad del LLM | **Primer paso de la estrategia.** Conjunto versionado y revisado, empezando por `docs/documentos_prueba/`. Mide precisión y recobrado por tipo y atributo, exactitud de evidencia, relaciones, abstención y duplicados, además de coste y latencia por documento. Compara modelos y prompts, fija la línea base actual y bloquea la promoción si se degradan los umbrales acordados. |
-| EG-24 | P0 | ⬜ | Correcciones de la taxonomía v1 | La unidad distingue los prefijos m y M (`mV` ≠ `MV`, `mΩ` ≠ `MΩ`). Se publica `TAXONOMY_VERSION` y se incluye en el ID de ejecución, para que cambiar la taxonomía cree ejecuciones nuevas al reprocesar. |
+| EG-24 | P0 | ✅ | Correcciones de la taxonomía v1 | La unidad distingue los prefijos m y M (`mV` ≠ `MV`, `mΩ` ≠ `MΩ`). Se publica `TAXONOMY_VERSION` y se incluye en el ID de ejecución, para que cambiar la taxonomía cree ejecuciones nuevas al reprocesar. | Hecho con `taxonomy/1.1`; `mva` en minúsculas se rechaza en lugar de leerse como MVA. |
+| EG-12 | P0 | ◐ | Evaluación de calidad del LLM | **Primer paso de la estrategia.** Conjunto versionado y revisado, empezando por `docs/documentos_prueba/`. Mide precisión y recobrado por tipo y atributo, exactitud de evidencia, relaciones, abstención y duplicados, además de coste y latencia por documento. Compara modelos y prompts, fija la línea base actual y bloquea la promoción si se degradan los umbrales acordados. **Hecho:** conjunto `evaluation/extraction/v1` (borrador), puntuación, ejecutor `make eval-extraction`, re-puntuación sin LLM, bloqueo por umbrales y líneas base de reglas y `gpt-4.1`. **Falta:** revisión del gold por el especialista, documentos reales, repeticiones para medir la varianza y umbrales acordados a partir de ella. |
 | EG-25 | P0 | ⬜ | Selección de modelo por paso | Configurar el modelo por paso (clasificación, inventario, pasadas, verificación) y elegirlo con EG-12. El modelo pequeño actual queda solo donde las métricas lo justifiquen. |
 | EG-15 | P0 | ◐ | Taxonomía v2: núcleo y perfiles | Núcleo común (jerarquía espacial con los aspectos función/producto/ubicación, conectividad con bornes y fases, tipo frente a instancia) y perfil de puesta a tierra. El perfil cubre: esquema de conexión a tierra, aterrizamiento del neutro, cables de guarda y pantallas, estructuras metálicas, equipos a aterrizar con su ubicación respecto a la malla, elementos que transfieren potencial, mediciones de resistencia de malla y parámetros de tensiones tolerables y térmicos. Cada perfil declara atributos obligatorios por tipo. Requiere revisión del especialista antes de congelar; v1 está implementada. |
 | EG-26 | P0 | ⬜ | Clasificación de documentos y esquema por tipo | Clasificar cada documento (y, si es mixto, sus secciones) en tipos acordados. Cada tipo activa perfiles y campos esperados. La clasificación se guarda en la ejecución y se evalúa con EG-12. |
@@ -202,6 +202,45 @@ Decisiones tomadas (provisionales hasta revisión del especialista, EG-15):
   celda (CSV), hoja/fila/celda (XLSX), párrafo o tabla/fila/celda (DOCX), además de
   offsets sobre el texto.
 
+## Evaluación de la extracción (EG-12, 2026-10-07)
+
+| Pieza | Ubicación |
+|---|---|
+| Conjunto anotado v1 (6 documentos de El Rosal, un caso; borrador sin revisar) | `evaluation/extraction/v1/` |
+| Puntuación: P/R/F1 por tipo, atributo y relación, localizador, abstención, duplicados, variantes de nombre, invariantes de estado y preguntas | `backend/src/domain/knowledge_graph/evaluation.py` |
+| Ejecutor con grafo en memoria (los documentos de un caso se procesan en orden) | `backend/src/infrastructure/processing/extraction_evaluation.py` |
+| CLI y umbrales de promoción | `scripts/evaluate_extraction.py` (`make eval-extraction ARGS=...`), `evaluation/extraction/thresholds.json` |
+| Líneas base (informe completo con afirmaciones, re-puntuable) | `evaluation/extraction/baselines/` |
+
+Uso: `make eval-extraction ARGS="--output informe.json --baseline evaluation/extraction/baselines/gpt-4.1-extractor-v4.json"`
+sale con código 1 si hay regresión. `--rules-only` evita el LLM y `--rescore informe.json`
+vuelve a puntuar con el gold actual sin extraer de nuevo. El gold no exige lo que el
+documento no dice con claridad (ítems `optional`) y valida contra la taxonomía en las pruebas.
+
+**Línea base (taxonomía 1.1, extractor v4, `staging`):**
+
+| Configuración | Entidades P/R | Atributos P/R | Relaciones P/R | F1 | Tokens | Tiempo |
+|---|---|---|---|---|---|---|
+| Solo reglas | 100 % / 19 % | — / 0 % | — / 0 % | 10 % | 0 | 1 s |
+| `gpt-4.1` | 84 % / 84 % | 88 % / 70 % | 69 % / 69 % | 79 % | 271 k | 121 s |
+
+Evidencia 100 % correcta, abstención 100 % (no siguió la instrucción incrustada de 06),
+preguntas esperadas 100 % y ningún invariante violado. Errores dominantes:
+
+- **Tablas:** en el sondeo 03 extrae las lecturas L1–L6 pero solo 2 de 17 valores
+  (espaciamientos, resistividades y capas). Es el mayor hueco de recobrado y apunta a
+  EG-27 (pasadas enfocadas) y EG-14.
+- **Nombres:** en el informe 05 nombra «bajante BJ-1» en lugar de «BJ-1», que en el grafo
+  sería otra entidad, y arrastra sus atributos y relaciones (EG-10).
+- **Tipos y sujetos:** tipa la subestación como `Site` y cuelga los parámetros de falla de
+  ella en lugar de crear el `FaultScenario`. Confunde además `TERMINATES_AT` con `BONDED_TO`.
+- **Varianza:** dos ejecuciones idénticas dieron F1 85 % y 79 %, y la memoria 01 pasó de
+  100 % a 74 % en atributos. Con una sola ejecución, las caídas máximas de 2–5 puntos
+  de `thresholds.json` no distinguen ruido de regresión. Antes de usar el bloqueo para
+  decidir EG-25 hacen falta repeticiones (≥3) y umbrales derivados de la varianza observada.
+
+El coste en USD sale vacío hasta definir `LLM_PRICE_*_USD_PER_MTOK`.
+
 Pendiente dentro de las tareas parciales: fusión confirmada de alias (EG-10);
 vista de conflictos y cola priorizada (EG-11); taxonomía v2 y revisión del
 especialista (EG-15); reconstrucción y rendimiento (EG-23).
@@ -211,8 +250,8 @@ especialista (EG-15); reconstrucción y rendimiento (EG-23).
 Completado: fundación (EG-01, EG-02, EG-04), extracción fiable (EG-03, EG-05,
 EG-06), operación (EG-07, EG-08, EG-09, EG-13).
 
-1. **Medir:** EG-12 y EG-24. Línea base de la extracción actual con la
-   taxonomía corregida.
+1. **Medir:** EG-24 ✅ y EG-12 ◐. Ya hay línea base con la taxonomía corregida;
+   faltan la revisión del gold, las repeticiones y los umbrales acordados.
 2. **Palancas baratas:** EG-25 (modelo por paso) y EG-26 (clasificación).
    Medir cada una contra la línea base.
 3. **Extracción enfocada:** EG-15 (taxonomía v2 con el especialista) y EG-27
