@@ -1,7 +1,7 @@
 import pytest
 
 from src.domain.spat.grid_geometry import (
-    axis_positions, conductor_lines, geometry_problems, missing_for_calculation, rod_layout, rod_points, split_lines,
+    area_grid, axis_positions, geometry_conflicts, geometry_warnings, snapped_positions, conductor_lines, geometry_problems, missing_for_calculation, rod_layout, rod_points, split_lines,
 )
 from src.infrastructure.calculations.artifact_potential import _segments
 from src.infrastructure.calculations.potential_engine_client import (
@@ -140,3 +140,75 @@ def test_structure_must_stay_inside_grid():
     geometry = {"length_m": 40, "width_m": 30, "conductor_spacing_m": 10,
                 "structures": [{"x": 39, "y": 15, "width": 6, "height": 4}]}
     assert any("structures[0] leaves" in problem for problem in geometry_problems(geometry))
+
+
+# Antejardín 2 × 10 m, existing building 20 × 10 m and back yard 5 × 10 m on a 27 × 10 m site.
+SITE = {"length_m": 27, "width_m": 10,
+        "structures": [{"x": 12, "y": 5, "width": 20, "height": 10, "label": "Edificio existente"}],
+        "areas": [{"type": "intervenible", "label": "Antejardín", "x_min": 0, "x_max": 2, "y_min": 0, "y_max": 10},
+                  {"type": "intervenible", "label": "Patio", "x_min": 22, "x_max": 27, "y_min": 0, "y_max": 10}]}
+
+
+def test_the_grid_uses_the_chosen_area_not_every_available_one():
+    with pytest.raises(ValueError, match="2 intervenible areas .*say which one"):
+        area_grid(SITE, 5, 5)
+    conductors = area_grid(SITE, 5, 5, areas=["patio"])
+    xs = {c[k]["x"] for c in conductors for k in ("start", "end")}
+    assert xs == {22, 27} and len(conductors) == 3 + 2  # y = 0, 5, 10 and the patio's two sides
+    geometry = {**SITE, "conductors": conductors}
+    geometry["rods"] = rod_layout("count", geometry, count=4)
+    assert geometry_problems(geometry) == [] and geometry_warnings(geometry) == []
+    # Part of the patio only, with the interior lines on the construction step.
+    part = area_grid({**SITE, "snap_m": 1}, 3, 3, areas=["Patio"], bounds={"x_min": 22, "x_max": 27, "y_min": 0, "y_max": 6})
+    ys = sorted({c["start"]["y"] for c in part if c["start"]["y"] == c["end"]["y"]})
+    xs = sorted({c["start"]["x"] for c in part if c["start"]["x"] == c["end"]["x"]})
+    assert ys == [0, 3, 6] and xs == [22, 25, 27]  # 24.5 rounds up to 25: gaps of 3 and 2 m
+
+
+def test_snapped_positions_never_exceed_the_spacing():
+    assert snapped_positions(0, 5, 3, 0.5) == [0, 2.5, 5]
+    assert snapped_positions(0, 5, 3, 1) == [0, 3, 5]  # halves round up
+    for start, end, spacing, snap in ((0, 7, 2, 1), (2.3, 11.9, 3, 0.5), (0, 10, 4, 3)):
+        points = snapped_positions(start, end, spacing, snap)
+        assert points[0] == start and points[-1] == end
+        assert all(b - a <= spacing + 1e-3 for a, b in zip(points, points[1:]))
+
+
+def test_two_used_areas_are_a_warning_not_an_error():
+    both = {**SITE, "conductors": area_grid(SITE, 5, 5, areas=["Antejardín", "Patio"])}
+    assert geometry_problems(both) == []
+    [warning] = geometry_warnings(both)
+    assert warning["kind"] == "disconnected" and warning["parts"] == 2
+
+
+def test_conflicts_are_structured():
+    across = {**SITE, "conductors": [{"start": {"x": 0, "y": 5}, "end": {"x": 27, "y": 5}}]}
+    crossing = [c for c in geometry_conflicts(across) if c["kind"] == "crosses_obstacle"]
+    assert crossing == [{"element": "conductor", "index": 0, "kind": "crosses_obstacle",
+                         "message": "geometry.conductors[0] crosses structure [0]",
+                         "obstacle": {"kind": "structure", "index": 0, "label": "Edificio existente"}, "other": None}]
+
+
+def test_conductors_and_rods_must_stay_in_the_intervenible_areas():
+    assert any("regular grid covers the whole site" in p for p in geometry_problems({**SITE, "conductor_spacing_m": 5}))
+    across = {**SITE, "conductors": [{"start": {"x": 0, "y": 5}, "end": {"x": 27, "y": 5}}], "rods": [{"x": 10, "y": 5}]}
+    problems = geometry_problems(across)
+    assert any("crosses structure [0]" in p for p in problems)
+    assert any("conductors[0] leaves the intervenible areas" in p for p in problems)
+    assert any("rods[0] at (10, 5) is outside the intervenible areas" in p for p in problems)
+    assert any("rods[0] is inside structure [0]" in p for p in problems)
+    # Along the shared border the conductor is still inside the area.
+    border = {**SITE, "conductors": [{"start": {"x": 2, "y": 0}, "end": {"x": 2, "y": 10}}]}
+    assert geometry_problems(border) == []
+
+
+def test_non_intervenible_areas_block_the_grid_and_areas_stay_in_the_site():
+    garden = {"type": "non_intervenible", "label": "Jardín", "x_min": 23, "x_max": 25, "y_min": 4, "y_max": 6}
+    geometry = {**SITE, "areas": [*SITE["areas"], garden],
+                "conductors": [{"start": {"x": 22, "y": 5}, "end": {"x": 27, "y": 5}}]}
+    assert any("crosses non-intervenible area [2] (Jardín)" in p for p in geometry_problems(geometry))
+    clipped = area_grid(geometry, 5, 5, areas=["Patio"])
+    assert geometry_problems({**geometry, "conductors": clipped}) == []
+    outside = {**SITE, "conductors": [{"start": {"x": 0, "y": 0}, "end": {"x": 2, "y": 0}}],
+               "areas": [{"type": "intervenible", "x_min": 20, "x_max": 30, "y_min": 0, "y_max": 10}]}
+    assert geometry_problems(outside) == ["geometry.areas[0] leaves the site (0..27 x 0..10 m)"]

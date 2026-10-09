@@ -186,7 +186,8 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
             "mayor reduce la precisión de las tensiones de paso."
         )
     current, origin, fault_breakdown = _fault_current(fault, effective_parameters, client, soil, segments)
-    field = _field(client, geometry, soil, segments, current, origin, float(effective_parameters["surface_spacing_m"]))
+    field = _field(client, geometry, soil, segments, current, origin, float(effective_parameters["surface_spacing_m"]),
+                   float(effective_parameters.get("touch_reach_m") or 0.0))
     first, group = field["first"], field["first"]["groups"][GROUP]
     result = {
         "soil": soil_record(soil),
@@ -252,7 +253,8 @@ def _uncertainty(client, geometry, parameters, soil, current, origin, finest):
     try:
         for scale in (4.0, 2.0):
             segments = _segments(geometry, parameters, soil, scale)
-            run = _field(client, geometry, soil, segments, current, origin, float(parameters["surface_spacing_m"]))
+            run = _field(client, geometry, soil, segments, current, origin, float(parameters["surface_spacing_m"]),
+                         float(parameters.get("touch_reach_m") or 0.0))
             levels.append((scale, len(segments), run))
             hashes += run["hashes"]
     except (ValueError, PotentialEngineError) as exc:
@@ -291,9 +293,23 @@ def _uncertainty(client, geometry, parameters, soil, current, origin, finest):
     }, hashes
 
 
-def _field(client, geometry, soil, segments, current, origin, spacing) -> dict[str, Any]:
-    """Surface search for GPR, the worst touch inside the grid and the worst 1 m step."""
+def _field(client, geometry, soil, segments, current, origin, spacing, reach=0.0) -> dict[str, Any]:
+    """Surface search for GPR, the worst touch over the grid and the worst 1 m step.
+
+    The raster covers the whole site plus a margin. Touch is searched only over the grid's
+    footprint (its conductors' bounding box, widened by `reach`), not over the rest of the site;
+    step is searched everywhere except inside structures, whose floor is not open ground.
+    """
     half_x, half_y = geometry["length_m"] / 2, geometry["width_m"] / 2
+    fx0, fx1, fy0, fy1 = grid_geometry.footprint(geometry)
+    touch_box = (max(fx0 - reach, -SURFACE_MARGIN_M) - half_x, min(fx1 + reach, 2 * half_x + SURFACE_MARGIN_M) - half_x,
+                 max(fy0 - reach, -SURFACE_MARGIN_M) - half_y, min(fy1 + reach, 2 * half_y + SURFACE_MARGIN_M) - half_y)
+    structures = [(float(s["x"]) - half_x, float(s["y"]) - half_y, float(s["width"]) / 2, float(s["height"]) / 2)
+                  for s in geometry.get("structures") or []]
+
+    def in_structure(x: float, y: float) -> bool:
+        return any(abs(x - cx) < hw - 1e-9 and abs(y - cy) < hh - 1e-9 for cx, cy, hw, hh in structures)
+
     nx = round(2 * (half_x + SURFACE_MARGIN_M) / spacing)
     ny = round(2 * (half_y + SURFACE_MARGIN_M) / spacing)
     raster = {
@@ -304,7 +320,8 @@ def _field(client, geometry, soil, segments, current, origin, spacing) -> dict[s
                               [PotentialPoint(pid, xyz) for pid, xyz in raster.items()], origin)
     gpr = first["groups"][GROUP]["potential_v"]
 
-    inside = [pid for pid, (x, y, _) in raster.items() if abs(x) <= half_x + 1e-9 and abs(y) <= half_y + 1e-9]
+    inside = [pid for pid, (x, y, _) in raster.items()
+              if touch_box[0] - 1e-9 <= x <= touch_box[1] + 1e-9 and touch_box[2] - 1e-9 <= y <= touch_box[3] + 1e-9]
     touch_id = min(inside, key=v.__getitem__)
 
     # Step voltage: rank raster points by their largest 1 m axis difference, then search
@@ -314,7 +331,8 @@ def _field(client, geometry, soil, segments, current, origin, spacing) -> dict[s
         i, j = map(int, pid[1:].split("_"))
         return max((abs(v[pid] - v[f"s{i + di}_{j + dj}"]) for di, dj in ((k, 0), (0, k), (-k, 0), (0, -k))
                     if f"s{i + di}_{j + dj}" in v), default=0.0)
-    candidates = sorted(raster, key=axis_step, reverse=True)[:STEP_CANDIDATES]
+    open_ground = [pid for pid, (x, y, _) in raster.items() if not in_structure(x, y)]
+    candidates = sorted(open_ground, key=axis_step, reverse=True)[:STEP_CANDIDATES]
     probes = {}
     for c, pid in enumerate(candidates):
         x, y, _ = raster[pid]
@@ -326,6 +344,8 @@ def _field(client, geometry, soil, segments, current, origin, spacing) -> dict[s
     step_value, step_from, step_to = 0.0, None, None
     for c, pid in enumerate(candidates):
         for d in range(STEP_DIRECTIONS):
+            if in_structure(*probes[f"p{c}_{d}"][:2]):
+                continue
             difference = abs(v[pid] - probe_v[f"p{c}_{d}"])
             if difference > step_value:
                 step_value, step_from, step_to = difference, list(raster[pid][:2]), list(probes[f"p{c}_{d}"][:2])
@@ -337,10 +357,11 @@ def _field(client, geometry, soil, segments, current, origin, spacing) -> dict[s
             "spacing_m": spacing,
             "x_min_m": -half_x - SURFACE_MARGIN_M,
             "y_min_m": -half_y - SURFACE_MARGIN_M,
-            "grid_x_m": SURFACE_MARGIN_M,
-            "grid_y_m": SURFACE_MARGIN_M,
-            "grid_width_m": 2 * half_x,
-            "grid_height_m": 2 * half_y,
+            # The touch search area, relative to the raster origin.
+            "grid_x_m": touch_box[0] + half_x + SURFACE_MARGIN_M,
+            "grid_y_m": touch_box[2] + half_y + SURFACE_MARGIN_M,
+            "grid_width_m": touch_box[1] - touch_box[0],
+            "grid_height_m": touch_box[3] - touch_box[2],
             "nx": nx + 1,
             "ny": ny + 1,
             "values_v": [v[f"s{i}_{j}"] for j in range(ny + 1) for i in range(nx + 1)],

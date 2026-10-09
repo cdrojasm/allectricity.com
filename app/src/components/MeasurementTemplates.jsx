@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ArrowDownToLine, FileSpreadsheet } from "lucide-react";
+import { ArrowDownToLine, ChevronDown, FileSpreadsheet } from "lucide-react";
 
 // Field templates live in the MinIO templates bucket; the API lists its catalog and signs downloads.
 function MeasurementTemplates({ token, method }) {
@@ -40,8 +40,8 @@ function MeasurementTemplates({ token, method }) {
   }
 
   const ordered = [...(templates || [])].sort((a, b) => (b.method === method) - (a.method === method));
-  return <section className="panel calc-panel measurement-templates" aria-label="Plantillas de medición">
-    <div className="panel-heading"><div><ArrowDownToLine size={17}/><h2>Plantillas de campo</h2></div>{templates && <span className="count">{templates.length}</span>}</div>
+  return <section className="panel calc-panel measurement-templates" aria-label="Plantillas de medición"><details>
+    <summary className="panel-heading"><div><ArrowDownToLine size={17}/><h2>Plantillas de campo</h2></div><div>{templates && <span className="count">{templates.length}</span>}<ChevronDown size={15} className="templates-chevron"/></div></summary>
     <p className="calc-help">Descarga la plantilla del método, diligénciala en campo y cárgala en <strong>Archivos del proyecto</strong> para que el agente extraiga las lecturas.</p>
     {error && <p className="calc-help upload-error-text" role="alert">{error}</p>}
     {templates === null ? <p className="calc-help">Cargando plantillas…</p> : <ul className="template-list">{ordered.map((template) => <li key={template.id} className={template.method === method ? "current" : ""}>
@@ -49,7 +49,7 @@ function MeasurementTemplates({ token, method }) {
       <span className="template-info"><strong>{template.title}{template.method === method && <em>Método seleccionado</em>}</strong><small>{template.description}</small><code>{template.formula}</code></span>
       <span className="template-actions">{template.files.map((file) => <button key={file.format} className="button" disabled={downloading === `${template.id}/${file.format}`} onClick={() => download(template, file.format)} aria-label={`Descargar ${template.title} en ${file.format.toUpperCase()}`}><ArrowDownToLine size={13}/>{file.format.toUpperCase()}</button>)}</span>
     </li>)}</ul>}
-  </section>;
+  </details></section>;
 }
 
 export { MeasurementTemplates };

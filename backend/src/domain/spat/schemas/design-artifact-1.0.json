@@ -154,6 +154,18 @@
           "title": "Structures",
           "type": "array"
         },
+        "snap_m": {
+          "anyOf": [{ "exclusiveMinimum": 0, "maximum": 10, "type": "number" }, { "type": "null" }],
+          "default": null,
+          "description": "Paso constructivo de las líneas generadas y del dibujo; por defecto 0,5 m"
+        },
+        "areas": {
+          "description": "Zonas intervenibles y no intervenibles del terreno",
+          "items": { "$ref": "#/$defs/SiteAreaRequest" },
+          "maxItems": 100,
+          "title": "Areas",
+          "type": "array"
+        },
         "background": {
           "anyOf": [{ "$ref": "#/$defs/PlanBackgroundRequest" }, { "type": "null" }],
           "default": null,
@@ -467,6 +479,20 @@
       },
       "required": ["x", "y", "width", "height"],
       "title": "StructureRequest",
+      "type": "object"
+    },
+    "SiteAreaRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["intervenible", "non_intervenible"], "type": "string" },
+        "label": { "anyOf": [{ "maxLength": 160, "type": "string" }, { "type": "null" }], "default": null },
+        "x_min": { "minimum": 0, "maximum": 100000.0, "type": "number" },
+        "x_max": { "minimum": 0, "maximum": 100000.0, "type": "number" },
+        "y_min": { "minimum": 0, "maximum": 100000.0, "type": "number" },
+        "y_max": { "minimum": 0, "maximum": 100000.0, "type": "number" }
+      },
+      "required": ["type", "x_min", "x_max", "y_min", "y_max"],
+      "title": "SiteAreaRequest",
       "type": "object"
     },
     "PlanBackgroundRequest": {

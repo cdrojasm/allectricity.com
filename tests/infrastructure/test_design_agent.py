@@ -230,6 +230,53 @@ def test_designer_clips_a_zone_deterministically(chat):
     assert latest["origin"]["provenance"]["geometry.conductors"]["kind"] == "tool"
 
 
+def test_site_zones_from_chat_put_the_grid_in_the_chosen_zone(chat):
+    services, client, tokens, project, conversation, _, _ = chat
+    sent = send(client, tokens, conversation, "Antejardín de 2 × 10, edificio de 20 × 10 y patio de 5 × 10; "
+                                              "la malla va en el patio, cada 5 m")
+    building = [{"x": 12, "y": 5, "width": 20, "height": 10, "label": "Edificio existente"}]
+    areas = [{"type": "intervenible", "label": "Antejardín", "x_min": 0, "x_max": 2, "y_min": 0, "y_max": 10},
+             {"type": "intervenible", "label": "Patio", "x_min": 22, "x_max": 27, "y_min": 0, "y_max": 10}]
+    grid = {"pattern": "areas", "areas": ["Patio"], "spacing_x_m": 5, "spacing_y_m": 5}
+    llm = step(services, sent["run_id"], [
+        ("delegate_grid_designer", {"task": f"Terreno 27 × 10, malla en el patio (mensaje {sent['id']})"}),
+        designer(sent["id"], ("geometry.length_m", 27, "user"), ("geometry.width_m", 10, "user"),
+                 ("geometry.structures", building, "user"), ("geometry.areas", areas, "user"),
+                 ("geometry.conductors", grid, "user"), ("geometry.rods", {"pattern": "corners"}, "assumption")),
+        ("apply_changes", {"summary": "Malla en el patio"}),
+        ("respond_to_user", {"text": "Listo.", "waits_for": "nothing"}),
+    ])
+    design = tool_result(llm, 2)
+    assert design["errors"] == [] and design["resulting_geometry"]["warnings"] == []
+    artifact = artifacts(client, tokens, project)[0]
+    geometry = artifact["snapshot"]["geometry"]
+    xs = {c[k]["x"] for c in geometry["conductors"] for k in ("start", "end")}
+    assert xs == {22, 27} and len(geometry["conductors"]) == 5
+    assert {(r["x"], r["y"]) for r in geometry["rods"]} == {(22, 0), (22, 10), (27, 0), (27, 10)}
+    assert geometry["structures"][0]["label"] == "Edificio existente" and geometry["areas"] == areas
+    assert artifact["origin"]["provenance"]["geometry.conductors"]["kind"] == "user"
+
+
+def test_area_grid_needs_the_zone_when_there_are_several(chat):
+    services, client, tokens, project, conversation, _, _ = chat
+    sent = send(client, tokens, conversation, "Antejardín 2 × 10, edificio 20 × 10 y patio 5 × 10, malla cada 5 m")
+    areas = [{"type": "intervenible", "label": "Antejardín", "x_min": 0, "x_max": 2, "y_min": 0, "y_max": 10},
+             {"type": "intervenible", "label": "Patio", "x_min": 22, "x_max": 27, "y_min": 0, "y_max": 10}]
+    llm = step(services, sent["run_id"], [
+        ("delegate_grid_designer", {"task": f"Terreno 27 × 10 (mensaje {sent['id']})"}),
+        designer(sent["id"], ("geometry.length_m", 27, "user"), ("geometry.width_m", 10, "user"),
+                 ("geometry.areas", areas, "user"),
+                 ("geometry.conductors", {"pattern": "areas", "spacing_x_m": 5, "spacing_y_m": 5}, "user")),
+        designer(sent["id"], ("geometry.conductors", {"pattern": "areas", "areas": ["Patio"], "spacing_x_m": 5,
+                                                      "spacing_y_m": 5}, "assumption")),
+        ("apply_changes", {"summary": "Malla en el patio"}),
+        ("respond_to_user", {"text": "Usé el patio, el área más grande.", "waits_for": "nothing"}),
+    ])
+    first = tool_result(llm, 2)
+    assert any("say which one the grid uses" in error for error in first["errors"])
+    assert tool_result(llm, 3)["errors"] == []
+
+
 SPACINGS = [0.5, 1, 2, 3, 4, 6, 8, 12, 16, 24]
 
 

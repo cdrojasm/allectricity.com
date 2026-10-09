@@ -127,15 +127,18 @@ function ArtifactGrid({ geometry }) {
   const width = geometry.width_m;
   const { lines, rods } = gridPlan(geometry);
   const structures = geometry.structures || [];
+  const areas = geometry.areas || [];
   const scale = Math.min(380 / length, 240 / width);
   const w = length * scale, h = width * scale, x0 = (490 - w) / 2, y0 = (330 - h) / 2;
   // Plan y grows upward from the origin corner: draw it bottom-up.
   const px = (x, y) => [x0 + x * scale, y0 + h - y * scale];
   const rodNote = geometry.rods?.length ? "posiciones del artefacto" : "repartidas en el perímetro";
-  return <svg className="agent-grid-svg" viewBox="0 0 490 350" role="img" aria-label={`Malla de ${length} por ${width} m, ${gridDescription(geometry)}, ${rods.length} varillas y ${structures.length} elementos constructivos`}>
-    <rect x={x0} y={y0} width={w} height={h} fill="#f3f8f5" stroke="#cfe0d8" strokeDasharray="4 3"/>
-    {lines.map(([a, b], i) => { const [ax, ay] = px(...a), [bx, by] = px(...b); return <line key={i} x1={ax} y1={ay} x2={bx} y2={by} stroke="#2f7f72" strokeWidth="1.6" strokeLinecap="round"/>; })}
-    {structures.map((item, i) => { const [cx, cy] = px(item.x, item.y); return <rect key={`structure-${i}`} x={cx - item.width * scale / 2} y={cy - item.height * scale / 2} width={item.width * scale} height={item.height * scale} rx="2" fill="#e8d8c1" fillOpacity=".85" stroke="#a77643" strokeWidth="1.2"/>; })}
+  return <svg className="agent-grid-svg" viewBox="0 0 490 350" role="img" aria-label={`Terreno de ${length} por ${width} m, ${areas.length} zonas, ${gridDescription(geometry)}, ${rods.length} varillas y ${structures.length} elementos constructivos`}>
+    <defs><pattern id="artifact-grid-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#9aa0a3" strokeWidth="1.2"/></pattern></defs>
+    <rect x={x0} y={y0} width={w} height={h} fill="#fbfcfb" stroke="#b7c8c0" strokeDasharray="4 3"/>
+    {areas.map((area, i) => { const [ax, ay] = px(area.x_min, area.y_max), aw = (area.x_max - area.x_min) * scale, ah = (area.y_max - area.y_min) * scale, open = area.type === "intervenible"; return <g key={`area-${i}`}><rect x={ax} y={ay} width={aw} height={ah} fill={open ? "rgba(63,154,98,.16)" : "#e3e5e6"} stroke={open ? "#3f9a62" : "#7d8487"} strokeWidth="1"/>{!open && <rect x={ax} y={ay} width={aw} height={ah} fill="url(#artifact-grid-hatch)"/>}<text x={ax + aw / 2} y={ay + ah / 2 + 3} textAnchor="middle" fill={open ? "#2f5f43" : "#5f6d66"} fontSize="8.5" transform={aw < 50 && ah > aw ? `rotate(-90 ${ax + aw / 2} ${ay + ah / 2})` : undefined}>{area.label || (open ? "Área intervenible" : "No intervenible")}</text></g>; })}
+    {structures.map((item, i) => { const [cx, cy] = px(item.x, item.y), sx = cx - item.width * scale / 2, sy = cy - item.height * scale / 2; return <g key={`structure-${i}`}><rect x={sx} y={sy} width={item.width * scale} height={item.height * scale} rx="2" fill="#e3e5e6" stroke="#7d8487" strokeWidth="1.2"/><rect x={sx} y={sy} width={item.width * scale} height={item.height * scale} rx="2" fill="url(#artifact-grid-hatch)"/><text x={cx} y={cy - 2} textAnchor="middle" fill="#4f5a55" fontSize="9" fontWeight="600">{item.label || "Elemento constructivo"}</text><text x={cx} y={cy + 9} textAnchor="middle" fill="#5f6d66" fontSize="8">No intervenible</text></g>; })}
+    {lines.map(([a, b], i) => { const [ax, ay] = px(...a), [bx, by] = px(...b); return <line key={i} x1={ax} y1={ay} x2={bx} y2={by} stroke="#2563c9" strokeWidth="1.6" strokeLinecap="round"/>; })}
     {rods.map(([x, y], i) => { const [cx, cy] = px(x, y); return <circle key={i} cx={cx} cy={cy} r="4.5" fill="#c98a2b" stroke="#fff" strokeWidth="1.5"/>; })}
     <text x={x0 + w / 2} y={y0 + h + 22} textAnchor="middle" fill="#5f6f68" fontSize="11">{formatValue(length)} m (X)</text>
     <text x={x0 - 12} y={y0 + h / 2} textAnchor="middle" fill="#5f6f68" fontSize="11" transform={`rotate(-90 ${x0 - 12} ${y0 + h / 2})`}>{formatValue(width)} m (Y)</text>
@@ -145,6 +148,7 @@ function ArtifactGrid({ geometry }) {
 
 function AgentArtifactPanel({ project, conversation, token, refreshKey, onOpenGraph }) {
   const [artifact, setArtifact] = useState(null);
+  const [planWarnings, setPlanWarnings] = useState([]);
   const [error, setError] = useState("");
   const [evidenceSource, setEvidenceSource] = useState(null);
   useEffect(() => {
@@ -166,6 +170,14 @@ function AgentArtifactPanel({ project, conversation, token, refreshKey, onOpenGr
     return () => { live = false; };
   }, [project.id, conversation?.id, token, refreshKey]);
   const snapshot = artifact?.snapshot;
+  useEffect(() => {
+    if (!snapshot?.geometry) { setPlanWarnings([]); return undefined; }
+    let live = true;
+    // Saved geometry is always valid; the backend still reports warnings such as a split grid.
+    fetch(`/api/v1/projects/${project.id}/artefactos-diseno-tierras/geometria/validar`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ geometry: snapshot.geometry }) })
+      .then((r) => (r.ok ? r.json() : { warnings: [] })).then((check) => { if (live) setPlanWarnings(check.warnings || []); }).catch(() => {});
+    return () => { live = false; };
+  }, [project.id, token, artifact?.artifact_id, artifact?.version]);
   const provenance = artifact?.origin?.provenance || {};
   const soilSource = provenance.soil_layers;
   const soilNote = snapshot?.soil_measurements ? `${formatValue(snapshot.soil_measurements)}${soilSource?.kind === "tool" && soilSource.note ? ` · ${soilSource.note}` : ""}` : "";
@@ -173,7 +185,7 @@ function AgentArtifactPanel({ project, conversation, token, refreshKey, onOpenGr
   const openEvidence = (source) => setEvidenceSource(source);
   return <aside className="panel artifact-side-panel"><div className="panel-heading"><div><Box size={17}/><h2>Artefacto de puesta a tierra</h2></div>{artifact && <span className="muted-label">Versión {artifact.version}</span>}</div>
     {snapshot ? <>
-      {snapshot.geometry ? <div className="agent-grid-preview"><ArtifactGrid geometry={snapshot.geometry}/></div> : <div className="artifact-preview-empty"><Box size={22}/><strong>Sin malla todavía</strong><span>Pídele al agente la geometría, por ejemplo: «malla de 40 × 30 m con retícula de 5 m».</span></div>}
+      {snapshot.geometry ? <div className="agent-grid-preview"><ArtifactGrid geometry={snapshot.geometry}/>{planWarnings.map((warning, i) => <p key={i} className="artifact-update-warning">{warning.kind === "disconnected" ? `La malla tiene ${warning.parts} partes separadas: el cálculo las trata como un solo conductor, lo que solo es cierto si un conductor de unión las conecta.` : warning.message}</p>)}</div> : <div className="artifact-preview-empty"><Box size={22}/><strong>Sin malla todavía</strong><span>Pídele al agente la geometría, por ejemplo: «malla de 40 × 30 m con retícula de 5 m».</span></div>}
       <div className="artifact-status"><strong>{artifact.name}</strong><span>{origin} · {new Date(artifact.created_at * 1000).toLocaleString("es-CO")}</span></div>
       {artifact.draft_watermark && <div className="artifact-status agent-fails"><strong>{artifact.draft_watermark}</strong><span>Confirma los supuestos antes de presentar el estudio como final.</span></div>}
       {artifact.calculation_status && <div className={`artifact-status${artifact.calculation_status === "desactualizado" ? " agent-fails" : ""}`}><strong>Vigencia</strong><span>{calculationFreshnessLabels[artifact.calculation_status] || artifact.calculation_status}{artifact.calculation_version && artifact.calculation_status === "desactualizado" ? ` · cálculo de versión ${artifact.calculation_version}` : ""}</span></div>}
@@ -230,7 +242,7 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
   const [state, setState] = useState("loading");
   const [recalculating, setRecalculating] = useState(false);
   const [actionError, setActionError] = useState("");
-  const [solverConfig, setSolverConfig] = useState({ discretization_m: 1, segmentation: "graded", surface_spacing_m: 0.5, estimate_uncertainty: false, justification: "Discretización validada para la geometría actual y segmentación graduada en nodos críticos." });
+  const [solverConfig, setSolverConfig] = useState({ discretization_m: 1, segmentation: "graded", surface_spacing_m: 0.5, touch_reach_m: 0, estimate_uncertainty: false, justification: "Discretización validada para la geometría actual y segmentación graduada en nodos críticos." });
   useEffect(() => {
     if (!conversation) return undefined;
     let live = true;
@@ -260,14 +272,17 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
   }, [project.id, conversation?.id, token, refreshKey]);
   useEffect(() => {
     if (!calculation?.parameters) return;
-    setSolverConfig((current) => ({ ...current, ...Object.fromEntries(["discretization_m", "segmentation", "surface_spacing_m", "estimate_uncertainty", "justification"].filter((key) => calculation.parameters[key] !== undefined).map((key) => [key, calculation.parameters[key]])) }));
+    setSolverConfig((current) => ({ ...current, ...Object.fromEntries(["discretization_m", "segmentation", "surface_spacing_m", "touch_reach_m", "estimate_uncertainty", "justification"].filter((key) => calculation.parameters[key] !== undefined).map((key) => [key, calculation.parameters[key]])) }));
   }, [calculation?.id]);
   useEffect(() => {
     if (!calculation || !artifact || !["pending", "running"].includes(calculation.status)) return undefined;
     const timer = setInterval(async () => {
       try {
         const response = await fetch(`/api/v1/projects/${project.id}/artefactos-diseno-tierras/${artifact.artifact_id}/calculos-potencial/${calculation.id}`, { headers: { Authorization: `Bearer ${token}` } });
-        if (response.ok) setCalculation(await response.json());
+        if (!response.ok) return;
+        const next = await response.json();
+        setCalculation(next);
+        if (!["pending", "running"].includes(next.status)) setFreshness(null);
       } catch (_) { /* The next poll or the normal refresh can recover. */ }
     }, 1500);
     return () => clearInterval(timer);
@@ -277,7 +292,7 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
     if (solverConfig.justification.trim().length < 10) { setActionError("Escribe una justificación de al menos 10 caracteres para registrar la configuración."); return; }
     setRecalculating(true); setActionError("");
     try {
-      const response = await fetch(`/api/v1/projects/${project.id}/artefactos-diseno-tierras/${artifact.artifact_id}/versions/${artifact.version}/calculos-potencial`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ ...solverConfig, discretization_m: Number(solverConfig.discretization_m), surface_spacing_m: Number(solverConfig.surface_spacing_m), safety_standards: ["IEEE 80-2013"] }) });
+      const response = await fetch(`/api/v1/projects/${project.id}/artefactos-diseno-tierras/${artifact.artifact_id}/versions/${artifact.version}/calculos-potencial`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ ...solverConfig, discretization_m: Number(solverConfig.discretization_m), surface_spacing_m: Number(solverConfig.surface_spacing_m), touch_reach_m: Number(solverConfig.touch_reach_m), safety_standards: ["IEEE 80-2013"] }) });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.detail?.message || body.detail || "No se pudo iniciar el cálculo.");
       setCalculation(body); setFreshness("calculando"); setState("ready");
@@ -305,13 +320,14 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
       : calculation.status !== "completed" ? <div className="artifact-status"><strong>Cálculo {calculation.status === "pending" || calculation.status === "running" ? "en curso…" : calculation.status}</strong>{calculation.error && <span className="no-information">{calculation.error}</span>}</div>
       : <>
         {freshnessLabel && <div className="artifact-update-warning">{freshnessLabel} {recalculateButton}</div>}
-        <details className="solver-config-panel"><summary><Settings2 size={14}/> Configuración del solver</summary><div className="solver-config-grid"><label>Discretización (m)<select value={solverConfig.discretization_m} onChange={(event) => setSolverConfig((current) => ({ ...current, discretization_m: event.target.value }))}>{[0.25, 0.5, 1, 2, 5].map((value) => <option value={value} key={value}>{value}</option>)}</select></label><label>Segmentación<select value={solverConfig.segmentation} onChange={(event) => setSolverConfig((current) => ({ ...current, segmentation: event.target.value }))}><option value="graded">Graduada en nodos críticos</option><option value="uniform">Uniforme</option></select></label><label>Raster de superficie<select value={solverConfig.surface_spacing_m} onChange={(event) => setSolverConfig((current) => ({ ...current, surface_spacing_m: event.target.value }))}>{[0.25, 0.5, 1].map((value) => <option value={value} key={value}>{value} m</option>)}</select></label><label className="solver-config-check"><input type="checkbox" checked={solverConfig.estimate_uncertainty} onChange={(event) => setSolverConfig((current) => ({ ...current, estimate_uncertainty: event.target.checked }))}/> Estimar incertidumbre numérica</label><label className="solver-config-justification">Justificación registrada<textarea value={solverConfig.justification} maxLength={500} onChange={(event) => setSolverConfig((current) => ({ ...current, justification: event.target.value }))}/></label><small>Capas del modelo: {artifact?.snapshot?.soil_layers?.length || "pendientes en Entradas"}. La cantidad de capas se define en el modelador de suelo y se valida antes de calcular.</small></div></details>
+        <details className="solver-config-panel"><summary><Settings2 size={14}/> Configuración del solver</summary><div className="solver-config-grid"><label>Discretización (m)<select value={solverConfig.discretization_m} onChange={(event) => setSolverConfig((current) => ({ ...current, discretization_m: event.target.value }))}>{[0.25, 0.5, 1, 2, 5].map((value) => <option value={value} key={value}>{value}</option>)}</select></label><label>Segmentación<select value={solverConfig.segmentation} onChange={(event) => setSolverConfig((current) => ({ ...current, segmentation: event.target.value }))}><option value="graded">Graduada en nodos críticos</option><option value="uniform">Uniforme</option></select></label><label>Raster de superficie<select value={solverConfig.surface_spacing_m} onChange={(event) => setSolverConfig((current) => ({ ...current, surface_spacing_m: event.target.value }))}>{[0.25, 0.5, 1].map((value) => <option value={value} key={value}>{value} m</option>)}</select></label><label title="Margen alrededor de la malla donde se busca la tensión de contacto; 0 = dentro del perímetro (IEEE 80)">Alcance de contacto<select value={solverConfig.touch_reach_m} onChange={(event) => setSolverConfig((current) => ({ ...current, touch_reach_m: event.target.value }))}>{[0, 0.5, 1, 2].map((value) => <option value={value} key={value}>{value === 0 ? "Perímetro de la malla" : `${value} m fuera de la malla`}</option>)}</select></label><label className="solver-config-check"><input type="checkbox" checked={solverConfig.estimate_uncertainty} onChange={(event) => setSolverConfig((current) => ({ ...current, estimate_uncertainty: event.target.checked }))}/> Estimar incertidumbre numérica</label><label className="solver-config-justification">Justificación registrada<textarea value={solverConfig.justification} maxLength={500} onChange={(event) => setSolverConfig((current) => ({ ...current, justification: event.target.value }))}/></label><small>Capas del modelo: {artifact?.snapshot?.soil_layers?.length || "pendientes en Entradas"}. La cantidad de capas se define en el modelador de suelo y se valida antes de calcular.</small></div></details>
         <div className={`agent-verdict ${verdict}`}>{verdictLabels[verdict]}</div>
         <div className="result-interpretation"><div className="result-interpretation-title"><strong>Interpretación</strong><span>{interpretation.title}</span></div><div><small>Restricción dominante</small><strong>{interpretation.constraint}</strong></div><div><small>Por qué</small><span>{interpretation.explanation}</span></div><div className="result-interpretation-actions"><small>Siguiente acción</small>{interpretation.actions.map((action) => <button className="button" key={action} onClick={() => onSuggestion?.(action)}>{action}</button>)}</div></div>
         <div className="artifact-status"><strong>Malla</strong><span>R = {Number(result.grid_resistance_ohm).toLocaleString("es-CO", { maximumFractionDigits: 3 })} Ω · GPR = {value(result.gpr_v)} V · I = {value(result.injected_current_a)} A</span></div>
         {safety.map((standard) => <div className="artifact-status" key={standard.standard}><strong>{standard.standard}</strong>{(standard.criteria || []).map((c) => <span key={c.criterion} className={c.status === "cumple" ? "" : "agent-fails"}>{c.criterion === "touch" ? "Contacto" : "Paso"}: {value(c.actual_v)} V / {value(c.tolerable_v)} V tolerable ({(100 * c.margin_rel).toLocaleString("es-CO", { maximumFractionDigits: 1 })} %)</span>)}{standard.reason && <span className="no-information">{standard.reason}</span>}</div>)}
         {result.conductor_thermal && <div className="artifact-status"><strong>Conductor (térmico)</strong><span className={result.conductor_thermal.status === "cumple" ? "" : "agent-fails"}>Sección {value(result.conductor_thermal.selected_section_mm2)} mm² · mínima {value(result.conductor_thermal.minimum_section_mm2)} mm²</span></div>}
         {result.surface_potential && <div className="agent-grid-preview"><SurfacePotentialMap field={result.surface_potential}/></div>}
+        {result.surface_potential && <p className="no-information">Contacto evaluado sobre la malla ({value(result.surface_potential.grid_width_m)} × {value(result.surface_potential.grid_height_m)} m{Number(calculation.parameters?.touch_reach_m) > 0 ? `, ${calculation.parameters.touch_reach_m} m fuera del perímetro` : ", dentro del perímetro"}); paso en todo el terreno, salvo dentro de construcciones.</p>}
         {result.surface_potential && geometry && <button className="button primary agent-3d-button" onClick={() => setShow3d(true)}><Rotate3d size={15}/> Ver en 3D</button>}
         {show3d && <Suspense fallback={<div className="surface3d-backdrop"><div className="surface3d-loading">Cargando vista 3D…</div></div>}>
           <Surface3D calculation={calculation} onClose={() => setShow3d(false)} plan={{ ...gridPlan(geometry), length: geometry.length_m, width: geometry.width_m, burialDepth: geometry.burial_depth_m || 0.5, rodLength: geometry.rod_length_m || 2.4 }}/>

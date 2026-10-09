@@ -11,7 +11,8 @@ from zipfile import BadZipFile
 from src.application.use_cases import potential_calculations
 from src.domain.spat.artifact_contract import validate_artifact
 from src.domain.agent.patches import diff
-from src.domain.spat.grid_geometry import missing_for_calculation
+from src.domain.spat.grid_geometry import (MAX_CONDUCTORS, MAX_RODS, area_grid, geometry_conflicts, geometry_warnings,
+                                           missing_for_calculation)
 from src.domain.spat.plan_revisions import compare_plan_revisions
 from src.infrastructure.entrypoint.api.schemas import (GroundingArtifactRequest, PotentialCalculationRequest,
                                                        SoilFileImportRequest, SoilMeasurementsRequest)
@@ -54,6 +55,29 @@ class PlanVisionRequest(BaseModel):
 
 class PlanRevisionRequest(PlanVisionRequest):
     """A new construction-plan source to compare with the current artifact geometry."""
+
+
+class GeometryCheckRequest(BaseModel):
+    """A plan being edited, possibly invalid: it is checked, never stored."""
+    geometry: dict
+
+
+class AreaGridRequest(GeometryCheckRequest):
+    areas: list[str | int] = Field(default_factory=list, max_length=100,
+                                   description="Intervenible areas the grid uses (labels or indexes)")
+    spacing_x_m: float = Field(gt=0, le=1e4)
+    spacing_y_m: float = Field(gt=0, le=1e4)
+    bounds: dict[str, float] | None = Field(default=None, description="x_min, x_max, y_min, y_max inside the areas")
+
+
+def _plan_check(geometry: dict) -> dict:
+    for key, limit in (("conductors", MAX_CONDUCTORS), ("rods", MAX_RODS), ("structures", 500), ("areas", 100)):
+        if not isinstance(geometry.get(key) or [], list) or len(geometry.get(key) or []) > limit:
+            raise HTTPException(422, f"geometry.{key} must be a list of at most {limit} items")
+    try:
+        return {"conflicts": geometry_conflicts(geometry), "warnings": geometry_warnings(geometry)}
+    except (KeyError, TypeError, ValueError, ZeroDivisionError) as exc:
+        raise HTTPException(422, f"Malformed geometry: {exc}") from exc
 
 
 @router.post("/{artifact_id}/import-dxf")
@@ -231,6 +255,30 @@ def compare_plan_revision(project_id: str, artifact_id: str, version: int, paylo
             db.change("conversations", states[0]["id"], updated_at=now)
     return {"artifact_id": artifact_id, "version": version, "source_upload_id": payload.upload_id,
             "source_page": source_page, "proposal": proposal, **comparison}
+
+
+@router.post("/geometria/validar")
+def check_geometry(project_id: str, payload: GeometryCheckRequest, request: Request,
+                   actor=Depends(require("designs:read"))):
+    """Conflicts (collisions with structures and zones, drawing errors) and warnings of a plan being edited."""
+    with request.app.state.services.store.transaction() as db:
+        owned_project(db, project_id, actor)
+    return _plan_check(payload.geometry)
+
+
+@router.post("/geometria/malla-en-areas")
+def grid_in_areas(project_id: str, payload: AreaGridRequest, request: Request,
+                  actor=Depends(require("designs:read"))):
+    """Conductors of a regular grid inside the chosen intervenible areas, cut around obstacles."""
+    with request.app.state.services.store.transaction() as db:
+        owned_project(db, project_id, actor)
+    _plan_check(payload.geometry)
+    try:
+        conductors = area_grid(payload.geometry, payload.spacing_x_m, payload.spacing_y_m,
+                               payload.areas or None, payload.bounds)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"conductors": conductors, **_plan_check({**payload.geometry, "conductors": conductors})}
 
 
 @catalog_router.get("/materiales-suelo")

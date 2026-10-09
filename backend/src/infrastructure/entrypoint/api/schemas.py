@@ -111,6 +111,23 @@ class StructureRequest(PlanPoint):
     label: str | None = Field(default=None, max_length=160)
 
 
+class SiteAreaRequest(StrictRequestModel):
+    """Rectangular zone of the site: grid work is allowed (`intervenible`) or forbidden (`non_intervenible`)."""
+
+    type: Literal["intervenible", "non_intervenible"]
+    label: str | None = Field(default=None, max_length=160)
+    x_min: float = Field(ge=0, le=1e5)
+    x_max: float = Field(ge=0, le=1e5)
+    y_min: float = Field(ge=0, le=1e5)
+    y_max: float = Field(ge=0, le=1e5)
+
+    @model_validator(mode="after")
+    def bounds_are_ordered(self):
+        if self.x_max <= self.x_min or self.y_max <= self.y_min:
+            raise ValueError("an area needs x_min < x_max and y_min < y_max")
+        return self
+
+
 class PlanBackgroundRequest(StrictRequestModel):
     """Calibrated image/PDF page used only as a plan reference, never as solver geometry."""
     upload_id: str = Field(min_length=36, max_length=36)
@@ -127,10 +144,14 @@ class PlanBackgroundRequest(StrictRequestModel):
 
 
 class ArtifactGeometryRequest(StrictRequestModel):
-    """Plan of the artifact's grid: regular (spacing per axis) or drawn conductor by conductor."""
+    """Plan of the site and of its grid: regular (spacing per axis) or drawn conductor by conductor.
 
-    length_m: float = Field(gt=0, le=1e5)
-    width_m: float = Field(gt=0, le=1e5)
+    `length_m` × `width_m` is the site; the grid is a layer inside it, limited to the
+    intervenible `areas` when there are any and kept out of `structures` and non-intervenible areas.
+    """
+
+    length_m: float = Field(gt=0, le=1e5, description="Largo del terreno (X)")
+    width_m: float = Field(gt=0, le=1e5, description="Ancho del terreno (Y)")
     burial_depth_m: float = Field(default=0.5, gt=0)
     conductor_spacing_m: float | None = Field(default=None, gt=0, description="Retícula homogénea")
     conductor_spacing_x_m: float | None = Field(default=None, gt=0,
@@ -145,6 +166,11 @@ class ArtifactGeometryRequest(StrictRequestModel):
                                    description="Varillas en posiciones explícitas; reemplazan rods_count")
     structures: list[StructureRequest] = Field(default_factory=list, max_length=500,
                                                description="Elementos constructivos no atravesables")
+    snap_m: float | None = Field(default=None, gt=0, le=10,
+                                 description="Paso constructivo de las líneas generadas y del dibujo; por defecto 0,5 m")
+    areas: list[SiteAreaRequest] = Field(default_factory=list, max_length=100,
+                                         description="Zonas intervenibles (la malla debe quedar dentro) "
+                                                     "y no intervenibles (la malla no puede entrar)")
     background: PlanBackgroundRequest | None = Field(default=None, description="Plano de fondo calibrado")
 
     @model_validator(mode="after")
@@ -287,6 +313,9 @@ class PotentialCalculationRequest(BaseModel):
     estimate_uncertainty: bool = Field(default=False, description="Also solve with 2d and 4d and report the "
                                                                   "discretisation error of R, GPR, touch and step")
     surface_spacing_m: float = Field(default=0.5, description="Surface raster spacing for touch and step search")
+    touch_reach_m: float = Field(default=0.0, ge=0, le=5,
+                                 description="Margin around the grid's footprint where touch voltage is searched; "
+                                             "0 keeps the IEEE 80 search inside the grid perimeter")
     safety_standards: list[str] = Field(default_factory=lambda: [IEEE80_2013], min_length=1, max_length=5,
                                         description="Standards and editions to evaluate; never inferred")
     fault_split: FaultSplitRequest | None = Field(default=None, description="Current division S_f (IEEE 80 §15.9)")

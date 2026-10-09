@@ -26,7 +26,7 @@ from src.domain.spat.soundings import apparent_resistivity, missing_in_text
 from src.infrastructure.calculations.soil_sounding import fit_sounding
 from src.infrastructure.processing import measurement_tables
 from src.domain.spat.grid_geometry import (
-    clip_conductors, explicit_conductors, geometry_problems, missing_for_calculation, rod_layout,
+    area_grid, clip_conductors, geometry_warnings, explicit_conductors, geometry_problems, missing_for_calculation, rod_layout,
 )
 from src.domain.knowledge_graph.artifact_mapping import map_claims_to_artifact
 from src.domain.knowledge_graph.conflict_resolution import resolve_conflicts
@@ -243,8 +243,10 @@ class ArtifactWorkspace:
 
     def set_fields(self, args, allowed=None) -> dict:
         """Apply changes to the draft. `geometry.rods` also accepts a layout
-        {"pattern", "spacing_x_m", "spacing_y_m"} that is expanded on the updated grid."""
-        applied, errors, layouts = [], [], []
+        {"pattern", "spacing_x_m", "spacing_y_m"} that is expanded on the updated grid, and
+        `geometry.conductors` a grid inside chosen intervenible areas
+        {"pattern": "areas", "areas", "spacing_x_m", "spacing_y_m", "bounds"?} (see grid_in_areas)."""
+        applied, errors, layouts, grids = [], [], [], []
         for change in args.get("changes") or []:
             path, value = change.get("path"), change.get("value")
             try:
@@ -260,6 +262,9 @@ class ArtifactWorkspace:
             if path == "geometry.rods" and isinstance(value, dict):
                 layouts.append((value, entry))
                 continue
+            if path == "geometry.conductors" and isinstance(value, dict):
+                grids.append((value, entry))
+                continue
             section, _, field = path.partition(".")
             if field and section in FIELD_NAMES and field not in FIELD_NAMES[section]:
                 errors.append(f"{path}: unknown field; {section} has {sorted(FIELD_NAMES[section])}")
@@ -274,6 +279,13 @@ class ArtifactWorkspace:
             self.draft = candidate
             self.provenance[path] = entry
             applied.append(path)
+        for layout, entry in grids:  # before the rods, which are placed on the conductors
+            result = self.grid_in_areas(layout)
+            if "error" in result:
+                errors.append(f"geometry.conductors: {result['error']}")
+                continue
+            self.provenance["geometry.conductors"] = {**entry, "note": entry.get("note") or result["note"]}
+            applied.append("geometry.conductors")
         if not layouts and self.pending_layout and any(p.startswith("geometry.") for p in applied):
             layouts = [self.pending_layout]  # the grid changed: place the rods that could not be placed before
         for layout, entry in layouts:
@@ -331,6 +343,20 @@ class ArtifactWorkspace:
             return {"error": str(exc) or "Invalid zone"}
         zone = f"x {args['x_min']:g}–{args['x_max']:g} m, y {args['y_min']:g}–{args['y_max']:g} m"
         return self._set_conductors(clipped, f"clip_zone({zone})", f"Conductores interiores retirados en {zone}")
+
+    def grid_in_areas(self, args) -> dict:
+        """Draw a regular grid inside the chosen intervenible areas (or part of them)."""
+        geometry = self.draft.get("geometry") or {}
+        try:
+            conductors = area_grid(geometry, float(args["spacing_x_m"]), float(args["spacing_y_m"]),
+                                   args.get("areas") or None, args.get("bounds") or None)
+        except (KeyError, TypeError, ValueError, ZeroDivisionError) as exc:
+            return {"error": str(exc) or "Invalid spacing"}
+        spacing = f"{float(args['spacing_x_m']):g} × {float(args['spacing_y_m']):g} m"
+        where = ", ".join(str(a) for a in args.get("areas") or []) or "el área intervenible"
+        note = f"Retícula de {spacing} en {where}"
+        result = self._set_conductors(conductors, f"grid_in_areas({spacing}; {where})", note)
+        return {**result, "note": note, "warnings": [w["message"] for w in geometry_warnings(self.draft["geometry"])]}
 
     # Soil ---------------------------------------------------------------------------
 
@@ -508,6 +534,7 @@ class ArtifactWorkspace:
         except ValidationError as exc:
             return {"valid": False, "errors": _errors(exc)}
         return {"valid": True, "errors": [], "normalized": normalized,
+                "warnings": [w["message"] for w in geometry_warnings(normalized.get("geometry") or {})],
                 "unconfirmed_critical": unconfirmed_critical(normalized, self._provenance_for(normalized)),
                 "missing_for_calculation": missing_for_calculation(normalized)}
 
@@ -723,6 +750,13 @@ def run_grid_designer(client, prompts, workspace: ArtifactWorkspace, task: str, 
              runtime.tool("clip_zone", "Remove the conductor parts inside a rectangular zone of the plan, keeping the "
                           "zone's border (deterministic). Use it for 'remove the interior conductors of ...'.",
                           zone, list(zone)),
+             runtime.tool("grid_in_areas", "Redraw the grid inside the chosen intervenible areas of the draft, or "
+                          "inside `bounds` within them, skipping structures and non-intervenible areas (deterministic).",
+                          {"spacing_x_m": {"type": "number"}, "spacing_y_m": {"type": "number"},
+                           "areas": {"type": "array", "items": {"type": "string"},
+                                     "description": "Labels of the intervenible areas the grid uses"},
+                           "bounds": {"type": ["object", "null"], "properties": zone}},
+                          ["spacing_x_m", "spacing_y_m", "areas"]),
              submit]
     outcome = {}
 
@@ -741,7 +775,8 @@ def run_grid_designer(client, prompts, workspace: ArtifactWorkspace, task: str, 
 
     runtime.run_tool_agent(client, model_for("AGENT_GRID_DESIGNER_MODEL"), messages, tools,
                            {"get_draft": workspace.get_draft, "explode_grid": workspace.explode_grid,
-                            "clip_zone": workspace.clip_zone}, "submit_grid_design", finalize, usage,
+                            "clip_zone": workspace.clip_zone, "grid_in_areas": workspace.grid_in_areas},
+                           "submit_grid_design", finalize, usage,
                            max_rounds=DESIGNER_ROUNDS)
     assumptions = [path for path in outcome.get("applied", [])
                    if (workspace.provenance.get(path) or {}).get("kind") == "assumption"]
@@ -749,6 +784,9 @@ def run_grid_designer(client, prompts, workspace: ArtifactWorkspace, task: str, 
     summary = {key: geometry.get(key) for key in ("length_m", "width_m", "conductor_spacing_m", "conductor_spacing_x_m",
                                                    "conductor_spacing_y_m", "burial_depth_m", "rod_length_m")}
     summary.update(conductors=len(geometry.get("conductors") or []) or "regular grid",
+                   structures=[s.get("label") or "unnamed" for s in geometry.get("structures") or []],
+                   areas=[f"{a.get('type')}: {a.get('label') or 'unnamed'}" for a in geometry.get("areas") or []],
+                   warnings=[w["message"] for w in geometry_warnings(geometry)],
                    rods=len(geometry.get("rods") or []) or geometry.get("rods_count") or 0)
     if workspace.pending_layout:
         summary["rods_not_placed"] = workspace.pending_layout[0]

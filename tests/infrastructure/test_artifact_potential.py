@@ -191,6 +191,49 @@ def _artifact(client, tokens, snapshot):
     return base, artifact
 
 
+# A grid in the back yard (x 22-27 m) of a 27 x 10 m site whose building fills x 2-22 m.
+YARD_SITE = {"length_m": 27, "width_m": 10, "burial_depth_m": 0.5,
+             "structures": [{"x": 12, "y": 5, "width": 20, "height": 10, "label": "Edificio existente"}],
+             "areas": [{"type": "intervenible", "label": "Patio", "x_min": 22, "x_max": 27, "y_min": 0, "y_max": 10}],
+             "conductors": [{"start": {"x": 22, "y": y}, "end": {"x": 27, "y": y}} for y in (0, 5, 10)]
+             + [{"start": {"x": x, "y": 0}, "end": {"x": x, "y": 10}} for x in (22, 27)]}
+
+
+def test_touch_is_searched_over_the_grid_and_step_outside_structures(engine):
+    snapshot = {"name": "Patio", "geometry": YARD_SITE, "soil_layers": [{"resistivity_ohm_m": 100}],
+                "fault": {"current_a": 1000, "clearing_time_s": 0.5}}
+    result = calculate(snapshot, {**PARAMETERS, "surface_spacing_m": 1.0}, engine)["result"]
+    surface, touch = result["surface_potential"], result["max_touch_v"]
+    # Plan x 22-27 is -13.5..13.5 centred: the yard is 8.5..13.5; the raster starts 3 m before the site.
+    assert (surface["grid_x_m"], surface["grid_width_m"], surface["grid_height_m"]) == (25, 5, 10)
+    assert 8.5 - 1e-9 <= touch["x_m"] <= 13.5 + 1e-9 and -5 - 1e-9 <= touch["y_m"] <= 5 + 1e-9
+    for x, y in (result["max_step_v"]["from_m"], result["max_step_v"]["to_m"]):
+        assert not (-11.5 < x < 8.5 and -5 < y < 5)  # never inside the building
+    reach = calculate(snapshot, {**PARAMETERS, "surface_spacing_m": 1.0, "touch_reach_m": 1.0}, engine)["result"]
+    assert reach["surface_potential"]["grid_width_m"] == 7 and reach["max_touch_v"]["value"] >= touch["value"]
+
+
+def test_geometry_check_and_area_grid_endpoints(env):
+    _, _, client, _, tokens, _ = env
+    project = client.post("/api/v1/projects", json={"name": "Casa"}, headers=headers(tokens)).json()
+    base = f"/api/v1/projects/{project['id']}/artefactos-diseno-tierras/geometria"
+    site = {**YARD_SITE, "areas": [{"type": "intervenible", "label": "Antejardín", "x_min": 0, "x_max": 2,
+                                    "y_min": 0, "y_max": 10}, *YARD_SITE["areas"]]}
+    across = {**site, "conductors": [{"start": {"x": 0, "y": 5}, "end": {"x": 27, "y": 5}}]}
+    checked = client.post(f"{base}/validar", json={"geometry": across}, headers=headers(tokens)).json()
+    assert {(c["element"], c["index"], c["kind"]) for c in checked["conflicts"]} == {
+        ("conductor", 0, "crosses_obstacle"), ("conductor", 0, "outside_areas")}
+    grid = client.post(f"{base}/malla-en-areas", json={"geometry": site, "areas": ["Patio"], "spacing_x_m": 5,
+                                                       "spacing_y_m": 5}, headers=headers(tokens)).json()
+    assert len(grid["conductors"]) == 5 and grid["conflicts"] == [] and grid["warnings"] == []
+    missing = client.post(f"{base}/malla-en-areas", json={"geometry": site, "spacing_x_m": 5, "spacing_y_m": 5},
+                          headers=headers(tokens))
+    assert missing.status_code == 422 and "say which one" in missing.json()["detail"]
+    malformed = client.post(f"{base}/validar", json={"geometry": {"length_m": 10, "width_m": 10, "conductors": "x"}},
+                            headers=headers(tokens))
+    assert malformed.status_code == 422
+
+
 def test_artifact_api_rejects_unknown_fields(env):
     _, _, client, _, tokens, _ = env
     project = client.post("/api/v1/projects", json={"name": "Subestación"}, headers=headers(tokens)).json()
@@ -215,7 +258,8 @@ def test_calculation_lifecycle_through_api(env, engine, monkeypatch):  # noqa: F
     assert calculation["parameters"] == {**PARAMETERS, "justification": "Configuración predeterminada validada por el motor.", "surface_spacing_m": 1.0,
                                          "safety_standards": ["IEEE 80-2013", "RETIE 2013"], "fault_split": None,
                                          "x_over_r": None, "system_frequency_hz": 60.0,
-                                         "segmentation": "graded", "estimate_uncertainty": False}
+                                         "segmentation": "graded", "estimate_uncertainty": False,
+                                             "touch_reach_m": 0.0}
 
     run_potential_calculation(services.store, calculation["id"], engine)
     run_potential_calculation(services.store, calculation["id"], engine)  # redelivery is a no-op

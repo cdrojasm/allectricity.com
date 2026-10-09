@@ -1,15 +1,20 @@
-"""Plan geometry of the artifact's grounding grid.
+"""Plan geometry of the artifact's site and grounding grid.
 
-Coordinates are in metres on the plan, with the origin at one corner of the grid outline:
-0 <= x <= length_m and 0 <= y <= width_m. A grid is either regular (conductors every
+Coordinates are in metres on the plan, with the origin at one corner of the site:
+0 <= x <= length_m and 0 <= y <= width_m. The site may be divided into rectangular `areas`:
+when any is `intervenible`, the grid must stay inside them; `non_intervenible` areas and
+`structures` (existing buildings, foundations...) cannot be crossed. Areas are available space:
+the grid may use one of them, or part of one. A grid is either regular (conductors every
 `conductor_spacing_x_m` along X and every `conductor_spacing_y_m` along Y; both fall back to
 `conductor_spacing_m`) or drawn conductor by conductor (`conductors`). Rods are either spread
 along the perimeter (`rods_count`) or placed explicitly (`rods`), and must touch a conductor.
 """
 
-from math import ceil, hypot
+from collections import defaultdict
+from math import ceil, floor, hypot
 
 TOLERANCE_M = 1e-3
+DEFAULT_SNAP_M = 0.5  # construction step for generated lines when geometry.snap_m is not set
 MAX_CONDUCTORS = 400
 MAX_RODS = 500
 Line = tuple[tuple[float, float], tuple[float, float]]
@@ -40,6 +45,13 @@ def conductor_lines(geometry: dict) -> list[Line]:
     return along_x + along_y
 
 
+def footprint(geometry: dict) -> tuple[float, float, float, float]:
+    """Bounding box (x_min, x_max, y_min, y_max) of the conductors: the part of the site the grid occupies."""
+    points = [p for line in conductor_lines(geometry) for p in line]
+    xs, ys = [p[0] for p in points], [p[1] for p in points]
+    return min(xs), max(xs), min(ys), max(ys)
+
+
 def perimeter_rods(count: int, length: float, width: float) -> list[tuple[float, float]]:
     """Rods spread evenly along the outline from the origin corner (engine rule)."""
     perimeter = 2.0 * (length + width)
@@ -65,6 +77,150 @@ def rod_points(geometry: dict) -> list[tuple[float, float, float]]:
             perimeter_rods(int(geometry.get("rods_count") or 0), float(geometry["length_m"]), float(geometry["width_m"]))]
 
 
+def site_areas(geometry: dict, kind: str) -> list[dict]:
+    """Areas of one type (`intervenible` or `non_intervenible`)."""
+    return [area for area in geometry.get("areas") or [] if area.get("type") == kind]
+
+
+def _area_rect(area: dict) -> dict:
+    """An area as a structure-like rectangle (centre and size)."""
+    x_min, x_max, y_min, y_max = (float(area[k]) for k in ("x_min", "x_max", "y_min", "y_max"))
+    return {"x": (x_min + x_max) / 2, "y": (y_min + y_max) / 2, "width": x_max - x_min, "height": y_max - y_min,
+            "label": area.get("label")}
+
+
+def obstacles(geometry: dict) -> list[tuple[str, dict, dict]]:
+    """Every rectangle the grid cannot enter: (name used in messages, rectangle, reference)."""
+    named = [(f"structure [{i}]", s, {"kind": "structure", "index": i, "label": s.get("label")})
+             for i, s in enumerate(geometry.get("structures") or [])]
+    named += [(f"non-intervenible area [{i}]" + (f" ({a['label']})" if a.get("label") else ""), _area_rect(a),
+               {"kind": "area", "index": i, "label": a.get("label")})
+              for i, a in enumerate(geometry.get("areas") or []) if a.get("type") == "non_intervenible"]
+    return named
+
+
+def _point_in_area(x: float, y: float, area: dict) -> bool:
+    return (float(area["x_min"]) - TOLERANCE_M <= x <= float(area["x_max"]) + TOLERANCE_M
+            and float(area["y_min"]) - TOLERANCE_M <= y <= float(area["y_max"]) + TOLERANCE_M)
+
+
+def _segment_within_areas(line: Line, areas: list[dict]) -> bool:
+    """True when every point of the conductor lies in some area (borders included)."""
+    (x1, y1), (x2, y2) = line
+    dx, dy = x2 - x1, y2 - y1
+    length = hypot(dx, dy)
+    if length < TOLERANCE_M:
+        return any(_point_in_area(x1, y1, area) for area in areas)
+    intervals = []
+    for area in areas:
+        t0, t1 = 0.0, 1.0
+        for p, q in ((-dx, x1 - float(area["x_min"]) + TOLERANCE_M), (dx, float(area["x_max"]) + TOLERANCE_M - x1),
+                     (-dy, y1 - float(area["y_min"]) + TOLERANCE_M), (dy, float(area["y_max"]) + TOLERANCE_M - y1)):
+            if abs(p) < 1e-12:
+                if q < 0:
+                    t0, t1 = 1.0, 0.0
+                continue
+            t = q / p
+            if p < 0:
+                t0 = max(t0, t)
+            else:
+                t1 = min(t1, t)
+        if t1 >= t0:
+            intervals.append((t0, t1))
+    reach, slack = 0.0, TOLERANCE_M / length
+    for t0, t1 in sorted(intervals):
+        if t0 > reach + slack:
+            return False
+        reach = max(reach, t1)
+    return reach >= 1.0 - slack
+
+
+def _merge_spans(spans: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    merged = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1] + TOLERANCE_M:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def snapped_positions(start: float, end: float, spacing: float, snap: float) -> list[float]:
+    """Lines from `start` to `end` never further apart than `spacing`, interior ones on multiples of `snap`.
+
+    The ends stay where they are (they are the zone's border); the interior lines are rounded to
+    the construction step and more lines are added if rounding opened a gap wider than `spacing`.
+    """
+    span = end - start
+    count = max(2, int(ceil(span / spacing - 1e-9)) + 1)
+    while True:
+        interior = {round(floor((start + i * span / (count - 1)) / snap + 0.5) * snap, 6) for i in range(1, count - 1)}
+        points = sorted({round(start, 6), round(end, 6)} | {p for p in interior if start + TOLERANCE_M < p < end - TOLERANCE_M})
+        if all(b - a <= spacing + TOLERANCE_M for a, b in zip(points, points[1:])) or count > span / snap + 2:
+            return points
+        count += 1
+
+
+def _select_areas(geometry: dict, names: list | None) -> list[dict]:
+    areas = site_areas(geometry, "intervenible")
+    if not areas:
+        raise ValueError("define the intervenible areas (geometry.areas) first")
+    if not names:
+        if len(areas) > 1:
+            labels = ", ".join(repr(a.get("label") or i) for i, a in enumerate(areas))
+            raise ValueError(f"the site has {len(areas)} intervenible areas ({labels}); say which one the grid uses")
+        return areas
+    chosen = []
+    for name in names:
+        match = [a for i, a in enumerate(areas)
+                 if (isinstance(name, int) and name == i) or str(a.get("label") or "").casefold() == str(name).casefold()]
+        if not match:
+            raise ValueError(f"no intervenible area called {name!r}")
+        chosen += [a for a in match if a not in chosen]
+    return chosen
+
+
+def area_grid(geometry: dict, spacing_x_m: float, spacing_y_m: float, areas: list | None = None,
+              bounds: dict | None = None) -> list[dict]:
+    """A regular grid inside the chosen intervenible areas, as explicit conductors.
+
+    Areas are available space, not space to fill: `areas` names the ones the grid uses (labels or
+    indexes among the intervenible areas; optional only when there is one), and `bounds`
+    ({x_min, x_max, y_min, y_max}) limits the grid to a part of them. Each piece gets its own
+    lattice with its border as outline and interior lines on multiples of `geometry.snap_m`; lines
+    shared by neighbouring pieces are merged, and the parts that would run through structures or
+    non-intervenible areas are removed.
+    """
+    if not (spacing_x_m and spacing_y_m and spacing_x_m > 0 and spacing_y_m > 0):
+        raise ValueError("the area grid needs spacing_x_m and spacing_y_m")
+    snap = float(geometry.get("snap_m") or DEFAULT_SNAP_M)
+    pieces = []
+    for area in _select_areas(geometry, areas):
+        x_min, x_max, y_min, y_max = (float(area[k]) for k in ("x_min", "x_max", "y_min", "y_max"))
+        if bounds:
+            x_min, x_max = max(x_min, float(bounds["x_min"])), min(x_max, float(bounds["x_max"]))
+            y_min, y_max = max(y_min, float(bounds["y_min"])), min(y_max, float(bounds["y_max"]))
+        if x_max - x_min > TOLERANCE_M and y_max - y_min > TOLERANCE_M:
+            pieces.append((x_min, x_max, y_min, y_max))
+    if not pieces:
+        raise ValueError("the bounds leave no room inside the chosen areas")
+    along_x, along_y = defaultdict(list), defaultdict(list)
+    for x_min, x_max, y_min, y_max in pieces:
+        for y in snapped_positions(y_min, y_max, spacing_y_m, snap):
+            along_x[y].append((x_min, x_max))
+        for x in snapped_positions(x_min, x_max, spacing_x_m, snap):
+            along_y[x].append((y_min, y_max))
+    conductors = [{"start": {"x": round(a, 6), "y": y}, "end": {"x": round(b, 6), "y": y}}
+                  for y, spans in sorted(along_x.items()) for a, b in _merge_spans(spans)]
+    conductors += [{"start": {"x": x, "y": round(a, 6)}, "end": {"x": x, "y": round(b, 6)}}
+                   for x, spans in sorted(along_y.items()) for a, b in _merge_spans(spans)]
+    for _, rect, _ in obstacles(geometry):
+        half_w, half_h = float(rect["width"]) / 2, float(rect["height"]) / 2
+        conductors = clip_conductors(conductors, float(rect["x"]) - half_w, float(rect["x"]) + half_w,
+                                     float(rect["y"]) - half_h, float(rect["y"]) + half_h)
+    return conductors
+
+
 def rod_layout(pattern: str, geometry: dict, spacing_x_m: float | None = None,
                spacing_y_m: float | None = None, count: int | None = None) -> list[dict]:
     """Rod positions for a named pattern on the grid (`corners`, `perimeter_nodes`, `grid_nodes`,
@@ -74,7 +230,14 @@ def rod_layout(pattern: str, geometry: dict, spacing_x_m: float | None = None,
     if pattern == "count":
         return _spread_rods(geometry, count)
     if pattern == "corners":
-        points = [(0.0, 0.0), (length, 0.0), (length, width), (0.0, width)]
+        areas = site_areas(geometry, "intervenible")
+        if areas:  # the corners of the intervenible areas the grid uses, not of the site
+            lines = conductor_lines(geometry)
+            points = sorted(p for p in {(float(a[x]), float(a[y])) for a in areas
+                                        for x in ("x_min", "x_max") for y in ("y_min", "y_max")}
+                            if any(_point_segment_distance(p, line) <= TOLERANCE_M for line in lines))
+        else:
+            points = [(0.0, 0.0), (length, 0.0), (length, width), (0.0, width)]
     elif pattern in {"perimeter_nodes", "grid_nodes", "lattice", "lattice_perimeter"}:
         if pattern.startswith("lattice"):
             if not (spacing_x_m and spacing_y_m and spacing_x_m > 0 and spacing_y_m > 0):
@@ -242,26 +405,54 @@ def _collinear_overlap(a: Line, b: Line) -> bool:
     return min(length, project[1]) - max(0.0, project[0]) > TOLERANCE_M
 
 
-def geometry_problems(geometry: dict) -> list[str]:
-    """Plan errors that make the grid unbuildable or impossible to calculate."""
+def _conflict(element: str, index: int | None, kind: str, message: str, obstacle: dict | None = None,
+              other: int | None = None) -> dict:
+    return {"element": element, "index": index, "kind": kind, "message": message, "obstacle": obstacle, "other": other}
+
+
+def geometry_conflicts(geometry: dict) -> list[dict]:
+    """Plan errors that make the grid unbuildable or impossible to calculate, one per element.
+
+    Each conflict names the element (`geometry`, `area`, `structure`, `conductor` or `rod`) and its
+    index, a `kind` and, for collisions, the `obstacle` it collides with ({"kind", "index", "label"}).
+    """
     length, width = geometry.get("length_m"), geometry.get("width_m")
     if not all(isinstance(v, (int, float)) and v > 0 for v in (length, width)):
-        return ["geometry.length_m and geometry.width_m must be positive"]
-    problems = []
+        return [_conflict("geometry", None, "site", "geometry.length_m and geometry.width_m must be positive")]
+    conflicts = []
     if not geometry.get("conductors"):
         spacing_x, spacing_y = spacings(geometry)
         if not spacing_x or not spacing_y:
-            return ["geometry needs conductor_spacing_m (or conductor_spacing_x_m and conductor_spacing_y_m) "
-                    "or explicit conductors"]
+            return [_conflict("geometry", None, "spacing",
+                              "geometry needs conductor_spacing_m (or conductor_spacing_x_m and conductor_spacing_y_m) "
+                              "or explicit conductors")]
         if spacing_x > length + TOLERANCE_M:
-            problems.append("geometry.conductor_spacing_x_m must not exceed length_m")
+            conflicts.append(_conflict("geometry", None, "spacing", "geometry.conductor_spacing_x_m must not exceed length_m"))
         if spacing_y > width + TOLERANCE_M:
-            problems.append("geometry.conductor_spacing_y_m must not exceed width_m")
-        if problems:
-            return problems
+            conflicts.append(_conflict("geometry", None, "spacing", "geometry.conductor_spacing_y_m must not exceed width_m"))
+        if conflicts:
+            return conflicts
+    for area_index, area in enumerate(geometry.get("areas") or []):
+        x_min, x_max, y_min, y_max = (area.get(k) for k in ("x_min", "x_max", "y_min", "y_max"))
+        if not all(isinstance(v, (int, float)) for v in (x_min, x_max, y_min, y_max)) or x_max <= x_min or y_max <= y_min:
+            conflicts.append(_conflict("area", area_index, "bounds",
+                                       f"geometry.areas[{area_index}] needs x_min < x_max and y_min < y_max"))
+        elif x_min < -TOLERANCE_M or y_min < -TOLERANCE_M or x_max > length + TOLERANCE_M or y_max > width + TOLERANCE_M:
+            conflicts.append(_conflict("area", area_index, "outside_site",
+                                       f"geometry.areas[{area_index}] leaves the site (0..{length:g} x 0..{width:g} m)"))
+    if conflicts:
+        return conflicts
+    allowed = site_areas(geometry, "intervenible")
+    blocked = obstacles(geometry)
+    explicit = bool(geometry.get("conductors"))
+    if allowed and not explicit:
+        conflicts.append(_conflict("geometry", None, "regular_grid_over_areas",
+                                   "the regular grid covers the whole site but the site has intervenible areas; "
+                                   "draw the grid inside them (explicit conductors, for example with grid_in_areas)"))
     lines = conductor_lines(geometry)
     if len(lines) > MAX_CONDUCTORS:
-        problems.append(f"the grid has {len(lines)} conductors; the limit is {MAX_CONDUCTORS}")
+        conflicts.append(_conflict("geometry", None, "limit",
+                                   f"the grid has {len(lines)} conductors; the limit is {MAX_CONDUCTORS}"))
 
     def inside(x, y):
         return -TOLERANCE_M <= x <= length + TOLERANCE_M and -TOLERANCE_M <= y <= width + TOLERANCE_M
@@ -269,32 +460,77 @@ def geometry_problems(geometry: dict) -> list[str]:
     for index, line in enumerate(lines):
         (x1, y1), (x2, y2) = line
         if not (inside(x1, y1) and inside(x2, y2)):
-            problems.append(f"geometry.conductors[{index}] leaves the grid outline (0..{length:g} x 0..{width:g} m)")
+            conflicts.append(_conflict("conductor", index, "outside_site",
+                                       f"geometry.conductors[{index}] leaves the grid outline (0..{length:g} x 0..{width:g} m)"))
         if hypot(x2 - x1, y2 - y1) < TOLERANCE_M:
-            problems.append(f"geometry.conductors[{index}] has zero length")
-        for structure_index, structure in enumerate(geometry.get("structures") or []):
-            if _segment_crosses_structure(line, structure):
-                problems.append(f"geometry.conductors[{index}] crosses structure [{structure_index}]")
-    if geometry.get("conductors"):
+            conflicts.append(_conflict("conductor", index, "zero_length", f"geometry.conductors[{index}] has zero length"))
+        for name, rect, ref in blocked:
+            if _segment_crosses_structure(line, rect):
+                conflicts.append(_conflict("conductor", index, "crosses_obstacle",
+                                           f"geometry.conductors[{index}] crosses {name}", ref))
+        if allowed and explicit and not _segment_within_areas(line, allowed):
+            conflicts.append(_conflict("conductor", index, "outside_areas",
+                                       f"geometry.conductors[{index}] leaves the intervenible areas"))
+    if explicit:
         for i, a in enumerate(lines):
             for j in range(i + 1, len(lines)):
                 if hypot(a[1][0] - a[0][0], a[1][1] - a[0][1]) >= TOLERANCE_M and _collinear_overlap(a, lines[j]):
-                    problems.append(f"geometry.conductors[{i}] and [{j}] overlap")
+                    conflicts.append(_conflict("conductor", i, "overlap", f"geometry.conductors[{i}] and [{j}] overlap",
+                                               other=j))
     rods = rod_points(geometry)
     if len(rods) > MAX_RODS:
-        problems.append(f"the grid has {len(rods)} rods; the limit is {MAX_RODS}")
+        conflicts.append(_conflict("geometry", None, "limit", f"the grid has {len(rods)} rods; the limit is {MAX_RODS}"))
     for index, (x, y, _) in enumerate(rods):
         if not any(_point_segment_distance((x, y), line) <= TOLERANCE_M for line in lines):
-            problems.append(f"geometry.rods[{index}] at ({x:g}, {y:g}) does not touch any conductor")
-        for structure_index, structure in enumerate(geometry.get("structures") or []):
-            if _point_in_structure(x, y, structure):
-                problems.append(f"geometry.rods[{index}] is inside structure [{structure_index}]")
+            conflicts.append(_conflict("rod", index, "not_on_conductor",
+                                       f"geometry.rods[{index}] at ({x:g}, {y:g}) does not touch any conductor"))
+        for name, rect, ref in blocked:
+            if _point_in_structure(x, y, rect):
+                conflicts.append(_conflict("rod", index, "inside_obstacle", f"geometry.rods[{index}] is inside {name}", ref))
+        if allowed and not any(_point_in_area(x, y, area) for area in allowed):
+            conflicts.append(_conflict("rod", index, "outside_areas",
+                                       f"geometry.rods[{index}] at ({x:g}, {y:g}) is outside the intervenible areas"))
     for structure_index, structure in enumerate(geometry.get("structures") or []):
         half_w, half_h = float(structure["width"]) / 2, float(structure["height"]) / 2
         if not (-TOLERANCE_M <= structure["x"] - half_w and structure["x"] + half_w <= length + TOLERANCE_M
                 and -TOLERANCE_M <= structure["y"] - half_h and structure["y"] + half_h <= width + TOLERANCE_M):
-            problems.append(f"geometry.structures[{structure_index}] leaves the grid outline")
-    return problems
+            conflicts.append(_conflict("structure", structure_index, "outside_site",
+                                       f"geometry.structures[{structure_index}] leaves the grid outline"))
+    return conflicts
+
+
+def geometry_problems(geometry: dict) -> list[str]:
+    """Plan errors as messages (see geometry_conflicts)."""
+    return [conflict["message"] for conflict in geometry_conflicts(geometry)]
+
+
+def grid_parts(geometry: dict) -> int:
+    """Number of electrically separate pieces of the grid (conductors that touch are joined)."""
+    pieces = split_lines(conductor_lines(geometry), [])
+    parent = {}
+
+    def find(p):
+        while parent.setdefault(p, p) != p:
+            parent[p] = parent[parent[p]]
+            p = parent[p]
+        return p
+
+    for a, b in pieces:
+        parent[find((round(a[0], 4), round(a[1], 4)))] = find((round(b[0], 4), round(b[1], 4)))
+    return len({find(p) for p in list(parent)})
+
+
+def geometry_warnings(geometry: dict) -> list[dict]:
+    """Things a valid plan may still get wrong; they never block saving or calculating."""
+    try:
+        parts = grid_parts(geometry)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return []
+    if parts > 1:
+        return [{"kind": "disconnected", "parts": parts,
+                 "message": f"the grid has {parts} separate parts; the calculation treats them as one conductor, "
+                            "which holds only if a bonding conductor joins them"}]
+    return []
 
 
 def split_lines(lines: list[Line], nodes: list[tuple[float, float]]) -> list[Line]:
