@@ -253,11 +253,50 @@ def default_grounding_compliance():
     ]
 
 
+class BuildingRequest(StrictRequestModel):
+    """A building's result grouping, linked many-to-many to networks and electrodes."""
+
+    id: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=160)
+    network_ids: list[str] = Field(default_factory=list, max_length=100)
+    electrode_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
+class GroundingNetworkRequest(StrictRequestModel):
+    id: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=160)
+    geometry: ArtifactGeometryRequest
+
+
+class ElectricalConnectionRequest(StrictRequestModel):
+    id: str = Field(min_length=1, max_length=100)
+    kind: Literal["bond", "resistor"]
+    group_a: str = Field(min_length=1, max_length=100)
+    group_b: str = Field(min_length=1, max_length=100)
+    resistance_ohm: float | None = Field(default=None, ge=1e-9, le=1e9)
+
+    @model_validator(mode="after")
+    def resistance_matches_kind(self):
+        if self.group_a == self.group_b:
+            raise ValueError("an electrical connection must join two different entities")
+        if self.kind == "bond" and self.resistance_ohm is not None:
+            raise ValueError("an ideal bond cannot specify resistance_ohm")
+        if self.kind == "resistor" and self.resistance_ohm is None:
+            raise ValueError("a resistor connection requires resistance_ohm")
+        return self
+
+
+class ElectrodeRequest(StrictRequestModel):
+    id: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=160)
+    geometry: ArtifactGeometryRequest
+
+
 class GroundingArtifactRequest(StrictRequestModel):
     """A version of the design. The grid, the soil or the fault data may be missing while the
     design is built up in any order; the potential calculation refuses an incomplete artifact."""
 
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["1.0", "2.0"] = "1.0"
     name: str = Field(min_length=1, max_length=160)
     geometry: ArtifactGeometryRequest | None = None
     soil_layers: list[ArtifactSoilLayerRequest] = Field(default_factory=list, max_length=8)
@@ -267,6 +306,37 @@ class GroundingArtifactRequest(StrictRequestModel):
     conductor: GroundingConductorRequest = Field(default_factory=GroundingConductorRequest)
     compliance: list[ComplianceStandard] = Field(default_factory=default_grounding_compliance, max_length=30,
                                                  validate_default=True)
+    buildings: list[BuildingRequest] = Field(default_factory=list, max_length=500)
+    networks: list[GroundingNetworkRequest] = Field(default_factory=list, max_length=500)
+    electrodes: list[ElectrodeRequest] = Field(default_factory=list, max_length=500)
+    connections: list[ElectricalConnectionRequest] = Field(default_factory=list, max_length=100000)
+
+    @model_validator(mode="after")
+    def entities_match_schema_version(self):
+        if self.schema_version == "1.0" and (self.buildings or self.networks or self.electrodes or self.connections):
+            raise ValueError("buildings, networks, electrodes and connections require schema_version 2.0")
+        if self.schema_version == "2.0" and self.geometry is not None:
+            raise ValueError("schema_version 2.0 stores geometry under networks/electrodes")
+        for field_name in ("buildings", "networks", "electrodes"):
+            items = getattr(self, field_name)
+            ids = [item.id for item in items]
+            if len(ids) != len(set(ids)):
+                raise ValueError(f"{field_name} ids must be unique")
+        network_ids = {item.id for item in self.networks}
+        electrode_ids = {item.id for item in self.electrodes}
+        connection_ids = [item.id for item in self.connections]
+        if len(connection_ids) != len(set(connection_ids)):
+            raise ValueError("electrical connection ids must be unique")
+        entity_ids = network_ids | electrode_ids
+        for connection in self.connections:
+            if connection.group_a not in entity_ids or connection.group_b not in entity_ids:
+                raise ValueError(f"connection {connection.id!r} references an unknown network or electrode")
+        for building in self.buildings:
+            if not set(building.network_ids) <= network_ids:
+                raise ValueError(f"building {building.id!r} references an unknown network")
+            if not set(building.electrode_ids) <= electrode_ids:
+                raise ValueError(f"building {building.id!r} references an unknown electrode")
+        return self
 
 
 class ReturnPathRequest(BaseModel):
@@ -321,6 +391,10 @@ class PotentialCalculationRequest(BaseModel):
     fault_split: FaultSplitRequest | None = Field(default=None, description="Current division S_f (IEEE 80 §15.9)")
     x_over_r: float | None = Field(default=None, ge=0, le=100, description="Source X/R for the decrement factor D_f")
     system_frequency_hz: float = Field(default=60.0, description="50 or 60 Hz, for D_f")
+    scenarios: list["PotentialExcitationScenario"] = Field(
+        default_factory=list, max_length=100,
+        description="Named signed current injections for a joint 2.0 network calculation",
+    )
 
     @model_validator(mode="after")
     def raster_spacing_divides_step_distance(self):
@@ -331,6 +405,24 @@ class PotentialCalculationRequest(BaseModel):
             raise ValueError(f"Unsupported safety standards: {unknown}; options: {list(SUPPORTED_STANDARDS)}")
         if self.system_frequency_hz not in (50.0, 60.0):
             raise ValueError("system_frequency_hz must be 50 or 60")
+        scenario_ids = [scenario.id for scenario in self.scenarios]
+        if len(scenario_ids) != len(set(scenario_ids)):
+            raise ValueError("scenario ids must be unique")
+        if self.scenarios and (self.fault_split is not None or self.x_over_r is not None):
+            raise ValueError("scenario injections must already include current division and decrement factors")
+        return self
+
+
+class PotentialExcitationScenario(StrictRequestModel):
+    id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.:-]+$")
+    injections_a: dict[str, float] = Field(min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def finite_injections(self):
+        if any(not key or len(key) > 100 for key in self.injections_a):
+            raise ValueError("scenario entity ids must contain 1 to 100 characters")
+        if any(not (-1e6 <= value <= 1e6) for value in self.injections_a.values()):
+            raise ValueError("scenario current magnitudes must not exceed 1e6 A")
         return self
 
 

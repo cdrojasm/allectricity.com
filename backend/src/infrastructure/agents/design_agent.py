@@ -531,6 +531,11 @@ class ArtifactWorkspace:
     def validate(self, _args=None) -> dict:
         try:
             normalized = GroundingArtifactRequest.model_validate(self.draft).model_dump(mode="json")
+            if normalized.get("schema_version") == "1.0":
+                for key in ("buildings", "networks", "electrodes"):
+                    normalized.pop(key, None)
+            else:
+                normalized.pop("geometry", None)
         except ValidationError as exc:
             return {"valid": False, "errors": _errors(exc)}
         return {"valid": True, "errors": [], "normalized": normalized,

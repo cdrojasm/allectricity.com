@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:spat:schema:calculation-result:2.0",
+  "title": "SPAT entity-based potential calculation result",
+  "type": "object",
+  "required": ["schema_version", "soil", "injected_current_a", "networks", "electrodes", "buildings", "warnings"],
+  "properties": {
+    "schema_version": {"const": "2.0"},
+    "soil": {"type": "object"},
+    "injected_current_a": {"type": "number", "exclusiveMinimum": 0},
+    "networks": {"type": "object", "additionalProperties": {"$ref": "#/$defs/entity_result"}},
+    "electrodes": {"type": "object", "additionalProperties": {"$ref": "#/$defs/entity_result"}},
+    "buildings": {"type": "object", "additionalProperties": {"type": "object"}},
+    "scenario_results": {"type": "object", "additionalProperties": {"$ref": "#/$defs/scenario_result"}},
+    "connections": {"type": "array", "items": {"type": "object"}},
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "entity_result": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "scenario_results": {"type": "object", "additionalProperties": {"type": "object"}},
+        "evaluation": {
+          "type": "object",
+          "required": ["schema_version", "input_sha256", "status", "quantities", "locations", "diagnostics", "warnings"],
+          "properties": {
+            "schema_version": {"const": "spat.solver-evaluation/1.0"},
+            "input_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            "status": {"enum": ["converged", "approximate", "failed"]},
+            "quantities": {"type": "object"},
+            "locations": {"type": "object"},
+            "diagnostics": {"type": "object"},
+            "warnings": {"type": "array"}
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false,
+      "anyOf": [{"required": ["evaluation"]}, {"required": ["scenario_results"]}]
+    },
+    "scenario_result": {
+      "type": "object",
+      "required": ["potential_reference", "injections_a", "entities", "gpr_v", "transferred_potentials_v", "connection_currents_a", "touch_by_entity", "max_touch_v", "max_step_v", "surface_potentials_v", "surface_grid", "diagnostics", "warnings", "safety"],
+      "properties": {
+        "potential_reference": {"const": "remote-earth"},
+        "injections_a": {"type": "object", "additionalProperties": {"type": "number"}},
+        "entities": {"type": "object", "additionalProperties": {"type": "object"}},
+        "gpr_v": {"type": "number"},
+        "transferred_potentials_v": {"type": "array", "items": {"type": "object"}},
+        "connection_currents_a": {"type": "object", "additionalProperties": {"type": "number"}},
+        "touch_by_entity": {"type": "array", "items": {"type": "object"}},
+        "max_touch_v": {"type": "object"},
+        "max_step_v": {"type": "object"},
+        "surface_potentials_v": {"type": "object", "additionalProperties": {"type": "number"}},
+        "surface_grid": {"type": "object"},
+        "diagnostics": {"type": "object"},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "safety": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

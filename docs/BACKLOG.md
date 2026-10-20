@@ -2,6 +2,8 @@
 
 > La visión y el backlog de producto (ids `PR-NN`) están en
 > [BACKLOG_PRODUCTO.md](BACKLOG_PRODUCTO.md); este documento cubre el backlog técnico.
+> El solver (`SV-NN`) y el optimizador de diseño (`OP-NN`, extiende BL-20) tienen backlogs propios:
+> [BACKLOG_SOLVER.md](BACKLOG_SOLVER.md) y [BACKLOG_OPTIMIZADOR.md](BACKLOG_OPTIMIZADOR.md).
 
 ## Objetivo y criterio de arquitectura
 

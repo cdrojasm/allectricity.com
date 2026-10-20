@@ -371,7 +371,14 @@ def owned_project(db, project_id, actor):
 
 
 def snapshot(payload):
-    return validate_artifact(payload.model_dump(mode="json"))
+    data = payload.model_dump(mode="json")
+    if data.get("schema_version") == "1.0":
+        # Keep persisted legacy snapshots byte-for-byte compatible with the frozen 1.0 contract.
+        for key in ("buildings", "networks", "electrodes", "connections"):
+            data.pop(key, None)
+    else:
+        data.pop("geometry", None)
+    return validate_artifact(data)
 
 
 def with_calculation_freshness(db, row: dict) -> dict:

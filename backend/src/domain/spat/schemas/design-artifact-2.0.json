@@ -1,0 +1,1016 @@
+{
+  "$defs": {
+    "ArtifactFaultRequest": {
+      "additionalProperties": false,
+      "description": "Fault data of an artifact; it may stay incomplete until the calculation is requested.",
+      "properties": {
+        "current_a": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current A"
+        },
+        "clearing_time_s": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clearing Time S"
+        },
+        "surface_resistivity_ohm_m": {
+          "default": 3000,
+          "exclusiveMinimum": 0,
+          "title": "Surface Resistivity Ohm M",
+          "type": "number"
+        },
+        "surface_thickness_m": {
+          "default": 0.1,
+          "exclusiveMinimum": 0,
+          "title": "Surface Thickness M",
+          "type": "number"
+        },
+        "body_weight_kg": {
+          "default": 50,
+          "maximum": 70,
+          "minimum": 50,
+          "title": "Body Weight Kg",
+          "type": "number"
+        }
+      },
+      "title": "ArtifactFaultRequest",
+      "type": "object"
+    },
+    "ArtifactGeometryRequest": {
+      "additionalProperties": false,
+      "description": "Plan of the site and of its grid: regular (spacing per axis) or drawn conductor by conductor.\n\n`length_m` × `width_m` is the site; the grid is a layer inside it, limited to the\nintervenible `areas` when there are any and kept out of `structures` and non-intervenible areas.",
+      "properties": {
+        "length_m": {
+          "description": "Largo del terreno (X)",
+          "exclusiveMinimum": 0,
+          "maximum": 100000.0,
+          "title": "Length M",
+          "type": "number"
+        },
+        "width_m": {
+          "description": "Ancho del terreno (Y)",
+          "exclusiveMinimum": 0,
+          "maximum": 100000.0,
+          "title": "Width M",
+          "type": "number"
+        },
+        "burial_depth_m": {
+          "default": 0.5,
+          "exclusiveMinimum": 0,
+          "title": "Burial Depth M",
+          "type": "number"
+        },
+        "conductor_spacing_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Retícula homogénea",
+          "title": "Conductor Spacing M"
+        },
+        "conductor_spacing_x_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Separación entre conductores medida a lo largo de X",
+          "title": "Conductor Spacing X M"
+        },
+        "conductor_spacing_y_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Separación entre conductores medida a lo largo de Y",
+          "title": "Conductor Spacing Y M"
+        },
+        "conductors": {
+          "description": "Conductores trazados; reemplazan la retícula regular",
+          "items": {
+            "$ref": "#/$defs/ConductorLineRequest"
+          },
+          "maxItems": 400,
+          "title": "Conductors",
+          "type": "array"
+        },
+        "rods_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Rods Count",
+          "type": "integer"
+        },
+        "rod_length_m": {
+          "default": 2.4,
+          "exclusiveMinimum": 0,
+          "title": "Rod Length M",
+          "type": "number"
+        },
+        "rods": {
+          "description": "Varillas en posiciones explícitas; reemplazan rods_count",
+          "items": {
+            "$ref": "#/$defs/RodRequest"
+          },
+          "maxItems": 500,
+          "title": "Rods",
+          "type": "array"
+        },
+        "structures": {
+          "description": "Elementos constructivos no atravesables",
+          "items": {
+            "$ref": "#/$defs/StructureRequest"
+          },
+          "maxItems": 500,
+          "title": "Structures",
+          "type": "array"
+        },
+        "snap_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 10,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Paso constructivo de las líneas generadas y del dibujo; por defecto 0,5 m",
+          "title": "Snap M"
+        },
+        "areas": {
+          "description": "Zonas intervenibles (la malla debe quedar dentro) y no intervenibles (la malla no puede entrar)",
+          "items": {
+            "$ref": "#/$defs/SiteAreaRequest"
+          },
+          "maxItems": 100,
+          "title": "Areas",
+          "type": "array"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanBackgroundRequest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Plano de fondo calibrado"
+        }
+      },
+      "required": [
+        "length_m",
+        "width_m"
+      ],
+      "title": "ArtifactGeometryRequest",
+      "type": "object"
+    },
+    "ArtifactSoilLayerRequest": {
+      "additionalProperties": false,
+      "description": "A layer of the artifact's stratigraphy: it may be described by material and thickness\nbefore its resistivity is known; the potential calculation requires every resistivity.",
+      "properties": {
+        "resistivity_ohm_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resistivity Ohm M"
+        },
+        "depth_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Depth M"
+        },
+        "material": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Material"
+        }
+      },
+      "title": "ArtifactSoilLayerRequest",
+      "type": "object"
+    },
+    "BuildingRequest": {
+      "additionalProperties": false,
+      "description": "A building's result grouping, linked many-to-many to networks and electrodes.",
+      "properties": {
+        "id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "network_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Network Ids",
+          "type": "array"
+        },
+        "electrode_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Electrode Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "title": "BuildingRequest",
+      "type": "object"
+    },
+    "ComplianceCriterion": {
+      "additionalProperties": false,
+      "properties": {
+        "criterion_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Criterion Id",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Description",
+          "type": "string"
+        },
+        "status": {
+          "default": "pending",
+          "pattern": "^(pending|compliant|non_compliant|not_applicable)$",
+          "title": "Status",
+          "type": "string"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        }
+      },
+      "required": [
+        "criterion_id",
+        "title"
+      ],
+      "title": "ComplianceCriterion",
+      "type": "object"
+    },
+    "ComplianceStandard": {
+      "additionalProperties": false,
+      "properties": {
+        "standard_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Standard Id",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "edition": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Edition"
+        },
+        "applicability": {
+          "default": "conditional",
+          "pattern": "^(applicable|conditional|not_applicable)$",
+          "title": "Applicability",
+          "type": "string"
+        },
+        "criteria": {
+          "items": {
+            "$ref": "#/$defs/ComplianceCriterion"
+          },
+          "maxItems": 100,
+          "title": "Criteria",
+          "type": "array"
+        }
+      },
+      "required": [
+        "standard_id",
+        "title"
+      ],
+      "title": "ComplianceStandard",
+      "type": "object"
+    },
+    "ConductorLineRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/PlanPoint"
+        },
+        "end": {
+          "$ref": "#/$defs/PlanPoint"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "ConductorLineRequest",
+      "type": "object"
+    },
+    "ElectrodeRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "geometry": {
+          "$ref": "#/$defs/ArtifactGeometryRequest"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "geometry"
+      ],
+      "title": "ElectrodeRequest",
+      "type": "object"
+    },
+    "ElectricalConnectionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 100},
+        "kind": {"enum": ["bond", "resistor"], "type": "string"},
+        "group_a": {"type": "string", "minLength": 1, "maxLength": 100},
+        "group_b": {"type": "string", "minLength": 1, "maxLength": 100},
+        "resistance_ohm": {"type": ["number", "null"], "minimum": 1e-9, "maximum": 1e9}
+      },
+      "required": ["id", "kind", "group_a", "group_b"],
+      "title": "ElectricalConnectionRequest",
+      "type": "object",
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "resistor"}}}, "then": {"required": ["resistance_ohm"], "properties": {"resistance_ohm": {"type": "number"}}}},
+        {"if": {"properties": {"kind": {"const": "bond"}}}, "then": {"properties": {"resistance_ohm": {"type": "null"}}}}
+      ]
+    },
+    "GroundingConductorRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "material_id": {
+          "default": "copper_hard_drawn",
+          "maxLength": 60,
+          "minLength": 1,
+          "title": "Material Id",
+          "type": "string"
+        },
+        "cross_section_mm2": {
+          "default": 86.590147,
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Cross Section Mm2",
+          "type": "number"
+        },
+        "joint_type": {
+          "default": "bolted",
+          "pattern": "^(bolted|brazed|welded|other)$",
+          "title": "Joint Type",
+          "type": "string"
+        },
+        "maximum_temperature_c": {
+          "default": 250,
+          "exclusiveMinimum": -273.15,
+          "maximum": 2000,
+          "title": "Maximum Temperature C",
+          "type": "number"
+        },
+        "thermal_duration_s": {
+          "default": 1.0,
+          "description": "t_c; independiente del tiempo de choque t_s",
+          "exclusiveMinimum": 0,
+          "maximum": 60,
+          "title": "Thermal Duration S",
+          "type": "number"
+        },
+        "ambient_temperature_c": {
+          "default": 40,
+          "maximum": 200,
+          "minimum": -50,
+          "title": "Ambient Temperature C",
+          "type": "number"
+        }
+      },
+      "title": "GroundingConductorRequest",
+      "type": "object"
+    },
+    "GroundingNetworkRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "geometry": {
+          "$ref": "#/$defs/ArtifactGeometryRequest"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "geometry"
+      ],
+      "title": "GroundingNetworkRequest",
+      "type": "object"
+    },
+    "PlanBackgroundRequest": {
+      "additionalProperties": false,
+      "description": "Calibrated image/PDF page used only as a plan reference, never as solver geometry.",
+      "properties": {
+        "upload_id": {
+          "maxLength": 36,
+          "minLength": 36,
+          "title": "Upload Id",
+          "type": "string"
+        },
+        "source_page": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Page"
+        },
+        "width_px": {
+          "exclusiveMinimum": 0,
+          "maximum": 100000,
+          "title": "Width Px",
+          "type": "integer"
+        },
+        "height_px": {
+          "exclusiveMinimum": 0,
+          "maximum": 100000,
+          "title": "Height Px",
+          "type": "integer"
+        },
+        "scale_m_per_pixel": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "title": "Scale M Per Pixel",
+          "type": "number"
+        },
+        "offset_x_m": {
+          "default": 0,
+          "title": "Offset X M",
+          "type": "number"
+        },
+        "offset_y_m": {
+          "default": 0,
+          "title": "Offset Y M",
+          "type": "number"
+        },
+        "calibrated": {
+          "default": true,
+          "title": "Calibrated",
+          "type": "boolean"
+        },
+        "calibration_points": {
+          "items": {
+            "$ref": "#/$defs/PlanPoint"
+          },
+          "maxItems": 2,
+          "title": "Calibration Points",
+          "type": "array"
+        },
+        "calibration_distance_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Calibration Distance M"
+        },
+        "pixel_distance": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pixel Distance"
+        }
+      },
+      "required": [
+        "upload_id",
+        "width_px",
+        "height_px",
+        "scale_m_per_pixel"
+      ],
+      "title": "PlanBackgroundRequest",
+      "type": "object"
+    },
+    "PlanPoint": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "description": "m desde la esquina de origen, a lo largo del largo",
+          "maximum": 100000.0,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "description": "m desde la esquina de origen, a lo largo del ancho",
+          "maximum": 100000.0,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "PlanPoint",
+      "type": "object"
+    },
+    "RodRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "description": "m desde la esquina de origen, a lo largo del largo",
+          "maximum": 100000.0,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "description": "m desde la esquina de origen, a lo largo del ancho",
+          "maximum": 100000.0,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        },
+        "length_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Por defecto, rod_length_m",
+          "title": "Length M"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "RodRequest",
+      "type": "object"
+    },
+    "SiteAreaRequest": {
+      "additionalProperties": false,
+      "description": "Rectangular zone of the site: grid work is allowed (`intervenible`) or forbidden (`non_intervenible`).",
+      "properties": {
+        "type": {
+          "enum": [
+            "intervenible",
+            "non_intervenible"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "x_min": {
+          "maximum": 100000.0,
+          "minimum": 0,
+          "title": "X Min",
+          "type": "number"
+        },
+        "x_max": {
+          "maximum": 100000.0,
+          "minimum": 0,
+          "title": "X Max",
+          "type": "number"
+        },
+        "y_min": {
+          "maximum": 100000.0,
+          "minimum": 0,
+          "title": "Y Min",
+          "type": "number"
+        },
+        "y_max": {
+          "maximum": 100000.0,
+          "minimum": 0,
+          "title": "Y Max",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "x_min",
+        "x_max",
+        "y_min",
+        "y_max"
+      ],
+      "title": "SiteAreaRequest",
+      "type": "object"
+    },
+    "SoilMeasurementRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "spacing_m": {
+          "exclusiveMinimum": 0,
+          "title": "Spacing M",
+          "type": "number"
+        },
+        "apparent_resistivity_ohm_m": {
+          "exclusiveMinimum": 0,
+          "title": "Apparent Resistivity Ohm M",
+          "type": "number"
+        },
+        "potential_spacing_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Potential Spacing M"
+        },
+        "locator": {
+          "anyOf": [
+            {
+              "maxLength": 180,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locator"
+        }
+      },
+      "required": [
+        "spacing_m",
+        "apparent_resistivity_ohm_m"
+      ],
+      "title": "SoilMeasurementRequest",
+      "type": "object"
+    },
+    "SoilMeasurementsRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "array": {
+          "default": "wenner",
+          "pattern": "^(wenner|schlumberger)$",
+          "title": "Array",
+          "type": "string"
+        },
+        "measurements": {
+          "items": {
+            "$ref": "#/$defs/SoilMeasurementRequest"
+          },
+          "maxItems": 200,
+          "minItems": 4,
+          "title": "Measurements",
+          "type": "array"
+        },
+        "outlier_threshold": {
+          "default": 0.15,
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0,
+          "title": "Outlier Threshold",
+          "type": "number"
+        },
+        "layer_count": {
+          "default": 2,
+          "maximum": 8,
+          "minimum": 2,
+          "title": "Layer Count",
+          "type": "integer"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        }
+      },
+      "required": [
+        "measurements"
+      ],
+      "title": "SoilMeasurementsRequest",
+      "type": "object"
+    },
+    "StructureRequest": {
+      "additionalProperties": false,
+      "description": "Constructive element represented as a non-traversable rectangular obstacle.",
+      "properties": {
+        "x": {
+          "description": "m desde la esquina de origen, a lo largo del largo",
+          "maximum": 100000.0,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "description": "m desde la esquina de origen, a lo largo del ancho",
+          "maximum": 100000.0,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "maximum": 100000.0,
+          "title": "Width",
+          "type": "number"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "maximum": 100000.0,
+          "title": "Height",
+          "type": "number"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "StructureRequest",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A version of the design. The grid, the soil or the fault data may be missing while the\ndesign is built up in any order; the potential calculation refuses an incomplete artifact.",
+  "properties": {
+    "schema_version": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "soil_layers": {
+      "items": {
+        "$ref": "#/$defs/ArtifactSoilLayerRequest"
+      },
+      "maxItems": 8,
+      "title": "Soil Layers",
+      "type": "array"
+    },
+    "soil_measurements": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SoilMeasurementsRequest"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "soil_model": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Soil Model"
+    },
+    "fault": {
+      "$ref": "#/$defs/ArtifactFaultRequest"
+    },
+    "conductor": {
+      "$ref": "#/$defs/GroundingConductorRequest"
+    },
+    "compliance": {
+      "items": {
+        "$ref": "#/$defs/ComplianceStandard"
+      },
+      "maxItems": 30,
+      "title": "Compliance",
+      "type": "array"
+    },
+    "buildings": {
+      "items": {
+        "$ref": "#/$defs/BuildingRequest"
+      },
+      "maxItems": 500,
+      "title": "Buildings",
+      "type": "array"
+    },
+    "networks": {
+      "items": {
+        "$ref": "#/$defs/GroundingNetworkRequest"
+      },
+      "maxItems": 500,
+      "title": "Networks",
+      "type": "array"
+    },
+    "electrodes": {
+      "items": {
+        "$ref": "#/$defs/ElectrodeRequest"
+      },
+      "maxItems": 500,
+      "title": "Electrodes",
+      "type": "array"
+    },
+    "connections": {
+      "items": {"$ref": "#/$defs/ElectricalConnectionRequest"},
+      "maxItems": 100000,
+      "title": "Connections",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "title": "GroundingArtifactRequest",
+  "type": "object",
+  "$id": "urn:spat:schema:design-artifact:2.0"
+}

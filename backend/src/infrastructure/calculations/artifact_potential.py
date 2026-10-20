@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from math import cos, log2, pi, sin
 from time import monotonic, time
 from typing import Any
@@ -12,13 +14,18 @@ from src.infrastructure.calculations import safety_criteria
 from src.infrastructure.calculations.conductor_thermal import calculate_thermal_size, equivalent_radius_m
 from src.infrastructure.calculations.fault_current import ReturnPath, grid_current
 from src.infrastructure.calculations.potential_engine_client import (
+    MAX_POINTS,
+    MAX_SCENARIO_RESULT_ROWS,
     MAX_LAYERS,
     MAX_SEGMENTS,
+    ElectricalConnection,
+    ElectrodeSegment,
     HomogeneousSoil,
     LayerStackSoil,
     PotentialEngineClient,
     PotentialEngineError,
     PotentialPoint,
+    PROTOCOL,
     SoilModel,
     TwoLayerSoil,
     interface_depths,
@@ -34,6 +41,9 @@ STEP_DISTANCE_M = 1.0
 SURFACE_MARGIN_M = 3.0
 STEP_CANDIDATES = 20
 STEP_DIRECTIONS = 16
+TOUCH_REFINE_CANDIDATES = 5
+STEP_REFINE_CANDIDATES = 5
+LOCAL_REFINE_DIVISIONS = 4
 # Graded segments reach the converged corner step of IEEE 80 Annex H Grids 1-3 with 40-55 % fewer
 # segments than uniform 1 m pieces, and closer to it (validation/segmentation_study.py).
 DEFAULT_SEGMENTATION = "graded"
@@ -168,6 +178,10 @@ def _segments(geometry: dict[str, Any], parameters: dict[str, Any], soil: SoilMo
 
 def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: PotentialEngineClient) -> dict[str, Any]:
     """Return `{"result": ..., "trace": ...}` for an artifact snapshot and calculation parameters."""
+    if snapshot.get("schema_version") == "2.0":
+        return _calculate_v2(snapshot, parameters, client)
+    if parameters.get("scenarios"):
+        raise UnsupportedModelError("Los escenarios de inyección requieren un artefacto 2.0 con redes y electrodos identificados.")
     missing = grid_geometry.missing_for_calculation(snapshot)
     if missing:
         raise UnsupportedModelError("El artefacto está incompleto para calcular; faltan: " + ", ".join(missing))
@@ -234,6 +248,359 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
     result["schema_version"] = "1.0"
     validate_document("calculation_result", result)
     validate_document("calculation_trace", trace)
+    return {"result": result, "trace": trace}
+
+
+def _calculate_v2(snapshot: dict[str, Any], parameters: dict[str, Any], client: PotentialEngineClient) -> dict[str, Any]:
+    """Evaluate each v2 network/electrode independently and group those records by building.
+
+    V2 describes associations, but not yet electrical connections or current division between
+    entities. Each record is therefore a single-entity evaluation using the stated injection;
+    fault split models that require a combined grounding system are rejected explicitly.
+    """
+    missing = grid_geometry.missing_for_calculation(snapshot)
+    if missing:
+        raise UnsupportedModelError("El artefacto 2.0 está incompleto para calcular; faltan: " + ", ".join(missing))
+    scenarios = parameters.get("scenarios") or []
+    if scenarios:
+        if parameters.get("fault_split") or parameters.get("x_over_r") is not None:
+            raise UnsupportedModelError(
+                "Los escenarios reciben corrientes firmadas ya calculadas; SV-11 no aplica automáticamente "
+                "fault_split ni el factor de decremento X/R."
+            )
+        return _calculate_v2_scenarios(snapshot, parameters, client, scenarios)
+    if snapshot.get("connections"):
+        raise UnsupportedModelError("El artefacto declara conexiones eléctricas; envíe escenarios con inyecciones para calcularlas.")
+    if parameters.get("fault_split") or parameters.get("x_over_r") is not None:
+        raise UnsupportedModelError(
+            "El cálculo 2.0 requiere escenarios de corriente explícitos para repartir la falla entre entidades; "
+            "agregue `scenarios` a los parámetros de cálculo."
+        )
+    from src.domain.spat.artifact_contract import group_results_by_building
+    from src.infrastructure.calculations.solver_evaluation import evaluate
+
+    soil = soil_model(snapshot["soil_layers"])
+    fault = snapshot["fault"]
+    current = float(fault["current_a"])
+    settings = {
+        key: parameters[key]
+        for key in ("conductor_radius_m", "discretization_m", "surface_spacing_m", "segmentation", "touch_reach_m")
+        if key in parameters
+    }
+    conductor = snapshot.get("conductor")
+    if conductor:
+        settings["conductor_radius_m"] = equivalent_radius_m(float(conductor["cross_section_mm2"]))
+    records: dict[str, dict[str, Any]] = {"networks": {}, "electrodes": {}}
+    evaluation_trace = []
+    for kind in ("networks", "electrodes"):
+        for entity in sorted(snapshot.get(kind, []), key=lambda item: item["id"]):
+            outcome = evaluate(
+                geometry=entity["geometry"], soil=soil, injection_a=current, points=[],
+                client=client, settings=settings,
+            )
+            record = {"id": entity["id"], "name": entity["name"], "evaluation": outcome}
+            records[kind][entity["id"]] = record
+            evaluation_trace.append({
+                "kind": kind[:-1], "id": entity["id"], "input_sha256": outcome["input_sha256"],
+                "solver_version": outcome["solver_version"],
+            })
+    buildings = group_results_by_building(snapshot, records["networks"], records["electrodes"])
+    canonical_inputs = {
+        "schema_version": "2.0",
+        "buildings": sorted(snapshot.get("buildings", []), key=lambda item: item["id"]),
+        "networks": sorted(snapshot.get("networks", []), key=lambda item: item["id"]),
+        "electrodes": sorted(snapshot.get("electrodes", []), key=lambda item: item["id"]),
+        "soil": soil_record(soil), "fault": fault, "settings": settings,
+    }
+    input_sha256 = hashlib.sha256(json.dumps(
+        canonical_inputs, sort_keys=True, separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")).hexdigest()
+    result = {
+        "schema_version": "2.0", "soil": soil_record(soil), "injected_current_a": current,
+        "networks": records["networks"], "electrodes": records["electrodes"], "buildings": buildings,
+        "warnings": [
+            "Cada red y electrodo se evalúa como entidad aislada con la corriente indicada; no se modelan conexiones ni reparto entre entidades.",
+            "El resultado numérico de cada entidad es aproximado por la búsqueda finita de máximos de SV-08.",
+        ],
+    }
+    trace = {
+        "schema_version": "2.0", "input_sha256": input_sha256,
+        "solver_protocol": PROTOCOL, "parameters": parameters,
+        "evaluations": evaluation_trace,
+    }
+    validate_document("calculation_result_v2", result)
+    validate_document("calculation_trace_v2", trace)
+    return {"result": result, "trace": trace}
+
+
+def _calculate_v2_scenarios(snapshot, parameters, client, scenario_requests):
+    """Solve all artifact entities jointly for named signed-current scenarios."""
+    from src.domain.spat.artifact_contract import group_results_by_building
+
+    soil = soil_model(snapshot["soil_layers"])
+    settings = {
+        "conductor_radius_m": 0.00525,
+        "discretization_m": 1.0,
+        "surface_spacing_m": 0.5,
+        "segmentation": DEFAULT_SEGMENTATION,
+        "touch_reach_m": 0.0,
+        **{key: parameters[key] for key in (
+            "conductor_radius_m", "discretization_m", "surface_spacing_m", "segmentation", "touch_reach_m"
+        ) if key in parameters},
+    }
+    if snapshot.get("conductor"):
+        settings["conductor_radius_m"] = equivalent_radius_m(float(snapshot["conductor"]["cross_section_mm2"]))
+    entities = []
+    segments: list[ElectrodeSegment] = []
+    entity_group: dict[str, str] = {}
+    entity_kind: dict[str, str] = {}
+    for collection, prefix in (("networks", "n"), ("electrodes", "e")):
+        for index, entity in enumerate(sorted(snapshot.get(collection, []), key=lambda item: item["id"])):
+            entity_id = entity["id"]
+            if entity_id in entity_group:
+                raise UnsupportedModelError(f"Id de entidad duplicado entre redes y electrodos: {entity_id}")
+            group = f"{prefix}{index}"
+            entity_group[entity_id] = group
+            entity_kind[entity_id] = collection
+            entities.append(entity)
+            generated = _segments(entity["geometry"], settings, soil)
+            for part, segment in enumerate(generated):
+                segments.append(ElectrodeSegment(
+                    f"{group}.s{part}", group, segment.kind,
+                    segment.start_m, segment.end_m, segment.radius_m,
+                ))
+    if not segments:
+        raise UnsupportedModelError("El artefacto 2.0 necesita al menos una red o electrodo para resolver escenarios.")
+    if len(segments) > MAX_SEGMENTS:
+        raise UnsupportedModelError(f"La geometría conjunta necesita {len(segments)} segmentos; el límite es {MAX_SEGMENTS}.")
+
+    connection_ids = set()
+    engine_connections = []
+    engine_connection_to_id = {}
+    for index, connection in enumerate(snapshot.get("connections", [])):
+        if connection["id"] in connection_ids:
+            raise UnsupportedModelError(f"Id de conexión duplicado: {connection['id']}")
+        connection_ids.add(connection["id"])
+        group_a = entity_group.get(connection["group_a"])
+        group_b = entity_group.get(connection["group_b"])
+        if group_a is None or group_b is None:
+            raise UnsupportedModelError(f"La conexión {connection['id']} referencia una entidad desconocida.")
+        if group_a == group_b:
+            raise UnsupportedModelError(f"La conexión {connection['id']} debe enlazar dos entidades distintas.")
+        engine_id = f"c{index}"
+        engine_connection_to_id[engine_id] = connection["id"]
+        engine_connections.append(ElectricalConnection(
+            engine_id, connection["kind"], group_a, group_b, connection.get("resistance_ohm"),
+        ))
+
+    if not 1 <= len(scenario_requests) <= 100:
+        raise UnsupportedModelError("La solicitud debe incluir entre 1 y 100 escenarios nombrados.")
+    transfer_pair_count = len(entities) * (len(entities) - 1) // 2
+    if transfer_pair_count * len(scenario_requests) > 100_000:
+        raise UnsupportedModelError("La tabla de potenciales transferidos supera 100 000 pares; reduzca entidades o escenarios.")
+    scenarios = {}
+    scenario_origins = {}
+    for scenario in scenario_requests:
+        scenario_id = scenario["id"]
+        if scenario_id in scenarios:
+            raise UnsupportedModelError(f"Id de escenario duplicado: {scenario_id}")
+        injections = scenario.get("injections_a") or {}
+        if not injections:
+            raise UnsupportedModelError(f"El escenario {scenario_id} necesita al menos una inyección.")
+        mapped = {}
+        for entity_id, current in injections.items():
+            group = entity_group.get(entity_id)
+            if group is None:
+                raise UnsupportedModelError(f"El escenario {scenario_id} inyecta en una entidad desconocida: {entity_id}.")
+            mapped[group] = float(current)
+        scenarios[scenario_id] = mapped
+        scenario_origins[scenario_id] = {group: f"artifact:scenario.{scenario_id}" for group in mapped}
+
+    spacing = float(settings["surface_spacing_m"])
+    site_length = max(float(entity["geometry"]["length_m"]) for entity in entities)
+    site_width = max(float(entity["geometry"]["width_m"]) for entity in entities)
+    margin = SURFACE_MARGIN_M + float(settings["touch_reach_m"])
+    half_x, half_y = site_length / 2, site_width / 2
+    nx = round(2 * (half_x + margin) / spacing)
+    ny = round(2 * (half_y + margin) / spacing)
+    if (nx + 1) * (ny + 1) > 1_000_000:
+        raise UnsupportedModelError("La rasterización conjunta supera 1 000 000 puntos; aumente surface_spacing_m.")
+    raster: dict[tuple[int, int], tuple[str, tuple[float, float, float]]] = {}
+    for i in range(nx + 1):
+        for j in range(ny + 1):
+            point_id = f"p{i}_{j}"
+            xyz = (-half_x - margin + i * spacing,
+                   -half_y - margin + j * spacing, 0.0)
+            raster[(i, j)] = (point_id, xyz)
+    points = [PotentialPoint(point_id, xyz) for point_id, xyz in raster.values()]
+    max_rows_per_scenario = MAX_SCENARIO_RESULT_ROWS // len(scenarios)
+    result_overhead = len(segments) + len(entity_group) + len(engine_connections) + 128
+    if max_rows_per_scenario <= result_overhead:
+        raise UnsupportedModelError("La cantidad de entidades supera el límite de salida de los escenarios.")
+    row_batch = max_rows_per_scenario - result_overhead
+    batch = min(point_batch_size(soil, segments, points), MAX_POINTS, row_batch)
+    batch = max(batch, 1)
+
+    outcome_by_scenario = {scenario_id: {"potentials": {}, "first": None, "hashes": []}
+                           for scenario_id in scenarios}
+    for start in range(0, max(len(points), 1), batch):
+        chunk = points[start:start + batch]
+        solved = client.calculate_scenarios(
+            soil=soil, segments=segments, points=chunk, scenarios=scenarios,
+            injection_origins=scenario_origins, connections=engine_connections,
+        )
+        for scenario_id, result in solved.items():
+            target = outcome_by_scenario[scenario_id]
+            target["potentials"].update(result["potentials_v"])
+            target["first"] = target["first"] or result
+            target["hashes"].append(result["trace"]["request_sha256"])
+
+    obstacles = []
+    entity_boxes = {}
+    for entity in entities:
+        geometry = entity["geometry"]
+        entity_half_x, entity_half_y = float(geometry["length_m"]) / 2, float(geometry["width_m"]) / 2
+        fx0, fx1, fy0, fy1 = grid_geometry.footprint(geometry)
+        reach = float(settings["touch_reach_m"])
+        entity_boxes[entity["id"]] = (fx0 - entity_half_x - reach, fx1 - entity_half_x + reach,
+                                      fy0 - entity_half_y - reach, fy1 - entity_half_y + reach)
+        for _, rect, _ in grid_geometry.obstacles(geometry):
+            cx, cy = float(rect["x"]) - entity_half_x, float(rect["y"]) - entity_half_y
+            obstacles.append((cx - float(rect["width"]) / 2, cx + float(rect["width"]) / 2,
+                              cy - float(rect["height"]) / 2, cy + float(rect["height"]) / 2))
+
+    def accessible(x, y):
+        return not any(x0 < x < x1 and y0 < y < y1 for x0, x1, y0, y1 in obstacles)
+
+    scenario_results = {}
+    evaluation_trace = []
+    segment_group = {segment.id: segment.group for segment in segments}
+    for scenario_id, scenario in scenarios.items():
+        outcome = outcome_by_scenario[scenario_id]
+        first = outcome["first"]
+        potentials = outcome["potentials"]
+        entity_results = {}
+        for entity_id, group in entity_group.items():
+            solved_group = first["groups"][group]
+            leakage = sum(current for segment_id, current in first["segment_currents_a"].items()
+                          if segment_group[segment_id] == group)
+            entity_results[entity_id] = {
+                "injected_current_a": scenario.get(group, 0.0),
+                "potential_v": solved_group["potential_v"],
+                "leakage_current_a": leakage,
+                "current_balance_error_a": solved_group["current_balance_error_a"],
+            }
+
+        transfers = []
+        ordered_entities = sorted(entity_group)
+        for index, entity_a in enumerate(ordered_entities):
+            for entity_b in ordered_entities[index + 1:]:
+                signed = entity_results[entity_a]["potential_v"] - entity_results[entity_b]["potential_v"]
+                transfers.append({"from_entity_id": entity_a, "to_entity_id": entity_b,
+                                  "signed_potential_v": signed, "absolute_potential_v": abs(signed)})
+
+        touches = []
+        for entity_id, group in entity_group.items():
+            x0, x1, y0, y1 = entity_boxes[entity_id]
+            candidates = []
+            for point_id, (x, y, _) in raster.values():
+                if x0 - 1e-9 <= x <= x1 + 1e-9 and y0 - 1e-9 <= y <= y1 + 1e-9 and accessible(x, y):
+                    candidates.append((abs(entity_results[entity_id]["potential_v"] - potentials[point_id]), x, y))
+            if not candidates:
+                raise UnsupportedModelError(
+                    f"La entidad {entity_id} no tiene puntos de toque accesibles en el raster; "
+                    "ajuste surface_spacing_m, la geometría o las áreas no intervenibles."
+                )
+            value, x, y = max(candidates)
+            touches.append({"entity_id": entity_id, "value_v": value, "x_m": x, "y_m": y})
+
+        step = {"value_v": 0.0, "from_m": None, "to_m": None}
+        k = max(1, round(1.0 / spacing))
+        for (i, j), (point_id, xyz) in raster.items():
+            if not accessible(xyz[0], xyz[1]):
+                continue
+            for di, dj in ((k, 0), (0, k)):
+                neighbor = raster.get((i + di, j + dj))
+                if neighbor is None or not accessible(neighbor[1][0], neighbor[1][1]):
+                    continue
+                difference = abs(potentials[point_id] - potentials[neighbor[0]])
+                if difference > step["value_v"]:
+                    step = {"value_v": difference, "from_m": list(xyz[:2]), "to_m": list(neighbor[1][:2])}
+
+        touch = max(touches, key=lambda item: item["value_v"])
+        engine_link_currents = first["connection_currents_a"]
+        link_currents = {engine_connection_to_id[key]: value for key, value in engine_link_currents.items()}
+        values = {
+            "potential_reference": "remote-earth",
+            "injections_a": {entity_id: scenario.get(group, 0.0) for entity_id, group in entity_group.items()},
+            "entities": entity_results,
+            "gpr_v": max((abs(item["potential_v"]) for item in entity_results.values()), default=0.0),
+            "transferred_potentials_v": transfers,
+            "connection_currents_a": link_currents,
+            "touch_by_entity": touches,
+            "max_touch_v": touch,
+            "max_step_v": step,
+            "surface_potentials_v": {key: potentials[key] for key, _ in raster.values()},
+            "surface_grid": {"spacing_m": spacing, "x_min_m": -half_x - margin,
+                             "y_min_m": -half_y - margin, "nx": nx + 1, "ny": ny + 1},
+            "diagnostics": first["diagnostics"],
+            "warnings": first["warnings"] + ["Máximos de toque y paso estimados sobre raster; no hay refinamiento local SV-08 en el cálculo conjunto."],
+        }
+        values["safety"] = _safety({
+            "gpr_v": values["gpr_v"],
+            "max_touch_v": {"value": touch["value_v"]},
+            "max_step_v": {"value": step["value_v"]},
+        }, snapshot["fault"], top_resistivity(soil), parameters)
+        scenario_results[scenario_id] = values
+        evaluation_trace.append({
+            "kind": "scenario", "id": scenario_id,
+            "input_sha256": first["trace"]["request_sha256"],
+            "solver_version": first["trace"].get("solver_version"),
+        })
+
+    records: dict[str, dict[str, Any]] = {"networks": {}, "electrodes": {}}
+    for entity in entities:
+        entity_id = entity["id"]
+        record = {"id": entity_id, "name": entity["name"], "scenario_results": {
+            scenario_id: scenario_results[scenario_id]["entities"][entity_id]
+            for scenario_id in scenario_results
+        }}
+        records[entity_kind[entity_id]][entity_id] = record
+    buildings = group_results_by_building(snapshot, records["networks"], records["electrodes"])
+    canonical_inputs = {
+        "schema_version": "2.0",
+        "buildings": sorted(snapshot.get("buildings", []), key=lambda item: item["id"]),
+        "networks": sorted(snapshot.get("networks", []), key=lambda item: item["id"]),
+        "electrodes": sorted(snapshot.get("electrodes", []), key=lambda item: item["id"]),
+        "connections": sorted(snapshot.get("connections", []), key=lambda item: item["id"]),
+        "scenarios": scenario_requests,
+        "fault": snapshot["fault"], "soil": soil_record(soil), "settings": settings,
+    }
+    input_sha256 = hashlib.sha256(json.dumps(
+        canonical_inputs, sort_keys=True, separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")).hexdigest()
+    first_outcome = next(iter(outcome_by_scenario.values()))["first"]
+    result = {
+        "schema_version": "2.0", "soil": soil_record(soil),
+        "injected_current_a": float(snapshot["fault"]["current_a"]),
+        "networks": records["networks"], "electrodes": records["electrodes"],
+        "buildings": buildings, "scenario_results": scenario_results,
+        "connections": snapshot.get("connections", []),
+        "warnings": [
+            "Las corrientes firmadas se especifican por escenario y entidad; el modelo no las reparte automáticamente desde fault.current_a.",
+            "Las máximas tensiones de toque y paso se buscan sobre el raster y no incluyen refinamiento local.",
+            "Se supone un origen común centrado en cada plano de geometría; confirme que las coordenadas relativas de todas las entidades están alineadas.",
+        ],
+    }
+    trace = {
+        "schema_version": "2.0", "input_sha256": input_sha256,
+        "solver_protocol": first_outcome["trace"]["protocol"],
+        "parameters": parameters,
+        "scenario_ids": list(scenario_results),
+        "evaluations": evaluation_trace,
+    }
+    validate_document("calculation_result_v2", result)
+    validate_document("calculation_trace_v2", trace)
     return {"result": result, "trace": trace}
 
 
@@ -304,11 +671,19 @@ def _field(client, geometry, soil, segments, current, origin, spacing, reach=0.0
     fx0, fx1, fy0, fy1 = grid_geometry.footprint(geometry)
     touch_box = (max(fx0 - reach, -SURFACE_MARGIN_M) - half_x, min(fx1 + reach, 2 * half_x + SURFACE_MARGIN_M) - half_x,
                  max(fy0 - reach, -SURFACE_MARGIN_M) - half_y, min(fy1 + reach, 2 * half_y + SURFACE_MARGIN_M) - half_y)
-    structures = [(float(s["x"]) - half_x, float(s["y"]) - half_y, float(s["width"]) / 2, float(s["height"]) / 2)
-                  for s in geometry.get("structures") or []]
+    obstacles = []
+    for _, rect, _ in grid_geometry.obstacles(geometry):
+        if "x_min" in rect:
+            obstacles.append((float(rect["x_min"]) - half_x, float(rect["x_max"]) - half_x,
+                              float(rect["y_min"]) - half_y, float(rect["y_max"]) - half_y))
+        else:
+            cx, cy = float(rect["x"]) - half_x, float(rect["y"]) - half_y
+            obstacles.append((cx - float(rect["width"]) / 2, cx + float(rect["width"]) / 2,
+                              cy - float(rect["height"]) / 2, cy + float(rect["height"]) / 2))
 
     def in_structure(x: float, y: float) -> bool:
-        return any(abs(x - cx) < hw - 1e-9 and abs(y - cy) < hh - 1e-9 for cx, cy, hw, hh in structures)
+        return any(x0 + 1e-9 < x < x1 - 1e-9 and y0 + 1e-9 < y < y1 - 1e-9
+                   for x0, x1, y0, y1 in obstacles)
 
     nx = round(2 * (half_x + SURFACE_MARGIN_M) / spacing)
     ny = round(2 * (half_y + SURFACE_MARGIN_M) / spacing)
@@ -322,7 +697,29 @@ def _field(client, geometry, soil, segments, current, origin, spacing, reach=0.0
 
     inside = [pid for pid, (x, y, _) in raster.items()
               if touch_box[0] - 1e-9 <= x <= touch_box[1] + 1e-9 and touch_box[2] - 1e-9 <= y <= touch_box[3] + 1e-9]
-    touch_id = min(inside, key=v.__getitem__)
+    touchable = [pid for pid in inside if not in_structure(*raster[pid][:2])]
+    if not touchable:
+        raise UnsupportedModelError("No hay puntos de contacto accesibles fuera de los obstáculos en el área de búsqueda.")
+
+    # Refine the surface minimum on a local lattice; keep only points inside the touch search box
+    # and on open ground. This lets the reported coordinate move off the coarse raster.
+    local_spacing = spacing / LOCAL_REFINE_DIVISIONS
+    touch_seeds = sorted(touchable, key=v.__getitem__)[:TOUCH_REFINE_CANDIDATES]
+    touch_refine = {}
+    for c, pid in enumerate(touch_seeds):
+        x, y, _ = raster[pid]
+        for ix in range(-LOCAL_REFINE_DIVISIONS, LOCAL_REFINE_DIVISIONS + 1):
+            for iy in range(-LOCAL_REFINE_DIVISIONS, LOCAL_REFINE_DIVISIONS + 1):
+                px, py = x + ix * local_spacing, y + iy * local_spacing
+                if (touch_box[0] - 1e-9 <= px <= touch_box[1] + 1e-9
+                        and touch_box[2] - 1e-9 <= py <= touch_box[3] + 1e-9
+                        and not in_structure(px, py)):
+                    touch_refine[f"t{c}_{ix}_{iy}"] = (px, py, 0.0)
+    _, touch_v, touch_hashes = _solve(client, soil, segments, current,
+                                       [PotentialPoint(pid, xyz) for pid, xyz in touch_refine.items()], origin)
+    touch_candidates = [(v[pid], raster[pid][:2]) for pid in touchable]
+    touch_candidates.extend((value, touch_refine[pid][:2]) for pid, value in touch_v.items())
+    touch_min, touch_xy = min(touch_candidates, key=lambda item: item[0])
 
     # Step voltage: rank raster points by their largest 1 m axis difference, then search
     # 16 directions around the strongest candidates (the worst step is usually diagonal at a corner).
@@ -349,6 +746,39 @@ def _field(client, geometry, soil, segments, current, origin, spacing, reach=0.0
             difference = abs(v[pid] - probe_v[f"p{c}_{d}"])
             if difference > step_value:
                 step_value, step_from, step_to = difference, list(raster[pid][:2]), list(probes[f"p{c}_{d}"][:2])
+
+    # Search a finer set of step origins around the strongest coarse candidates, keeping both
+    # feet on open ground. Directions remain on the existing angular set so each reported pair
+    # stays exactly STEP_DISTANCE_M apart.
+    step_seeds = candidates[:STEP_REFINE_CANDIDATES]
+    step_refine = {}
+    refine_radius = spacing
+    for c, pid in enumerate(step_seeds):
+        x, y, _ = raster[pid]
+        for ix in range(-LOCAL_REFINE_DIVISIONS, LOCAL_REFINE_DIVISIONS + 1):
+            for iy in range(-LOCAL_REFINE_DIVISIONS, LOCAL_REFINE_DIVISIONS + 1):
+                sx, sy = x + ix * refine_radius / LOCAL_REFINE_DIVISIONS, y + iy * refine_radius / LOCAL_REFINE_DIVISIONS
+                if in_structure(sx, sy):
+                    continue
+                for d in range(STEP_DIRECTIONS):
+                    angle = 2 * pi * d / STEP_DIRECTIONS
+                    ex, ey = sx + STEP_DISTANCE_M * cos(angle), sy + STEP_DISTANCE_M * sin(angle)
+                    if not in_structure(ex, ey):
+                        step_refine[f"r{c}_{ix}_{iy}_{d}a"] = (sx, sy, 0.0)
+                        step_refine[f"r{c}_{ix}_{iy}_{d}b"] = (ex, ey, 0.0)
+    _, refined_v, refined_hashes = _solve(client, soil, segments, current,
+                                          [PotentialPoint(pid, xyz) for pid, xyz in step_refine.items()], origin)
+    for c, pid in enumerate(step_seeds):
+        x, y, _ = raster[pid]
+        for ix in range(-LOCAL_REFINE_DIVISIONS, LOCAL_REFINE_DIVISIONS + 1):
+            for iy in range(-LOCAL_REFINE_DIVISIONS, LOCAL_REFINE_DIVISIONS + 1):
+                for d in range(STEP_DIRECTIONS):
+                    a, b = f"r{c}_{ix}_{iy}_{d}a", f"r{c}_{ix}_{iy}_{d}b"
+                    if a in refined_v:
+                        difference = abs(refined_v[a] - refined_v[b])
+                        if difference > step_value:
+                            step_value = difference
+                            step_from, step_to = list(step_refine[a][:2]), list(step_refine[b][:2])
     return {
         "first": first,
         "gpr_v": gpr,
@@ -366,10 +796,10 @@ def _field(client, geometry, soil, segments, current, origin, spacing, reach=0.0
             "ny": ny + 1,
             "values_v": [v[f"s{i}_{j}"] for j in range(ny + 1) for i in range(nx + 1)],
         },
-        "max_touch_v": {"value": gpr - v[touch_id], "x_m": raster[touch_id][0], "y_m": raster[touch_id][1]},
+        "max_touch_v": {"value": gpr - touch_min, "x_m": touch_xy[0], "y_m": touch_xy[1]},
         "max_step_v": {"value": step_value, "from_m": step_from, "to_m": step_to},
-        "point_count": len(raster) + len(probes),
-        "hashes": hashes + probe_hashes,
+        "point_count": len(raster) + len(probes) + len(touch_refine) + len(step_refine),
+        "hashes": hashes + probe_hashes + touch_hashes + refined_hashes,
     }
 
 

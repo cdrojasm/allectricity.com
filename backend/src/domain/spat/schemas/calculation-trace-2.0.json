@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:spat:schema:calculation-trace:2.0",
+  "title": "SPAT entity-based calculation trace",
+  "type": "object",
+  "required": ["schema_version", "input_sha256", "solver_protocol", "parameters", "evaluations"],
+  "properties": {
+    "schema_version": {"const": "2.0"},
+    "input_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "solver_protocol": {"type": "string"},
+    "parameters": {"type": "object"},
+    "evaluations": {"type": "array", "items": {
+      "type": "object",
+      "required": ["kind", "id", "input_sha256", "solver_version"],
+      "properties": {
+        "kind": {"enum": ["network", "electrode", "scenario"]},
+        "id": {"type": "string"},
+        "input_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "solver_version": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    }},
+    "scenario_ids": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

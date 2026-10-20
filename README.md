@@ -45,6 +45,21 @@ una aproximación de prefactibilidad sin trazabilidad. El flujo vigente crea un
 artefacto de diseño en `/api/v1/projects/{project_id}/artefactos-diseno-tierras`
 y encola su cálculo trazable en la ruta `.../{artifact_id}/versions/{version}/calculos-potencial`.
 
+### Escenarios eléctricos en artefactos 2.0
+
+Los artefactos `schema_version: "2.0"` describen `networks`, `electrodes` y sus conexiones explícitas. Una conexión puede ser un enlace equipotencial (`kind: "bond"`) o una resistencia concentrada (`kind: "resistor"`, con `resistance_ohm`). Para calcular varios casos sobre esa topología, envía en los parámetros:
+
+```json
+{
+  "scenarios": [
+    {"id": "falla-A", "injections_a": {"malla-norte": 1000, "varilla-1": -250}},
+    {"id": "falla-B", "injections_a": {"malla-sur": 800}}
+  ]
+}
+```
+
+Las corrientes son valores firmados por entidad y escenario; deben incluir previamente el reparto de corriente y el factor de decremento que correspondan. El resultado incluye potencial de cada red/electrodo respecto a tierra remota, diferencias firmadas de potencial transferido, corrientes de conexiones, balance de corriente por grupo, y estimaciones de toque y paso sobre el raster accesible. Los máximos conjuntos todavía no usan el refinamiento local de SV-08. Se asume que las geometrías de entidades distintas comparten el mismo origen de coordenadas.
+
 ## Ejecutar en local
 
 ```bash
@@ -64,6 +79,12 @@ clientes M2M, Google ID tokens, presupuesto de tokens y reset por Celery + SMTP.
 Los endpoints de diseño ahora requieren Bearer token. Configurar `GOOGLE_CLIENT_ID`
 para habilitar Google. El frontend demo todavía no integra estos flujos.
 Contratos, permisos y operación: [docs/AUTH.md](docs/AUTH.md).
+
+En despliegue, Celery se divide por responsabilidad: `agent-worker` coordina los
+agentes y el LLM, `document-worker` procesa archivos y OCR, `calculation-worker`
+ejecuta cálculos contra `solver-api`, `render-worker` reserva Chromium para PDFs
+y `mail-worker` atiende el correo transaccional. El API HTTP conserva solo la
+frontera transaccional y publica trabajos en las colas correspondientes.
 
 El backlog priorizado y el plan de despliegue portable están en
 [docs/BACKLOG.md](docs/BACKLOG.md).

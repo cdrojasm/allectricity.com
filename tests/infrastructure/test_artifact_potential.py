@@ -207,8 +207,12 @@ def test_touch_is_searched_over_the_grid_and_step_outside_structures(engine):
     # Plan x 22-27 is -13.5..13.5 centred: the yard is 8.5..13.5; the raster starts 3 m before the site.
     assert (surface["grid_x_m"], surface["grid_width_m"], surface["grid_height_m"]) == (25, 5, 10)
     assert 8.5 - 1e-9 <= touch["x_m"] <= 13.5 + 1e-9 and -5 - 1e-9 <= touch["y_m"] <= 5 + 1e-9
+    # The maximum location may move on the 0.25 m refinement lattice, finer than the 1 m raster.
+    assert math.isclose(touch["x_m"] * 4, round(touch["x_m"] * 4), abs_tol=1e-9)
+    assert math.isclose(touch["y_m"] * 4, round(touch["y_m"] * 4), abs_tol=1e-9)
     for x, y in (result["max_step_v"]["from_m"], result["max_step_v"]["to_m"]):
         assert not (-11.5 < x < 8.5 and -5 < y < 5)  # never inside the building
+    assert math.isclose(math.dist(result["max_step_v"]["from_m"], result["max_step_v"]["to_m"]), 1.0, rel_tol=1e-9)
     reach = calculate(snapshot, {**PARAMETERS, "surface_spacing_m": 1.0, "touch_reach_m": 1.0}, engine)["result"]
     assert reach["surface_potential"]["grid_width_m"] == 7 and reach["max_touch_v"]["value"] >= touch["value"]
 

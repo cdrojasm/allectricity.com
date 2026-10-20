@@ -573,7 +573,14 @@ def split_lines(lines: list[Line], nodes: list[tuple[float, float]]) -> list[Lin
 
 def missing_for_calculation(snapshot: dict) -> list[str]:
     """Inputs the potential calculation needs that the artifact does not have yet."""
-    missing = [] if snapshot.get("geometry") else ["geometry"]
+    if snapshot.get("schema_version") == "2.0":
+        entities = [*snapshot.get("networks", []), *snapshot.get("electrodes", [])]
+        missing = [] if entities else ["networks/electrodes"]
+        for entity in entities:
+            if not entity.get("geometry"):
+                missing.append(f"geometry.{entity.get('id', 'unknown')}")
+    else:
+        missing = [] if snapshot.get("geometry") else ["geometry"]
     layers = snapshot.get("soil_layers") or []
     if not layers:
         missing.append("soil_layers")
