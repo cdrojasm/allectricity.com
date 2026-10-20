@@ -8,6 +8,7 @@ help:
 	  'Available commands:' \
 	  '  frontend-build Build frontend static files' \
 	  '  potential-engine Build the C++ grounding-potential engine' \
+	  '  potential-engine-profile Profile solver phases (ARGS=..., PROFILE_OUT=...)' \
 	  '  frontend-up    Build static files and start Nginx' \
 	  '  frontend-down  Stop the Nginx container' \
 	  '  local-build    Build local Docker services' \
@@ -26,10 +27,14 @@ help:
 
 .PHONY: local-up local-down local-build test lint
 
-.PHONY: frontend-build frontend-up frontend-down potential-engine
+.PHONY: frontend-build frontend-up frontend-down potential-engine potential-engine-profile
 potential-engine:
 	mkdir -p services/potential_engine/build
 	g++ -std=c++17 -O3 -Wall -Wextra -Wpedantic services/potential_engine/src/main.cpp -o services/potential_engine/build/spat-potential-engine
+
+PROFILE_OUT ?= /tmp/grounding-potential-engine-profile.json
+potential-engine-profile: potential-engine
+	python3 services/potential_engine/validation/profile_solver.py --engine services/potential_engine/build/spat-potential-engine --json "$(PROFILE_OUT)" $(ARGS)
 
 frontend-build:
 	npm --prefix app run build
@@ -68,10 +73,10 @@ create-admin:
 	$(COMPOSE) exec api python -m src.infrastructure.entrypoint.bootstrap_admin
 
 sync-prompts:
-	$(COMPOSE) run --rm --no-deps worker python scripts/sync_langfuse_prompts.py
+	$(COMPOSE) run --rm --no-deps agent-worker python scripts/sync_langfuse_prompts.py
 
 eval-extraction:
-	$(COMPOSE) run --rm --no-deps -v "$(CURDIR):/workspace" -w /workspace --entrypoint python worker scripts/evaluate_extraction.py $(ARGS)
+	$(COMPOSE) run --rm --no-deps -v "$(CURDIR):/workspace" -w /workspace --entrypoint python document-worker scripts/evaluate_extraction.py $(ARGS)
 
 .PHONY: smoke-auth
 smoke-auth:
@@ -82,5 +87,5 @@ smoke-local:
 
 # Regenerates resources/minio/plantillas-medicion; `make local-up` mirrors it into MinIO.
 templates:
-	$(COMPOSE) run --rm --no-deps -v "$(CURDIR):/workspace" -w /workspace --entrypoint python worker scripts/generate_measurement_templates.py
+	$(COMPOSE) run --rm --no-deps -v "$(CURDIR):/workspace" -w /workspace --entrypoint python document-worker scripts/generate_measurement_templates.py
 	$(COMPOSE) up -d --force-recreate minio-init

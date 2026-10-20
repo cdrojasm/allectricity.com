@@ -1,0 +1,40 @@
+FROM python:3.12-slim AS base
+
+RUN apt-get update && apt-get install -y --no-install-recommends libmagic1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+COPY dependencies/pyproject.toml ./
+COPY backend/src ./src
+COPY backend/migrations ./migrations
+COPY backend/alembic.ini ./alembic.ini
+COPY prompts ./prompts
+COPY scripts/sync_langfuse_prompts.py ./scripts/sync_langfuse_prompts.py
+RUN useradd --create-home --uid 10001 spat
+
+FROM base AS agent-worker
+RUN pip install --no-cache-dir '.[agent]'
+USER spat
+CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "agent"]
+
+FROM base AS document-worker
+RUN pip install --no-cache-dir '.[documents]'
+USER spat
+CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "documents"]
+
+FROM base AS calculation-worker
+RUN pip install --no-cache-dir '.[calculations]'
+USER spat
+CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "calculations"]
+
+FROM base AS mail-worker
+USER spat
+CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "-Q", "mail"]
+
+FROM base AS render-worker
+USER root
+RUN pip install --no-cache-dir '.[render]' && playwright install --with-deps chromium
+USER spat
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "-Q", "render"]

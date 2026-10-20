@@ -10,8 +10,6 @@ from src.application.use_cases.reset_mail import DeliverResetMail
 from src.infrastructure.persistence.identity_store import SQLIdentityStore
 from src.infrastructure.security.providers import FernetMessages
 from src.infrastructure.storage.object_storage import ObjectStorage
-from src.infrastructure.processing.knowledge_extraction import extract_knowledge
-from src.infrastructure.persistence.knowledge_graph_store import Neo4jKnowledgeGraph
 
 celery_app = Celery(
     "spat", broker=os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
@@ -25,6 +23,18 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     broker_connection_retry_on_startup=True,
     timezone="UTC",
+    task_default_queue="default",
+    task_routes={
+        "spat.agent_run_step": {"queue": "agent"},
+        "spat.resolve_chat_message": {"queue": "agent"},
+        "spat.scan_file_upload": {"queue": "documents"},
+        "spat.reprocess_document": {"queue": "documents"},
+        "spat.reconcile_file_uploads": {"queue": "documents"},
+        "spat.calculate_artifact_potential": {"queue": "calculations"},
+        "spat.render_study_pdf": {"queue": "render"},
+        "spat.dispatch_reset_mail": {"queue": "mail"},
+        "spat.send_reset_mail": {"queue": "mail"},
+    },
     beat_schedule={
         "reset-mail-outbox": {"task": "spat.dispatch_reset_mail", "schedule": 15.0},
         "reconcile-file-uploads": {"task": "spat.reconcile_file_uploads", "schedule": 60.0},
@@ -104,6 +114,8 @@ def dependencies():
 
 @lru_cache
 def knowledge_graph():
+    from src.infrastructure.persistence.knowledge_graph_store import Neo4jKnowledgeGraph
+
     return Neo4jKnowledgeGraph.from_env()
 
 
@@ -182,6 +194,7 @@ def calculate_artifact_potential(calculation_id):
 @celery_app.task(name="spat.scan_file_upload", bind=True, autoretry_for=(Exception,), retry_backoff=30, retry_jitter=True, max_retries=5)
 def scan_file_upload(self, upload_id):
     from time import time
+    from src.infrastructure.processing.knowledge_extraction import extract_knowledge
 
     store = upload_store()
     with store.transaction(write=True) as db:
@@ -257,6 +270,7 @@ def reprocess_document(self, upload_id):
     el límite de tokens). Si nada cambió, la ejecución ya existe y no se duplica."""
     import logging
     from time import time
+    from src.infrastructure.processing.knowledge_extraction import extract_knowledge
 
     store = upload_store()
     with store.transaction() as db:

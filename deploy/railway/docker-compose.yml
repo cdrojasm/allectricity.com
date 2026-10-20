@@ -1,0 +1,198 @@
+name: spat-railway
+
+# Import this file into a Railway project as a starting point. Railway maps each
+# service to a Railway service and replaces Compose networking with private DNS.
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/local/docker/Dockerfile.api
+    command: ["uvicorn", "src.infrastructure.entrypoint.api.main:app", "--host", "0.0.0.0", "--port", "${PORT:-8000}"]
+    environment:
+      SPAT_POTENTIAL_ENGINE_URL: http://potential-engine:8080
+      OCR_SERVICE_URL: http://ocr:8080
+      MINIO_ENDPOINT: minio:9000
+      NEO4J_URI: bolt://neo4j:7687
+    depends_on:
+      - migrate
+      - minio-init
+      - postgres
+      - redis
+      - minio
+      - neo4j
+      - clamav
+      - ocr
+      - potential-engine
+
+  agent-worker:
+    build:
+      context: ../..
+      dockerfile: deploy/local/docker/Dockerfile.worker
+      target: agent-worker
+    command: ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "agent"]
+    environment:
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      - migrate
+      - api
+      - redis
+
+  document-worker:
+    build:
+      context: ../..
+      dockerfile: deploy/local/docker/Dockerfile.worker
+      target: document-worker
+    command: ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "documents"]
+    environment:
+      OCR_SERVICE_URL: http://ocr:8080
+      MINIO_ENDPOINT: minio:9000
+      NEO4J_URI: bolt://neo4j:7687
+    depends_on:
+      - migrate
+      - minio-init
+      - redis
+      - minio
+      - neo4j
+      - clamav
+      - ocr
+
+  calculation-worker:
+    build:
+      context: ../..
+      dockerfile: deploy/local/docker/Dockerfile.worker
+      target: calculation-worker
+    command: ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "calculations"]
+    environment:
+      SPAT_POTENTIAL_ENGINE_URL: http://potential-engine:8080
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      - migrate
+      - redis
+      - potential-engine
+
+  mail-worker:
+    build:
+      context: ../..
+      dockerfile: deploy/local/docker/Dockerfile.worker
+      target: mail-worker
+    command: ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "-Q", "mail"]
+    environment:
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      - migrate
+      - redis
+
+  render-worker:
+    build:
+      context: ../..
+      dockerfile: deploy/local/docker/Dockerfile.worker
+      target: render-worker
+    command: ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "-Q", "render"]
+    environment:
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      - migrate
+      - redis
+      - minio
+
+  scheduler:
+    build:
+      context: ../..
+      dockerfile: deploy/local/docker/Dockerfile.api
+    command: ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "beat", "--loglevel=INFO", "--schedule=/tmp/spat-celerybeat"]
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      NEO4J_URI: bolt://neo4j:7687
+    depends_on:
+      - api
+      - redis
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: deploy/railway/Dockerfile.frontend
+    depends_on:
+      - api
+
+  potential-engine:
+    build:
+      context: ../..
+      dockerfile: deploy/local/docker/Dockerfile.potential-engine
+
+  ocr:
+    build:
+      context: ../..
+      dockerfile: deploy/local/docker/Dockerfile.ocr
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-spat}
+      POSTGRES_USER: ${POSTGRES_USER:-spat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in Railway}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7.2-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
+  neo4j:
+    image: neo4j:5.26-community
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in Railway}
+    volumes:
+      - neo4j-data:/data
+
+  minio:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in Railway}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in Railway}
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z
+    depends_on:
+      - minio
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        set -e;
+        mc alias set local http://minio:9000 "$${MINIO_ACCESS_KEY}" "$${MINIO_SECRET_KEY}";
+        mc mb --ignore-existing local/quarantine;
+        mc mb --ignore-existing local/documents;
+        mc mb --ignore-existing local/designs;
+        mc mb --ignore-existing local/plantillas;
+        mc mirror --overwrite --remove /seed/plantillas-medicion local/plantillas;
+        mc anonymous set none local/quarantine;
+        mc anonymous set none local/documents;
+        mc anonymous set none local/designs;
+        mc anonymous set none local/plantillas;
+        mc event add local/quarantine arn:minio:sqs::PRIMARY:webhook --event put --ignore-existing
+    volumes:
+      - ../../resources/minio:/seed:ro
+    environment:
+      MINIO_ACCESS_KEY: $${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: $${MINIO_SECRET_KEY}
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/local/docker/Dockerfile.api
+    command: ["alembic", "-c", "alembic.ini", "upgrade", "head"]
+    depends_on:
+      - postgres
+
+  clamav:
+    image: clamav/clamav-debian:1.4
+
+volumes:
+  postgres-data:
+  redis-data:
+  neo4j-data:
+  minio-data:

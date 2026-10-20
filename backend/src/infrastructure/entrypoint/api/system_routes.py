@@ -75,9 +75,17 @@ def check_knowledge_graph(request):
 
 
 def check_potential_engine(request):
-    from src.infrastructure.calculations.potential_engine_client import PotentialEngineClient
+    from src.infrastructure.calculations.potential_engine_client import (
+        PotentialEngineClient,
+    )
 
-    executable = PotentialEngineClient().executable
+    client = PotentialEngineClient()
+    if client.remote_url:
+        with urlopen(client.remote_url + "/health", timeout=3) as response:
+            if json.loads(response.read(4096)).get("status") != "ok":
+                raise RuntimeError("Estado distinto de ok")
+        return
+    executable = client.executable
     if not os.access(executable, os.X_OK):
         raise RuntimeError("Binario no encontrado o sin permiso de ejecución")
 
