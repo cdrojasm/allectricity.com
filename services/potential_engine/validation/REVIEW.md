@@ -1,6 +1,6 @@
 # Paquete de revisión independiente — motor de potencial SPAT
 
-Generado el 2026-10-04 con `validation/review_report.py`, solver 3.0.0. Regenerar después de cualquier cambio del motor o de `reference_cases.json`.
+Generado el 2026-10-20 con `validation/review_report.py`, solver 3.6.0. Regenerar después de cualquier cambio del motor o de `reference_cases.json`.
 
 ## Alcance que se revisa
 
@@ -20,13 +20,13 @@ Motor cuasiestático de electrodos cilíndricos delgados en suelo homogéneo o d
 | ieee80_annex_h_grid1 | resistance_ohm (grid) | 1 | 1 – 1.01 | +0.00 % | ±2.5 % | pasa | ieee80_2013_annex_h |
 | ieee80_annex_h_grid1 | T1 corner-mesh centre | 195.8 | 194.9 – 200.9 | +0.00 % | ±5 % | pasa | ieee80_2013_annex_h |
 | ieee80_annex_h_grid1 | T3 worst touch inside the grid | 203.7 | 202.7 – 209 | +0.00 % | ±5 % | pasa | ieee80_2013_annex_h |
-| ieee80_annex_h_grid1 | S1 grid corner, 1 m outward diagonal | 91.25 | 87.2 – 89.3 | +2.19 % | ±5 % | pasa | ieee80_2013_annex_h |
+| ieee80_annex_h_grid1 | S1 grid corner, 1 m outward diagonal | 91.25 | 87.2 – 89.3 | +2.18 % | ±5 % | pasa | ieee80_2013_annex_h |
 | ieee80_annex_h_grid1 | S1 regression against converged value | 91.25 | 91.24 | +0.01 % | ±0.5 % | pasa | spat_convergence_2026_10_04 |
 | ieee80_annex_h_grid2 | resistance_ohm (grid) | 0.9172 | 0.917 – 0.92 | +0.00 % | ±2.5 % | pasa | ieee80_2013_annex_h |
 | ieee80_annex_h_grid2 | T1 corner-mesh centre | 145.7 | 145.4 – 150.2 | +0.00 % | ±5 % | pasa | ieee80_2013_annex_h |
 | ieee80_annex_h_grid2 | T3 worst touch inside the grid | 150 | 149.6 – 154 | +0.00 % | ±5 % | pasa | ieee80_2013_annex_h |
-| ieee80_annex_h_grid2 | S1 grid corner, 1 m outward diagonal | 69.96 | 70.7 – 79.3 | -1.05 % | ±5 % | pasa | ieee80_2013_annex_h |
-| ieee80_annex_h_grid2 | S1 regression against converged value | 69.96 | 69.78 | +0.25 % | ±0.5 % | pasa | spat_convergence_2026_10_04 |
+| ieee80_annex_h_grid2 | S1 grid corner, 1 m outward diagonal | 69.95 | 70.7 – 79.3 | -1.05 % | ±5 % | pasa | ieee80_2013_annex_h |
+| ieee80_annex_h_grid2 | S1 regression against converged value | 69.95 | 69.78 | +0.25 % | ±0.5 % | pasa | spat_convergence_2026_10_04 |
 | ieee80_annex_b_example1 | resistance_ohm (grid) | 2.648 | 2.67 | -0.84 % | ±5 % | pasa | ieee80_2013_annex_b |
 | ieee80_annex_b_example1 | worst touch inside the grid | 969.3 | 984.3 | -1.52 % | ±5 % | pasa | ieee80_2013_annex_b |
 | ieee80_annex_h_grid3 | resistance_ohm (grid) | 0.9663 | 0.97 – 0.972 | -0.38 % | ±2.5 % | pasa | ieee80_2013_annex_h_layered |
@@ -75,17 +75,17 @@ La desviación es 0 cuando el valor cae dentro del rango publicado; si no, se mi
 - **two_rods_coupled_groups / group_potential_v:** V_B = R_s I_B + R_m I_A
 - **floating_rod / group_potential_v:** transferred potential V_B = R_m I_A (mutual resistance from the two-rod formula)
 - **floating_rod / group_potential_v:** the floating rod carries no net current, so the driven rod stays close to its isolated resistance
-- **ieee80_annex_h_grid1 / S1 grid corner, 1 m outward diagonal:** Known deviation of about +2 %: the engine converges to 91.24 V (Richardson extrapolation, observed order 2.6, from 1, 0.5 and 0.25 m segments; Galerkin and collocation agree within 0.3 %). With 3.5-7 m segments it reproduces 86-89 V, so the published range is most likely under-resolved at the corner, where leakage current concentrates. Not an engine defect; pending confirmation of the programs' segmentation (IEEE 80-2013 Table H.5) or a fine-segment run in a commercial tool.
+- **ieee80_annex_h_grid1 / S1 grid corner, 1 m outward diagonal:** Known deviation of about +2 %: the engine converges to 91.24 V (Richardson extrapolation, observed order 2.6, from 1, 0.5 and 0.25 m segments; Galerkin and collocation agree within 0.3 %). With uniform 3.5-7 m segments, the result is 86-89 V, within the published range. This pattern points to a possible discretization or corner-model difference in the source programs, but does not establish which result is more accurate. Confirm the exact geometry, discretization and S1 convention against IEEE 80-2013 Table H.5 or program-level data.
 - **ieee80_annex_h_grid1 / S1 regression against converged value:** Self-consistency check, not independent validation: detects solver or segmentation changes that move the converged corner step voltage. With the case's graded segments (452) the engine is within 0.02 % of the extrapolated value; uniform 1 m pieces (840) are 0.3 % below.
-- **ieee80_annex_h_grid2 / S1 grid corner, 1 m outward diagonal:** The converged value (69.78 V, see the regression check) lies about 1.3 % below the published range. Uniform segments give 78.1 V at 7 m and 70.9 V at 1 m, so, as for Grid 1 S1, the published spread most likely reflects corner under-resolution in the programs. Within tolerance.
+- **ieee80_annex_h_grid2 / S1 grid corner, 1 m outward diagonal:** The converged value (69.78 V, see the regression check) lies about 1.3 % below the published range. Uniform segments give 78.1 V at 7 m and 70.9 V at 1 m. This is consistent with a discretization or corner-model difference, but does not establish whether the engine or source programs are more accurate. Within the proposed tolerance.
 - **ieee80_annex_h_grid2 / S1 regression against converged value:** Self-consistency check, not independent validation. With the case's graded segments (612) the engine is about 0.25 % above the extrapolated value; uniform 1 m pieces (1000) are 1.6 % above.
 - **ieee80_annex_b_example1 / resistance_ohm:** older single-program result; wider tolerance than the Annex H range
-- **ieee80_annex_h_grid3 / S1 grid corner, 1 m outward diagonal:** The converged value (100.47 V, see the regression check) lies about 1.4 % below the published range, the same corner under-resolution pattern as Grids 1 and 2 (uniform 3.5 m segments give 109.6 V, inside the range). Within tolerance.
+- **ieee80_annex_h_grid3 / S1 grid corner, 1 m outward diagonal:** The converged value (100.47 V, see the regression check) lies about 1.4 % below the published range, uniform 3.5 m segments give 109.6 V, inside the range. This is consistent with a discretization or corner-model difference, but does not establish which result is more accurate. Within the proposed tolerance.
 - **ieee80_annex_h_grid3 / S1 regression against converged value:** Self-consistency check, not independent validation. With the case's graded segments (692) the engine is about 0.25 % above the extrapolated value; uniform 1 m pieces (1000) are 1.8 % above.
 - **ieee80_annex_h_grid4_fence_alone / resistance_ohm:** Known deviation of about +3.6 %, driven by the fence-conductor depth, which the figure leaves open and is assumed 0.5 m: the same model gives 1.632 ohm with the ring at 0.762 m and 1.597 ohm at 1.0 m (inside the range). With 0.5 m the in-grid fence quantities (transfer, T4, S2) stay within 5 %. Not an engine defect; confirm the depth in IEEE 80-2013 Annex H before tightening this check.
-- **ieee80_annex_b_exhibit1 / resistance_ohm:** Known deviation (-12 to -19 %), also unexplained by an independent solver (protectionpro BACKLOG: 'Exhibit 1 unexplained'). Without rods the engine gives 1.4112 ohm against 1.4102 ohm from that solver. With rods shortened to 4 m (not reaching the 100 ohm-m layer) it reproduces the published figures (1.357 ohm, 49.3 %, 17.3 %), so the EPRI result most likely did not model the 9.144 m rods penetrating the lower layer. Rods crossing the interface are validated by Annex H Grids 3-6. Informative only.
-- **ieee80_annex_b_exhibit1 / mesh voltage, % of GPR:** Known deviation (-12 to -19 %), also unexplained by an independent solver (protectionpro BACKLOG: 'Exhibit 1 unexplained'). Without rods the engine gives 1.4112 ohm against 1.4102 ohm from that solver. With rods shortened to 4 m (not reaching the 100 ohm-m layer) it reproduces the published figures (1.357 ohm, 49.3 %, 17.3 %), so the EPRI result most likely did not model the 9.144 m rods penetrating the lower layer. Rods crossing the interface are validated by Annex H Grids 3-6. Informative only.
-- **ieee80_annex_b_exhibit1 / corner step voltage, % of GPR:** Known deviation (-12 to -19 %), also unexplained by an independent solver (protectionpro BACKLOG: 'Exhibit 1 unexplained'). Without rods the engine gives 1.4112 ohm against 1.4102 ohm from that solver. With rods shortened to 4 m (not reaching the 100 ohm-m layer) it reproduces the published figures (1.357 ohm, 49.3 %, 17.3 %), so the EPRI result most likely did not model the 9.144 m rods penetrating the lower layer. Rods crossing the interface are validated by Annex H Grids 3-6. Informative only.
+- **ieee80_annex_b_exhibit1 / resistance_ohm:** Known deviation (-12 to -19 %), also unexplained by an independent solver (protectionpro BACKLOG: 'Exhibit 1 unexplained'). Without rods the engine gives 1.4112 ohm against 1.4102 ohm from that solver. With rods shortened to 4 m (ending 0.072 m above the interface), current results are 1.357 ohm, 49.32 % mesh voltage and 17.31 % corner-step voltage: close to EPRI, though the step is 5.58 % low. Without rods, resistance is 1.4112 ohm, matching the separate protectionpro result (1.4102 ohm). These variants suggest a different rod-depth assumption in the EPRI setup, but do not prove it; confirm against the original Exhibit 1 model. Rods crossing interfaces are exercised separately in Annex H Grids 3-6. Informative pending source verification.
+- **ieee80_annex_b_exhibit1 / mesh voltage, % of GPR:** Known deviation (-12 to -19 %), also unexplained by an independent solver (protectionpro BACKLOG: 'Exhibit 1 unexplained'). Without rods the engine gives 1.4112 ohm against 1.4102 ohm from that solver. With rods shortened to 4 m (ending 0.072 m above the interface), current results are 1.357 ohm, 49.32 % mesh voltage and 17.31 % corner-step voltage: close to EPRI, though the step is 5.58 % low. Without rods, resistance is 1.4112 ohm, matching the separate protectionpro result (1.4102 ohm). These variants suggest a different rod-depth assumption in the EPRI setup, but do not prove it; confirm against the original Exhibit 1 model. Rods crossing interfaces are exercised separately in Annex H Grids 3-6. Informative pending source verification.
+- **ieee80_annex_b_exhibit1 / corner step voltage, % of GPR:** Known deviation (-12 to -19 %), also unexplained by an independent solver (protectionpro BACKLOG: 'Exhibit 1 unexplained'). Without rods the engine gives 1.4112 ohm against 1.4102 ohm from that solver. With rods shortened to 4 m (ending 0.072 m above the interface), current results are 1.357 ohm, 49.32 % mesh voltage and 17.31 % corner-step voltage: close to EPRI, though the step is 5.58 % low. Without rods, resistance is 1.4112 ohm, matching the separate protectionpro result (1.4102 ohm). These variants suggest a different rod-depth assumption in the EPRI setup, but do not prove it; confirm against the original Exhibit 1 model. Rods crossing interfaces are exercised separately in Annex H Grids 3-6. Informative pending source verification.
 
 ## Convergencia de discretización
 
@@ -95,18 +95,18 @@ Cambio relativo de cada magnitud respecto al refinamiento anterior.
 
 | d | Segmentos | resistance_ohm | T1 corner-mesh centre | T3 worst touch inside the grid | S1 grid corner, 1 m outward diagonal | S1 regression against converged value |
 |---|---|---|---|---|---|---|
-| 4.0 m | 272 | 1.001 | 196.3 | 204 | 91.1 | 91.1 |
-| 2.0 m | 356 | 1 (0.05 %) | 195.9 (0.20 %) | 203.8 (0.06 %) | 91.25 (0.17 %) | 91.25 (0.17 %) |
+| 4.0 m | 272 | 1.001 | 196.3 | 204 | 91.09 | 91.09 |
+| 2.0 m | 356 | 1.001 (0.05 %) | 195.9 (0.20 %) | 203.9 (0.07 %) | 91.25 (0.18 %) | 91.25 (0.18 %) |
 | 1.0 m | 452 | 1 (0.02 %) | 195.8 (0.08 %) | 203.7 (0.08 %) | 91.25 (0.00 %) | 91.25 (0.00 %) |
-| 0.5 m | 592 | 1 (0.01 %) | 195.7 (0.04 %) | 203.4 (0.11 %) | 91.22 (0.03 %) | 91.22 (0.03 %) |
+| 0.5 m | 592 | 1 (0.01 %) | 195.7 (0.04 %) | 203.5 (0.11 %) | 91.22 (0.03 %) | 91.22 (0.03 %) |
 
 **ieee80_annex_h_grid2** (segmentación graded; d = longitud de refinamiento)
 
 | d | Segmentos | resistance_ohm | T1 corner-mesh centre | T3 worst touch inside the grid | S1 grid corner, 1 m outward diagonal | S1 regression against converged value |
 |---|---|---|---|---|---|---|
-| 4.0 m | 372 | 0.9179 | 146.3 | 150.4 | 71.01 | 71.01 |
-| 2.0 m | 496 | 0.9174 (0.06 %) | 145.9 (0.26 %) | 150.1 (0.18 %) | 70.19 (1.16 %) | 70.19 (1.16 %) |
-| 1.0 m | 612 | 0.9172 (0.03 %) | 145.7 (0.11 %) | 150 (0.11 %) | 69.96 (0.33 %) | 69.96 (0.33 %) |
+| 4.0 m | 372 | 0.9179 | 146.3 | 150.4 | 71 | 71 |
+| 2.0 m | 496 | 0.9174 (0.06 %) | 145.9 (0.26 %) | 150.1 (0.18 %) | 70.18 (1.15 %) | 70.18 (1.15 %) |
+| 1.0 m | 612 | 0.9172 (0.02 %) | 145.7 (0.11 %) | 150 (0.11 %) | 69.95 (0.33 %) | 69.95 (0.33 %) |
 | 0.5 m | 792 | 0.9171 (0.01 %) | 145.6 (0.06 %) | 149.8 (0.10 %) | 69.9 (0.08 %) | 69.9 (0.08 %) |
 
 **ieee80_annex_h_grid3** (segmentación graded; d = longitud de refinamiento)

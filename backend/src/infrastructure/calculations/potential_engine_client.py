@@ -2,22 +2,28 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 import hashlib
 import math
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
-from typing import Any
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from math import ceil
+from pathlib import Path
+from typing import Any, Literal
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 PROTOCOL = "SPAT-POTENTIAL-3"
+PROTOCOL_V4 = "SPAT-POTENTIAL-4"
+PROTOCOL_V5 = "SPAT-POTENTIAL-5"
 # Operational limits mirrored from services/potential_engine/src/main.cpp.
 MAX_SEGMENTS = 4000
 MAX_POINTS = 100_000
+MAX_SCENARIOS = 1_000
+MAX_SCENARIO_RESULT_ROWS = 2_000_000
 MAX_POINT_SEGMENT_WORK = 2.0e7
 MAX_COORDINATE_M = 1.0e5
 MAX_DEPTH_M = 1000.0
@@ -42,6 +48,9 @@ KERNEL_DEPTH_FACTOR = 17.0
 MAX_KERNEL_ERROR_BOUND = 1.0e-4
 DEFAULT_TIMEOUT_S = 60.0
 DEFAULT_MEMORY_LIMIT_MB = 512
+DEFAULT_QUADRATURE_TOLERANCE = 1.0e-9
+MIN_QUADRATURE_TOLERANCE = 1.0e-12
+MAX_QUADRATURE_TOLERANCE = 1.0e-4
 
 
 @dataclass(frozen=True)
@@ -52,6 +61,21 @@ class ElectrodeSegment:
     start_m: tuple[float, float, float]
     end_m: tuple[float, float, float]
     radius_m: float
+
+
+@dataclass(frozen=True)
+class ElectricalConnection:
+    """Explicit electrical connection between two equipotential conductor groups.
+
+    A `bond` merges groups into one ideal node. A `resistor` preserves separate node potentials
+    and joins them through a finite resistance in ohms.
+    """
+
+    id: str
+    kind: Literal["bond", "resistor"]
+    group_a: str
+    group_b: str
+    resistance_ohm: float | None = None
 
 
 @dataclass(frozen=True)
@@ -135,16 +159,17 @@ def soil_record(soil: SoilModel) -> dict[str, Any]:
     return {"model": model, **asdict(soil)}
 
 
-def _soil_line(soil: SoilModel, segment_count: int) -> str:
+def _soil_line(soil: SoilModel, segment_count: int,
+               quadrature_tolerance: float = DEFAULT_QUADRATURE_TOLERANCE) -> str:
     if isinstance(soil, LayerStackSoil):
         values = []
         for rho, thickness in soil.layers:
             values += [format(float(rho), ".17g"), "inf" if thickness is None else format(float(thickness), ".17g")]
-        return f"n-layer {len(soil.layers)} " + " ".join(values) + f" {soil.kernel_density} {segment_count}"
+        return f"n-layer {len(soil.layers)} " + " ".join(values) + f" {soil.kernel_density} {segment_count} {quadrature_tolerance:.17g}"
     if isinstance(soil, TwoLayerSoil):
         values = (soil.upper_resistivity_ohm_m, soil.lower_resistivity_ohm_m, soil.upper_thickness_m)
-        return "two-layer " + " ".join(format(float(v), ".17g") for v in values) + f" {segment_count}"
-    return f"homogeneous {float(soil.resistivity_ohm_m):.17g} {segment_count}"
+        return "two-layer " + " ".join(format(float(v), ".17g") for v in values) + f" {segment_count} {quadrature_tolerance:.17g}"
+    return f"homogeneous {float(soil.resistivity_ohm_m):.17g} {segment_count} {quadrature_tolerance:.17g}"
 
 
 def image_terms(soil: TwoLayerSoil, max_depth_m: float, extent_m: float) -> int | None:
@@ -466,6 +491,7 @@ def validate_request(
     injections_a: dict[str, float],
     points: list[PotentialPoint],
     injection_origins: dict[str, str] | None = None,
+    connections: list[ElectricalConnection] | None = None,
 ) -> None:
     """Reject requests outside the engine's validated operating range before starting a process.
 
@@ -532,8 +558,28 @@ def validate_request(
         seen[ends] = segment.id
     for i, p in enumerate(segments):
         for q in segments[i + 1:]:
-            if p.group != q.group and _segment_distance(p.start_m, p.end_m, q.start_m, q.end_m) <= p.radius_m + q.radius_m:
+            if not connections and p.group != q.group and _segment_distance(p.start_m, p.end_m, q.start_m, q.end_m) <= p.radius_m + q.radius_m:
                 raise ValueError(f"segments of different groups touch or cross: {p.id} and {q.id}")
+    connection_ids: set[str] = set()
+    for connection in connections or []:
+        _token(connection.id, "connection id")
+        _token(connection.group_a, "connection group")
+        _token(connection.group_b, "connection group")
+        if connection.id in connection_ids:
+            raise ValueError(f"duplicate connection id: {connection.id}")
+        connection_ids.add(connection.id)
+        if connection.group_a == connection.group_b:
+            raise ValueError(f"connection {connection.id} must join two different groups")
+        if connection.group_a not in groups or connection.group_b not in groups:
+            raise ValueError(f"connection {connection.id} references a group without electrode segments")
+        if connection.kind not in ("bond", "resistor"):
+            raise ValueError(f"connection {connection.id} kind must be bond or resistor")
+        if connection.kind == "bond":
+            if connection.resistance_ohm is not None:
+                raise ValueError(f"ideal bond {connection.id} must not include resistance_ohm")
+        elif (connection.resistance_ohm is None or not math.isfinite(connection.resistance_ohm)
+              or not 1e-9 <= connection.resistance_ohm <= 1e9):
+            raise ValueError(f"resistor {connection.id} resistance must be between 1e-9 and 1e9 ohm")
     for group, current in injections_a.items():
         _token(group, "injection group")
         if group not in groups:
@@ -606,11 +652,17 @@ class PotentialEngineClient:
         executable: str | os.PathLike[str] | None = None,
         timeout_s: float = DEFAULT_TIMEOUT_S,
         memory_limit_mb: int = DEFAULT_MEMORY_LIMIT_MB,
+        quadrature_tolerance: float = DEFAULT_QUADRATURE_TOLERANCE,
     ):
         default = Path(__file__).resolve().parents[4] / "services" / "potential_engine" / "build" / "spat-potential-engine"
         self.executable = str(executable or os.getenv("SPAT_POTENTIAL_ENGINE", default))
+        self.remote_url = os.getenv("SPAT_POTENTIAL_ENGINE_URL", "").rstrip("/")
         self.timeout_s = timeout_s
         self.memory_limit_mb = memory_limit_mb
+        if (not math.isfinite(quadrature_tolerance) or
+                not MIN_QUADRATURE_TOLERANCE <= quadrature_tolerance <= MAX_QUADRATURE_TOLERANCE):
+            raise ValueError(f"quadrature_tolerance must be between {MIN_QUADRATURE_TOLERANCE:g} and {MAX_QUADRATURE_TOLERANCE:g}")
+        self.quadrature_tolerance = float(quadrature_tolerance)
 
     def calculate(
         self,
@@ -621,6 +673,8 @@ class PotentialEngineClient:
         soil_resistivity_ohm_m: float | None = None,
         soil: SoilModel | None = None,
         injection_origins: dict[str, str] | None = None,
+        connections: list[ElectricalConnection] | None = None,
+        project_id: str | None = None,
     ) -> dict[str, Any]:
         """Solve and return currents, potentials, solver diagnostics and a traceability record.
 
@@ -635,9 +689,11 @@ class PotentialEngineClient:
             raise ValueError("give exactly one of soil_resistivity_ohm_m or soil")
         soil = as_soil(soil if soil is not None else soil_resistivity_ohm_m)
         segments = split_at_interface(segments, soil)
-        validate_request(soil, segments, injections_a, points, injection_origins)
+        connections = list(connections or [])
+        validate_request(soil, segments, injections_a, points, injection_origins, connections)
         origins = {group: (injection_origins or {}).get(group, "unspecified") for group in injections_a}
-        lines = [PROTOCOL, _soil_line(soil, len(segments))]
+        protocol = PROTOCOL_V4 if connections else PROTOCOL
+        lines = [protocol, _soil_line(soil, len(segments), self.quadrature_tolerance)]
         for segment in segments:
             row = [
                 segment.id, segment.group, segment.kind, _floats(segment.start_m),
@@ -647,6 +703,13 @@ class PotentialEngineClient:
         lines.append(str(len(injections_a)))
         for group, current in injections_a.items():
             lines.append(f"{group} {float(current):.17g} {origins[group]}")
+        if connections:
+            bonds = [item for item in connections if item.kind == "bond"]
+            resistors = [item for item in connections if item.kind == "resistor"]
+            lines.append(f"BOND {len(bonds)}")
+            lines.extend(f"{item.id} {item.group_a} {item.group_b}" for item in bonds)
+            lines.append(f"RESISTOR {len(resistors)}")
+            lines.extend(f"{item.id} {item.group_a} {item.group_b} {item.resistance_ohm:.17g}" for item in resistors)
         lines.append(str(len(points)))
         for point in points:
             lines.append(f"{point.id} {_floats(point.xyz_m)}")
@@ -654,6 +717,112 @@ class PotentialEngineClient:
         payload = "\n".join(lines) + "\n"
 
         started = time.monotonic()
+        if self.remote_url:
+            stdout = self._calculate_remote(payload, project_id)
+        else:
+            stdout = self._calculate_local(payload)
+        result = self._decode(stdout)
+        if isinstance(soil, LayerStackSoil) and result["metadata"].get("soil_model") != "n-layer":
+            raise PotentialEngineError("C++ engine did not solve the n-layer soil; rebuild it (make potential-engine)")
+        result["trace"] = {
+            **result.pop("metadata"),
+            "engine_executable": self.remote_url or self.executable,
+            "engine_sha256": None if self.remote_url else _file_sha256(self.executable),
+            "request_sha256": hashlib.sha256(payload.encode()).hexdigest(),
+            "calculated_at": datetime.now(timezone.utc).isoformat(),
+            "duration_s": round(time.monotonic() - started, 6),
+            "protocol": protocol,
+            "injections": [
+                {"group": group, "current_a": float(current), "origin": origins[group]}
+                for group, current in injections_a.items()
+            ],
+            "soil": soil_record(soil),
+            "segments": [asdict(segment) for segment in segments],
+            "connections": [asdict(connection) for connection in connections],
+        }
+        return result
+
+    def calculate_scenarios(
+        self,
+        *,
+        scenarios: dict[str, dict[str, float]],
+        segments: list[ElectrodeSegment],
+        points: list[PotentialPoint],
+        soil_resistivity_ohm_m: float | None = None,
+        soil: SoilModel | None = None,
+        injection_origins: dict[str, dict[str, str]] | None = None,
+        connections: list[ElectricalConnection] | None = None,
+        project_id: str | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Solve named excitation vectors against one assembled and factored system."""
+        if (soil is None) == (soil_resistivity_ohm_m is None):
+            raise ValueError("give exactly one of soil_resistivity_ohm_m or soil")
+        if not scenarios or len(scenarios) > MAX_SCENARIOS:
+            raise ValueError(f"scenario count must be between 1 and {MAX_SCENARIOS}")
+        soil = as_soil(soil if soil is not None else soil_resistivity_ohm_m)
+        segments = split_at_interface(segments, soil)
+        connections = list(connections or [])
+        origins = injection_origins or {}
+        if set(origins) - set(scenarios):
+            raise ValueError("injection_origins contains an unknown scenario")
+        result_rows = len(scenarios) * (
+            len(segments) + len(points) + len({segment.group for segment in segments}) + len(connections) + 128
+        )
+        if result_rows > MAX_SCENARIO_RESULT_ROWS:
+            raise ValueError(f"multi-scenario response would exceed {MAX_SCENARIO_RESULT_ROWS} rows")
+        lines = [PROTOCOL_V5, _soil_line(soil, len(segments), self.quadrature_tolerance)]
+        for segment in segments:
+            lines.append(" ".join((segment.id, segment.group, segment.kind, _floats(segment.start_m),
+                                   _floats(segment.end_m), format(float(segment.radius_m), ".17g"))))
+        bonds = [item for item in connections if item.kind == "bond"]
+        resistors = [item for item in connections if item.kind == "resistor"]
+        lines.append(f"BOND {len(bonds)}")
+        lines.extend(f"{item.id} {item.group_a} {item.group_b}" for item in bonds)
+        lines.append(f"RESISTOR {len(resistors)}")
+        lines.extend(f"{item.id} {item.group_a} {item.group_b} {item.resistance_ohm:.17g}" for item in resistors)
+        lines.append(f"SCENARIOS {len(scenarios)}")
+        for scenario_id, injections in scenarios.items():
+            _token(scenario_id, "scenario id")
+            validate_request(soil, segments, injections, points, origins.get(scenario_id), connections)
+            scenario_origins = origins.get(scenario_id) or {}
+            lines.append(f"SCENARIO {scenario_id} {len(injections)}")
+            for group, current in injections.items():
+                lines.append(f"{group} {float(current):.17g} {scenario_origins.get(group, 'unspecified')}")
+        lines.append(str(len(points)))
+        for point in points:
+            lines.append(f"{point.id} {_floats(point.xyz_m)}")
+        lines.append("END")
+        payload = "\n".join(lines) + "\n"
+
+        started = time.monotonic()
+        stdout = self._calculate_remote(payload, project_id) if self.remote_url else self._calculate_local(payload)
+        results = self._decode_scenarios(stdout)
+        if isinstance(soil, LayerStackSoil) and any(result["metadata"].get("soil_model") != "n-layer"
+                                                   for result in results.values()):
+            raise PotentialEngineError("C++ engine did not solve the n-layer soil; rebuild it (make potential-engine)")
+        duration = round(time.monotonic() - started, 6)
+        for scenario_id, result in results.items():
+            result["trace"] = {
+                **result.pop("metadata"),
+                "engine_executable": self.remote_url or self.executable,
+                "engine_sha256": None if self.remote_url else _file_sha256(self.executable),
+                "request_sha256": hashlib.sha256(payload.encode()).hexdigest(),
+                "calculated_at": datetime.now(timezone.utc).isoformat(),
+                "duration_s": duration,
+                "protocol": PROTOCOL_V5,
+                "scenario_id": scenario_id,
+                "injections": [
+                    {"group": group, "current_a": float(current),
+                     "origin": (origins.get(scenario_id) or {}).get(group, "unspecified")}
+                    for group, current in scenarios[scenario_id].items()
+                ],
+                "soil": soil_record(soil),
+                "segments": [asdict(segment) for segment in segments],
+                "connections": [asdict(connection) for connection in connections],
+            }
+        return results
+
+    def _calculate_local(self, payload: str) -> str:
         try:
             process = subprocess.Popen(
                 [self.executable], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -671,33 +840,35 @@ class PotentialEngineClient:
             message = stdout.strip().split("\t", 2)
             detail = message[2] if len(message) > 2 and message[1] == "ERROR" else stderr.strip()
             raise PotentialEngineError(detail or f"C++ engine exited with status {process.returncode}")
-        result = self._decode(stdout)
-        if isinstance(soil, LayerStackSoil) and result["metadata"].get("soil_model") != "n-layer":
-            raise PotentialEngineError("C++ engine did not solve the n-layer soil; rebuild it (make potential-engine)")
-        result["trace"] = {
-            **result.pop("metadata"),
-            "engine_executable": self.executable,
-            "engine_sha256": _file_sha256(self.executable),
-            "request_sha256": hashlib.sha256(payload.encode()).hexdigest(),
-            "calculated_at": datetime.now(timezone.utc).isoformat(),
-            "duration_s": round(time.monotonic() - started, 6),
-            "injections": [
-                {"group": group, "current_a": float(current), "origin": origins[group]}
-                for group, current in injections_a.items()
-            ],
-            "soil": soil_record(soil),
-            "segments": [asdict(segment) for segment in segments],
-        }
-        return result
+        return stdout
+
+    def _calculate_remote(self, payload: str, project_id: str | None = None) -> str:
+        if project_id and any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:-" for char in project_id):
+            raise PotentialEngineError("project_id contains unsupported characters")
+        path = f"/v1/projects/{project_id}/calculate" if project_id else "/v1/calculate"
+        request = Request(
+            f"{self.remote_url}{path}",
+            data=payload.encode(),
+            headers={"Content-Type": "text/plain"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_s) as response:
+                return response.read().decode()
+        except HTTPError as exc:
+            detail = exc.read(4096).decode(errors="replace")
+            raise PotentialEngineError(f"remote C++ potential engine returned HTTP {exc.code}: {detail}") from exc
+        except (URLError, TimeoutError) as exc:
+            raise PotentialEngineError("remote C++ potential calculation exceeded its time limit") from exc
 
     @staticmethod
     def _decode(stdout: str) -> dict[str, Any]:
         rows = stdout.splitlines()
-        if not rows or rows[0] != f"{PROTOCOL}\tOK" or rows[-1] != "END":
+        if not rows or rows[0] not in (f"{PROTOCOL}\tOK", f"{PROTOCOL_V4}\tOK") or rows[-1] != "END":
             raise PotentialEngineError("C++ engine returned an invalid response")
         result: dict[str, Any] = {
             "segment_currents_a": {}, "groups": {}, "potentials_v": {},
-            "diagnostics": {}, "warnings": [], "metadata": {},
+            "connection_currents_a": {}, "diagnostics": {}, "warnings": [], "metadata": {},
         }
         for row in rows[1:-1]:
             fields = row.split("\t")
@@ -714,6 +885,8 @@ class PotentialEngineClient:
                 }
             elif fields[0] == "POINT" and len(fields) == 3:
                 result["potentials_v"][fields[1]] = float(fields[2])
+            elif fields[0] == "CONNECTION" and len(fields) == 3:
+                result["connection_currents_a"][fields[1]] = float(fields[2])
             elif fields[0] == "DIAG" and len(fields) == 3:
                 result["diagnostics"][fields[1]] = float(fields[2])
             elif fields[0] == "META" and len(fields) == 3:
@@ -723,6 +896,32 @@ class PotentialEngineClient:
             else:
                 raise PotentialEngineError("C++ engine returned an invalid data row")
         return result
+
+    @staticmethod
+    def _decode_scenarios(stdout: str) -> dict[str, dict[str, Any]]:
+        rows = stdout.splitlines()
+        if not rows or rows[0] != f"{PROTOCOL_V5}\tOK" or rows[-1] != "END":
+            raise PotentialEngineError("C++ engine returned an invalid multi-scenario response")
+        results: dict[str, dict[str, Any]] = {}
+        index = 1
+        while index < len(rows) - 1:
+            marker = rows[index].split("\t")
+            if len(marker) != 2 or marker[0] != "SCENARIO" or marker[1] in results:
+                raise PotentialEngineError("C++ engine returned an invalid scenario block")
+            scenario_id = marker[1]
+            index += 1
+            block = []
+            while index < len(rows) - 1 and rows[index] != "END_SCENARIO":
+                block.append(rows[index])
+                index += 1
+            if index >= len(rows) - 1:
+                raise PotentialEngineError("C++ engine returned an unterminated scenario block")
+            decoded = PotentialEngineClient._decode("\n".join([f"{PROTOCOL}\tOK", *block, "END"]))
+            results[scenario_id] = decoded
+            index += 1
+        if not results:
+            raise PotentialEngineError("C++ engine returned no scenarios")
+        return results
 
 
 def _file_sha256(path: str) -> str | None:

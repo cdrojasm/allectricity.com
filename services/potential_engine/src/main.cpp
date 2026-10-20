@@ -1,26 +1,46 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <sys/resource.h>
 
 namespace {
+using SteadyClock = std::chrono::steady_clock;
+double elapsed_ms(SteadyClock::time_point start) {
+    return std::chrono::duration<double, std::milli>(SteadyClock::now() - start).count();
+}
+double peak_rss_mib() {
+    rusage usage{};
+    if (getrusage(RUSAGE_SELF, &usage) != 0) return -1.0;
+#ifdef __APPLE__
+    return static_cast<double>(usage.ru_maxrss) / (1024.0 * 1024.0);
+#else
+    return static_cast<double>(usage.ru_maxrss) / 1024.0;
+#endif
+}
 constexpr const char* kProtocol = "SPAT-POTENTIAL-3";
-constexpr const char* kSolverVersion = "3.2.0";
+constexpr const char* kProtocolV4 = "SPAT-POTENTIAL-4";
+constexpr const char* kProtocolV5 = "SPAT-POTENTIAL-5";
+constexpr const char* kSolverVersion = "3.6.0";
 constexpr const char* kMethod =
     "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;"
-    "graded-gauss-legendre-8";
+    "adaptive-graded-gauss-legendre-8;interaction-classified-far-gauss-legendre-8;"
+    "same-radius-reciprocal-matrix-reuse";
 constexpr const char* kLayeredMethod =
     "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;"
-    "graded-gauss-legendre-8;two-layer-image-series;far-image-gauss-2x2";
+    "adaptive-graded-gauss-legendre-8;interaction-classified-far-gauss-legendre-8;"
+    "same-radius-reciprocal-matrix-reuse;two-layer-image-series;far-image-gauss-2x2";
 constexpr const char* kAssumptions =
     "homogeneous-isotropic-semi-infinite-soil;insulating-air-boundary;quasi-static-dc;"
     "ideal-equipotential-metal-per-group;zero-net-current-for-floating-groups";
@@ -29,7 +49,9 @@ constexpr const char* kLayeredAssumptions =
     "ideal-equipotential-metal-per-group;zero-net-current-for-floating-groups";
 constexpr const char* kNLayerMethod =
     "galerkin-thin-wire-mom;piecewise-constant-leakage;analytic-line-integral;"
-    "graded-gauss-legendre-8;n-layer-generalized-reflection-recursion;real-exponential-image-fit-tsvd;"
+    "adaptive-graded-gauss-legendre-8;interaction-classified-far-gauss-legendre-8;"
+    "same-radius-reciprocal-matrix-reuse;n-layer-generalized-reflection-recursion;"
+    "real-exponential-image-fit-tsvd;"
     "a-posteriori-spectral-error-bound;far-image-gauss-2x2";
 constexpr const char* kNLayerAssumptions =
     "horizontally-stratified-isotropic-soil-1-to-8-layers;bottom-layer-half-space;insulating-air-boundary;"
@@ -42,6 +64,8 @@ constexpr const char* kUnits = "length=m;resistivity=ohm_m;current=A;potential=V
 #endif
 constexpr std::size_t kMaxSegments = SPAT_MAX_SEGMENTS;
 constexpr std::size_t kMaxPoints = 100000;
+constexpr std::size_t kMaxScenarioCount = 1000;
+constexpr double kMaxScenarioResultRows = 2.0e6;
 constexpr double kMaxPointSegmentWork = 2.0e7;
 constexpr double kMaxCoordinateM = 1.0e5;
 constexpr double kMaxDepthM = 1000.0;
@@ -55,6 +79,12 @@ constexpr double kMinLayerThicknessM = 0.01;
 // (1 / largest extent), and the most image orders the solver will sum before refusing.
 constexpr double kImageSeriesTolerance = 1.0e-7;
 constexpr int kMaxImageTerms = 2000;
+constexpr double kDefaultQuadratureTolerance = 1.0e-9;
+constexpr double kMinQuadratureTolerance = 1.0e-12;
+constexpr double kMaxQuadratureTolerance = 1.0e-4;
+double gQuadratureTolerance = kDefaultQuadratureTolerance;
+std::size_t gQuadratureEvaluations = 0, gQuadratureRefinements = 0, gQuadratureMaxDepth = 0;
+std::size_t gQuadratureInteractions = 0, gQuadratureMaxEvaluationsPerInteraction = 0;
 // Two-layer work limits in image evaluations (one image of one segment seen from one point).
 // Measured with validation/benchmark.py at about 2.5e-9 s per evaluation (Apple M5 Pro), so each
 // limit is about 10 s; homogeneous requests stay far below them.
@@ -130,6 +160,16 @@ struct Group {
     double potential_spread{};
 };
 
+struct ElectricalConnection {
+    std::string id, a, b;
+    double resistance{};  // zero denotes an ideal bond
+};
+
+struct ExcitationScenario {
+    std::string id;
+    std::map<std::string, std::pair<double, std::string>> injections;
+};
+
 Vec3 at(const Segment& s, double t) { return s.a + (s.b - s.a) * t; }
 
 double number(const std::string& text, const char* label) {
@@ -180,6 +220,51 @@ double segment_distance(const Vec3& p1, const Vec3& q1, const Vec3& p2, const Ve
     return norm((p1 + d1 * s) - (p2 + d2 * t));
 }
 
+enum class InteractionKind { degenerate, self, shared_endpoint, t_junction, crossing, near, separated };
+constexpr std::array<const char*, 7> kInteractionNames = {
+    "degenerate", "self", "shared_endpoint", "t_junction", "crossing", "near", "separated"};
+struct InteractionCounts {
+    std::array<std::size_t, kInteractionNames.size()> categories{};
+    std::size_t near_interface{0};
+};
+
+std::size_t interaction_index(InteractionKind kind) { return static_cast<std::size_t>(kind); }
+
+InteractionKind classify_interaction(const Segment& a, const Segment& b, bool same,
+                                     const std::vector<double>& interfaces, bool* near_interface = nullptr) {
+    const bool finite = std::isfinite(a.length) && std::isfinite(b.length) &&
+        std::isfinite(a.radius) && std::isfinite(b.radius) &&
+        std::isfinite(a.a.x) && std::isfinite(a.a.y) && std::isfinite(a.a.z) &&
+        std::isfinite(a.b.x) && std::isfinite(a.b.y) && std::isfinite(a.b.z) &&
+        std::isfinite(b.a.x) && std::isfinite(b.a.y) && std::isfinite(b.a.z) &&
+        std::isfinite(b.b.x) && std::isfinite(b.b.y) && std::isfinite(b.b.z);
+    if (!finite || a.length < 5.0 * a.radius || b.length < 5.0 * b.radius) {
+        if (near_interface) *near_interface = false;
+        return InteractionKind::degenerate;
+    }
+    bool interface_flag = false;
+    for (double depth : interfaces) {
+        const double tolerance_a = 0.1 * a.length, tolerance_b = 0.1 * b.length;
+        interface_flag = interface_flag || std::min(std::abs(-a.a.z - depth), std::abs(-a.b.z - depth)) <= tolerance_a ||
+                         std::min(std::abs(-b.a.z - depth), std::abs(-b.b.z - depth)) <= tolerance_b;
+    }
+    if (near_interface) *near_interface = interface_flag;
+    if (same) return InteractionKind::self;
+
+    double s = 0.0, t = 0.0;
+    const double gap = segment_distance(a.a, a.b, b.a, b.b, s, t);
+    const double tolerance = 1.0e-6 * std::min(a.length, b.length);
+    for (const Vec3& p : {a.a, a.b}) for (const Vec3& q : {b.a, b.b})
+        if (norm(p - q) <= tolerance) return InteractionKind::shared_endpoint;
+    if (gap <= tolerance) {
+        const bool end_a = s * a.length <= tolerance || (1.0 - s) * a.length <= tolerance;
+        const bool end_b = t * b.length <= tolerance || (1.0 - t) * b.length <= tolerance;
+        return end_a || end_b ? InteractionKind::t_junction : InteractionKind::crossing;
+    }
+    if (gap < 2.0 * std::min(a.length, b.length)) return InteractionKind::near;
+    return InteractionKind::separated;
+}
+
 // Integral of 1/R along a straight source line from a to b for an observation point p,
 // with the thin-wire reduced kernel R = sqrt(axial^2 + perpendicular^2 + radius^2).
 double line_integral(const Vec3& p, const Vec3& a, const Vec3& b, double length, double radius) {
@@ -201,8 +286,31 @@ double source_potential(const Vec3& p, const Segment& source) {
 template <typename F>
 double gauss(F&& f, double t0, double t1) {
     double sum = 0.0;
-    for (std::size_t q = 0; q < kNodes.size(); ++q) sum += kWeights[q] * f(t0 + (t1 - t0) * 0.5 * (kNodes[q] + 1.0));
+    for (std::size_t q = 0; q < kNodes.size(); ++q) {
+        ++gQuadratureEvaluations;
+        sum += kWeights[q] * f(t0 + (t1 - t0) * 0.5 * (kNodes[q] + 1.0));
+    }
     return 0.5 * (t1 - t0) * sum;
+}
+
+// Compare one GL8 panel with its two half-panels. Refine only where the embedded
+// difference exceeds the requested relative tolerance; fail explicitly if the
+// fixed depth limit cannot meet it.
+template <typename F>
+double adaptive_gauss(F&& f, double t0, double t1, int depth = 0) {
+    const double whole = gauss(f, t0, t1);
+    const double mid = 0.5 * (t0 + t1);
+    const double left = gauss(f, t0, mid), right = gauss(f, mid, t1);
+    const double split = left + right;
+    gQuadratureMaxDepth = std::max(gQuadratureMaxDepth, static_cast<std::size_t>(depth));
+    const double absolute_tolerance = 1.0e-12 * std::abs(t1 - t0);
+    if (std::abs(split - whole) <= absolute_tolerance + gQuadratureTolerance * std::abs(split)) return split;
+    if (depth >= 16) throw std::runtime_error("near-field quadrature did not converge (depth=" +
+                                              std::to_string(depth) + ", tolerance=" +
+                                              std::to_string(gQuadratureTolerance) + ", evaluations=" +
+                                              std::to_string(gQuadratureEvaluations) + ")");
+    ++gQuadratureRefinements;
+    return adaptive_gauss(f, t0, mid, depth + 1) + adaptive_gauss(f, mid, t1, depth + 1);
 }
 
 // Integral on [from, to] graded geometrically towards `to`, where the integrand varies on `scale`.
@@ -213,11 +321,11 @@ double graded(F&& f, double from, double to, double scale) {
     while (gap > scale) {
         const double next = 0.2 * gap;
         const double lo = to - direction * gap, hi = to - direction * next;
-        result += gauss(f, std::min(lo, hi), std::max(lo, hi));
+        result += adaptive_gauss(f, std::min(lo, hi), std::max(lo, hi));
         gap = next;
     }
     const double lo = to - direction * gap;
-    return result + gauss(f, std::min(lo, to), std::max(lo, to));
+    return result + adaptive_gauss(f, std::min(lo, to), std::max(lo, to));
 }
 
 struct NearPoint {
@@ -228,7 +336,14 @@ struct NearPoint {
 // Integral over the target parameter [0, 1], refined towards near source points.
 template <typename F>
 double integrate(F&& f, std::vector<NearPoint> near) {
-    if (near.empty()) return gauss(f, 0.0, 1.0);
+    const std::size_t evaluations_before = gQuadratureEvaluations;
+    const auto finish = [&](double value) {
+        ++gQuadratureInteractions;
+        gQuadratureMaxEvaluationsPerInteraction = std::max(
+            gQuadratureMaxEvaluationsPerInteraction, gQuadratureEvaluations - evaluations_before);
+        return value;
+    };
+    if (near.empty()) return finish(adaptive_gauss(f, 0.0, 1.0));
     std::sort(near.begin(), near.end(), [](const NearPoint& a, const NearPoint& b) { return a.t < b.t; });
     double result = 0.0, left = 0.0, left_scale = 0.0;
     bool left_singular = false;
@@ -241,15 +356,15 @@ double integrate(F&& f, std::vector<NearPoint> near) {
             if (left_singular && right_singular) result += graded(f, mid, left, left_scale) + graded(f, mid, right, right_scale);
             else if (left_singular) result += graded(f, right, left, left_scale);
             else if (right_singular) result += graded(f, left, right, right_scale);
-            else result += gauss(f, left, right);
+            else result += adaptive_gauss(f, left, right);
         }
         left = right; left_scale = right_scale; left_singular = right_singular;
     }
-    return result;
+    return finish(result);
 }
 
 // Galerkin coefficient: length-averaged potential over the target per unit source current (1/m).
-double coefficient(const Segment& target, const Segment& source, bool same) {
+double coefficient(const Segment& target, const Segment& source, bool same, InteractionKind interaction) {
     const double L = target.length;
     const Vec3 image_a = mirror(source.a), image_b = mirror(source.b);
     std::vector<NearPoint> near;
@@ -264,10 +379,13 @@ double coefficient(const Segment& target, const Segment& source, bool same) {
         const double a = target.radius;
         const double direct = 2.0 * (L * std::asinh(L / a) - std::sqrt(L * L + a * a) + a) / (L * L);
         const auto image = [&](double t) { return line_integral(at(target, t), image_a, image_b, L, a) / L; };
-        return direct + integrate(image, near);
+        return direct + (near.empty() && interaction == InteractionKind::separated
+                         ? gauss(image, 0.0, 1.0) : integrate(image, near));
     }
     add_near(source.a, source.b);
-    return integrate([&](double t) { return source_potential(at(target, t), source); }, near);
+    const auto potential = [&](double t) { return source_potential(at(target, t), source); };
+    return near.empty() && interaction == InteractionKind::separated
+        ? gauss(potential, 0.0, 1.0) : integrate(potential, near);
 }
 
 // Two-layer soil: upper layer rho1 of thickness h over a semi-infinite layer rho2, with an
@@ -382,7 +500,7 @@ double layered_source_potential(const Vec3& p, int observation_layer, const Segm
 // for the segment itself, 2x2 Gauss for far images, graded quadrature with the analytic line
 // integral for near ones.
 double layered_coefficient(const Segment& target, int target_layer, const Segment& source, int source_layer,
-                           bool same, const ImageTable& table) {
+                           bool same, InteractionKind interaction, const ImageTable& table) {
     const double L = target.length;
     constexpr double kGauss2 = 0.2113248654051871;  // (1 - 1/sqrt(3)) / 2
     const Vec3 target_mid = (target.a + target.b) * 0.5;
@@ -401,12 +519,17 @@ double layered_coefficient(const Segment& target, int target_layer, const Segmen
             total += image.weight * 0.25 * sum;
             continue;
         }
+        Segment image_source = source;
+        image_source.a = a; image_source.b = b;
+        const InteractionKind image_interaction = !image.mirrored && image.shift == 0.0
+            ? interaction : classify_interaction(target, image_source, false, {});
         double s = 0.0, t = 0.0;
         const double gap = segment_distance(target.a, target.b, a, b, s, t);
         std::vector<NearPoint> near;
         if (gap < 2.0 * L) near.push_back({s, std::max({gap, source.radius, 1e-6 * L}) / L});
         const auto f = [&](double u) { return line_integral(at(target, u), a, b, source.length, source.radius) / source.length; };
-        total += image.weight * integrate(f, near);
+        total += image.weight * (near.empty() && image_interaction == InteractionKind::separated
+                                 ? gauss(f, 0.0, 1.0) : integrate(f, near));
     }
     return total;
 }
@@ -936,7 +1059,7 @@ double condition_1norm(const std::vector<std::vector<double>>& a, const Lu& lu) 
     return norm_a * estimate;
 }
 
-void validate_geometry(const std::vector<Segment>& segments) {
+void validate_geometry(const std::vector<Segment>& segments, bool explicit_topology) {
     for (std::size_t i = 0; i < segments.size(); ++i) {
         for (std::size_t j = i + 1; j < segments.size(); ++j) {
             const auto& p = segments[i];
@@ -954,7 +1077,7 @@ void validate_geometry(const std::vector<Segment>& segments) {
                 if (overlap > tolerance)
                     throw std::runtime_error("overlapping collinear segments: " + p.id + " and " + q.id);
             }
-            if (p.group != q.group && gap <= p.radius + q.radius)
+            if (!explicit_topology && p.group != q.group && gap <= p.radius + q.radius)
                 throw std::runtime_error("segments of different groups touch or cross: " + p.id + " and " + q.id +
                                          " (bond them in one group or separate them)");
         }
@@ -993,18 +1116,28 @@ std::vector<Segment> read_segments(std::size_t count, std::map<std::string, Grou
 }
 
 void run_request() {
+    const auto request_started = SteadyClock::now();
     std::string line;
-    if (!std::getline(std::cin, line) || line != kProtocol)
-        throw std::runtime_error(std::string("expected ") + kProtocol + " protocol header");
+    if (!std::getline(std::cin, line) || (line != kProtocol && line != kProtocolV4 && line != kProtocolV5))
+        throw std::runtime_error(std::string("expected ") + kProtocol + ", " + kProtocolV4 + " or " + kProtocolV5 + " protocol header");
+    const std::string response_protocol = line;
+    const bool multiple_scenarios = response_protocol == kProtocolV5;
+    const bool explicit_topology = response_protocol == kProtocolV4 || multiple_scenarios;
     if (!std::getline(std::cin, line)) throw std::runtime_error("missing soil and segment count");
     auto header = fields(line);
     Soil soil;
     std::vector<std::string> warnings;
     int kernel_density = 0;
     std::vector<double> requested_layers, requested_thicknesses;  // n-layer request as given
-    if (header.size() == 3 && header[0] == "homogeneous") {
+    if (header.empty()) throw std::runtime_error("missing soil line");
+    bool has_quadrature_tolerance =
+        (header[0] == "homogeneous" && header.size() == 4) ||
+        (header[0] == "two-layer" && header.size() == 6);
+    if (header[0] == "n-layer" && header.size() >= 2)
+        has_quadrature_tolerance = header.size() == 2 * count_value(header[1], "layer count", kMaxLayers) + 5;
+    if (header[0] == "homogeneous" && (header.size() == 3 || header.size() == 4)) {
         soil.rho1 = soil.rho2 = number(header[1], "soil resistivity");
-    } else if (header.size() == 5 && header[0] == "two-layer") {
+    } else if (header[0] == "two-layer" && (header.size() == 5 || header.size() == 6)) {
         soil.rho1 = number(header[1], "upper-layer resistivity");
         soil.rho2 = number(header[2], "lower-layer resistivity");
         soil.h = number(header[3], "upper-layer thickness");
@@ -1016,7 +1149,7 @@ void run_request() {
     } else if (header.size() >= 2 && header[0] == "n-layer") {
         const std::size_t count = count_value(header[1], "layer count", kMaxLayers);
         if (count == 0) throw std::runtime_error("invalid layer count (between 1 and 8 layers)");
-        if (header.size() != 2 * count + 4)
+        if (header.size() != 2 * count + 4 && header.size() != 2 * count + 5)
             throw std::runtime_error("n-layer soil line must be 'n-layer <count> <rho_1> <thickness_1> ... "
                                      "<rho_count> inf <kernel_density> <segments>'");
         std::vector<double> rhos, thicknesses;
@@ -1074,30 +1207,103 @@ void run_request() {
         if (value <= 0 || value > kMaxResistivityOhmM) throw std::runtime_error("soil resistivity must be in (0, 1e6] ohm-m");
     soil.k = (soil.rho2 - soil.rho1) / (soil.rho2 + soil.rho1);
     const double rho = soil.rho1;
-    const std::size_t segment_count = count_value(header.back(), "segment count", kMaxSegments);
+    const std::size_t segment_index = header.size() - (has_quadrature_tolerance ? 2 : 1);
+    if (has_quadrature_tolerance) {
+        gQuadratureTolerance = number(header.back(), "quadrature tolerance");
+        if (gQuadratureTolerance < kMinQuadratureTolerance || gQuadratureTolerance > kMaxQuadratureTolerance)
+            throw std::runtime_error("quadrature tolerance must be between 1e-12 and 1e-4");
+    } else gQuadratureTolerance = kDefaultQuadratureTolerance;
+    gQuadratureEvaluations = gQuadratureRefinements = gQuadratureMaxDepth = 0;
+    gQuadratureInteractions = gQuadratureMaxEvaluationsPerInteraction = 0;
+    const std::size_t segment_count = count_value(header[segment_index], "segment count", kMaxSegments);
     if (segment_count == 0) throw std::runtime_error("segment count must be positive");
 
     std::map<std::string, Group> groups;
     const auto segments = read_segments(segment_count, groups);
 
-    if (!std::getline(std::cin, line)) throw std::runtime_error("missing injection count");
-    const auto injection_header = fields(line);
-    if (injection_header.size() != 1) throw std::runtime_error("injection count line must have one value");
-    const std::size_t injection_count = count_value(injection_header[0], "injection count", groups.size());
-    std::set<std::string> injection_ids;
-    for (std::size_t i = 0; i < injection_count; ++i) {
-        if (!std::getline(std::cin, line)) throw std::runtime_error("missing injection row");
-        auto f = fields(line);
-        if (f.size() != 3) throw std::runtime_error("injection row must contain group id, current in amperes and origin");
-        require_id(f[0], "injection group id");
-        require_id(f[2], "injection origin");
-        auto it = groups.find(f[0]);
-        if (it == groups.end()) throw std::runtime_error("injection group has no electrode segments: " + f[0]);
-        if (!injection_ids.insert(f[0]).second) throw std::runtime_error("duplicate group injection: " + f[0]);
-        const double current = number(f[1], "injected current");
-        if (std::abs(current) > kMaxCurrentA) throw std::runtime_error("injected current magnitude exceeds 1e6 A");
-        it->second.injected_current = current;
-        it->second.origin = f[2];
+    std::vector<ElectricalConnection> connections;
+    const auto read_connections = [&]() {
+      if (explicit_topology) {
+        std::set<std::string> connection_ids;
+        const auto read_connection_section = [&](const char* label, bool bond) {
+            if (!std::getline(std::cin, line)) throw std::runtime_error(std::string("missing ") + label + " section");
+            const auto section = fields(line);
+            if (section.size() != 2 || section[0] != label)
+                throw std::runtime_error(std::string("expected ") + label + " <count>");
+            const std::size_t count = count_value(section[1], "connection count", 100000);
+            for (std::size_t i = 0; i < count; ++i) {
+                if (!std::getline(std::cin, line)) throw std::runtime_error("missing connection row");
+                const auto f = fields(line);
+                if (f.size() != (bond ? 3u : 4u))
+                    throw std::runtime_error(bond ? "bond row must contain id group_a group_b" :
+                                             "resistor row must contain id group_a group_b resistance_ohm");
+                require_id(f[0], "connection id"); require_id(f[1], "connection group"); require_id(f[2], "connection group");
+                if (!connection_ids.insert(f[0]).second) throw std::runtime_error("duplicate connection id: " + f[0]);
+                if (f[1] == f[2]) throw std::runtime_error("connection must join two different groups: " + f[0]);
+                if (!groups.count(f[1]) || !groups.count(f[2])) throw std::runtime_error("connection references a group without electrode segments: " + f[0]);
+                double resistance = 0.0;
+                if (!bond) {
+                    resistance = number(f[3], "connection resistance");
+                    if (resistance < 1e-9 || resistance > 1e9)
+                        throw std::runtime_error("connection resistance must be between 1e-9 and 1e9 ohm");
+                }
+                connections.push_back({f[0], f[1], f[2], resistance});
+            }
+        };
+        read_connection_section("BOND", true);
+        read_connection_section("RESISTOR", false);
+      }
+    };
+
+    std::vector<ExcitationScenario> scenarios;
+    if (multiple_scenarios) {
+        read_connections();
+        if (!std::getline(std::cin, line)) throw std::runtime_error("missing SCENARIOS section");
+        const auto section = fields(line);
+        if (section.size() != 2 || section[0] != "SCENARIOS") throw std::runtime_error("expected SCENARIOS <count>");
+        const std::size_t scenario_count = count_value(section[1], "scenario count", kMaxScenarioCount);
+        if (scenario_count == 0) throw std::runtime_error("scenario count must be positive");
+        std::set<std::string> scenario_ids;
+        for (std::size_t s = 0; s < scenario_count; ++s) {
+            if (!std::getline(std::cin, line)) throw std::runtime_error("missing scenario header");
+            const auto f = fields(line);
+            if (f.size() != 3 || f[0] != "SCENARIO") throw std::runtime_error("scenario header must contain SCENARIO id injection_count");
+            require_id(f[1], "scenario id");
+            if (!scenario_ids.insert(f[1]).second) throw std::runtime_error("duplicate scenario id: " + f[1]);
+            const std::size_t injection_count = count_value(f[2], "scenario injection count", groups.size());
+            ExcitationScenario scenario{f[1], {}};
+            for (std::size_t i = 0; i < injection_count; ++i) {
+                if (!std::getline(std::cin, line)) throw std::runtime_error("missing scenario injection row");
+                const auto injection = fields(line);
+                if (injection.size() != 3) throw std::runtime_error("injection row must contain group id, current in amperes and origin");
+                require_id(injection[0], "injection group id"); require_id(injection[2], "injection origin");
+                if (!groups.count(injection[0])) throw std::runtime_error("injection group has no electrode segments: " + injection[0]);
+                const double current = number(injection[1], "injected current");
+                if (std::abs(current) > kMaxCurrentA) throw std::runtime_error("injected current magnitude exceeds 1e6 A");
+                if (!scenario.injections.emplace(injection[0], std::make_pair(current, injection[2])).second)
+                    throw std::runtime_error("duplicate group injection in scenario: " + injection[0]);
+            }
+            scenarios.push_back(std::move(scenario));
+        }
+    } else {
+        if (!std::getline(std::cin, line)) throw std::runtime_error("missing injection count");
+        const auto injection_header = fields(line);
+        if (injection_header.size() != 1) throw std::runtime_error("injection count line must have one value");
+        const std::size_t injection_count = count_value(injection_header[0], "injection count", groups.size());
+        ExcitationScenario scenario{"default", {}};
+        for (std::size_t i = 0; i < injection_count; ++i) {
+            if (!std::getline(std::cin, line)) throw std::runtime_error("missing injection row");
+            const auto f = fields(line);
+            if (f.size() != 3) throw std::runtime_error("injection row must contain group id, current in amperes and origin");
+            require_id(f[0], "injection group id"); require_id(f[2], "injection origin");
+            if (!groups.count(f[0])) throw std::runtime_error("injection group has no electrode segments: " + f[0]);
+            const double current = number(f[1], "injected current");
+            if (std::abs(current) > kMaxCurrentA) throw std::runtime_error("injected current magnitude exceeds 1e6 A");
+            if (!scenario.injections.emplace(f[0], std::make_pair(current, f[2])).second)
+                throw std::runtime_error("duplicate group injection: " + f[0]);
+        }
+        read_connections();
+        scenarios.push_back(std::move(scenario));
     }
 
     if (!std::getline(std::cin, line)) throw std::runtime_error("missing point count");
@@ -1106,6 +1312,10 @@ void run_request() {
     const std::size_t point_count = count_value(point_header[0], "point count", kMaxPoints);
     if (static_cast<double>(point_count) * static_cast<double>(segment_count) > kMaxPointSegmentWork)
         throw std::runtime_error("points x segments exceeds 2e7; split the surface query into batches");
+    const double scenario_rows = static_cast<double>(scenarios.size()) *
+        static_cast<double>(segment_count + point_count + groups.size() + connections.size() + 128);
+    if (scenario_rows > kMaxScenarioResultRows)
+        throw std::runtime_error("multi-scenario response exceeds the supported output row budget");
     std::vector<Point> points;
     points.reserve(point_count);
     std::set<std::string> point_ids;
@@ -1121,8 +1331,10 @@ void run_request() {
         points.push_back(p);
     }
     if (!std::getline(std::cin, line) || line != "END") throw std::runtime_error("expected END protocol marker");
-    validate_geometry(segments);
+    validate_geometry(segments, explicit_topology);
     ImageTable table;
+    const auto kernel_started = SteadyClock::now();
+    double kernel_setup_ms = 0.0;
     std::vector<int> layers(segments.size(), 0);
     double matrix_image_work = 0.0, point_image_work = 0.0;
     if (soil.layered) {
@@ -1188,27 +1400,71 @@ void run_request() {
         matrix_image_work = matrix_work;
         point_image_work = point_work;
     }
+    kernel_setup_ms = elapsed_ms(kernel_started);
 
-    double total_injection = 0.0;
-    for (const auto& [id, group] : groups) { (void)id; total_injection += std::abs(group.injected_current); }
-    if (total_injection == 0.0) warnings.push_back("no-injection\tall group currents are zero; every potential is zero");
-
-    // Unknowns: n segment currents, then g group potentials (scaled by 4 pi / rho).
+    // Contract ideal bonds, then retain separate nodes for finite resistors.
+    const auto assembly_started = SteadyClock::now();
     std::vector<std::string> group_ids;
     std::map<std::string, std::size_t> group_index;
-    for (const auto& [id, unused] : groups) { (void)unused; group_index[id] = group_ids.size(); group_ids.push_back(id); }
+    std::map<std::string, std::string> parent;
+    for (const auto& [id, unused] : groups) { (void)unused; parent[id] = id; }
+    const auto root = [&](const std::string& id) {
+        std::string current = id;
+        while (parent.at(current) != current) current = parent.at(current);
+        return current;
+    };
+    for (const auto& connection : connections) if (connection.resistance == 0.0) {
+        const std::string a = root(connection.a), b = root(connection.b);
+        if (a != b) parent[std::max(a, b)] = std::min(a, b);
+    }
+    std::map<std::string, std::size_t> node_index;
+    for (const auto& [id, unused] : groups) {
+        (void)unused;
+        const std::string representative = root(id);
+        if (!node_index.count(representative)) {
+            node_index[representative] = group_ids.size();
+            group_ids.push_back(representative);
+        }
+        group_index[id] = node_index.at(representative);
+    }
     const std::size_t n = segments.size(), g = group_ids.size(), size = n + g;
     std::vector<std::vector<double>> matrix(size, std::vector<double>(size, 0.0));
     std::vector<double> rhs(size, 0.0);
+    InteractionCounts interaction_counts;
+    std::size_t reciprocal_entries_reused = 0;
     for (std::size_t i = 0; i < n; ++i) {
-        for (std::size_t j = 0; j < n; ++j)
+        for (std::size_t j = 0; j < n; ++j) {
+            // With equal soft-core radii the Galerkin Green coefficient is reciprocal. Reuse
+            // the already assembled transposed entry; unequal radii keep both directed values.
+            if (j < i && segments[i].radius == segments[j].radius) {
+                matrix[i][j] = matrix[j][i];
+                ++reciprocal_entries_reused;
+                continue;
+            }
+            bool near_interface = false;
+            const InteractionKind interaction = classify_interaction(
+                segments[i], segments[j], i == j, soil.interfaces, &near_interface);
+            if (i <= j) {
+                ++interaction_counts.categories[interaction_index(interaction)];
+                if (near_interface) ++interaction_counts.near_interface;
+            }
             matrix[i][j] = soil.layered
-                ? layered_coefficient(segments[i], layers[i], segments[j], layers[j], i == j, table)
-                : coefficient(segments[i], segments[j], i == j);
+                ? layered_coefficient(segments[i], layers[i], segments[j], layers[j], i == j, interaction, table)
+                : coefficient(segments[i], segments[j], i == j, interaction);
+        }
         matrix[i][n + group_index.at(segments[i].group)] = -1.0;
     }
     for (std::size_t j = 0; j < n; ++j) matrix[n + group_index.at(segments[j].group)][j] = 1.0;
-    for (std::size_t gi = 0; gi < g; ++gi) rhs[n + gi] = groups[group_ids[gi]].injected_current;
+    const double factor_v = rho / (4.0 * kPi);
+    for (const auto& connection : connections) if (connection.resistance > 0.0) {
+        const std::size_t a = group_index.at(connection.a), b = group_index.at(connection.b);
+        if (a == b) throw std::runtime_error("resistor endpoints are already joined by ideal bonds: " + connection.id);
+        const double conductance = factor_v / connection.resistance;
+        matrix[n + a][n + a] += conductance;
+        matrix[n + b][n + b] += conductance;
+        matrix[n + a][n + b] -= conductance;
+        matrix[n + b][n + a] -= conductance;
+    }
 
     std::vector<double> row_scale(size, 1.0);
     for (std::size_t i = 0; i < size; ++i) {
@@ -1216,22 +1472,57 @@ void run_request() {
         for (double value : matrix[i]) row_sum += std::abs(value);
         if (row_sum > 0.0) row_scale[i] = 1.0 / row_sum;
     }
-    std::vector<double> solution;
+    const double assembly_ms = elapsed_ms(assembly_started);
     double condition = -1.0, pivot_ratio = -1.0;
-    int solver_iterations = 0;
+    double factorization_ms = 0.0, condition_estimation_ms = 0.0;
     const bool iterative_solver = n > kDirectSolverMaxSegments;
+    std::optional<Lu> lu;
     if (iterative_solver) {
-        auto solved = gmres(matrix, rhs, row_scale);
-        solution = std::move(solved.x);
-        solver_iterations = solved.iterations;
         warnings.push_back("iterative-solver\tGMRES with row equilibration; 1-norm condition and LU pivot ratio are not estimated");
     } else {
-        const Lu lu = factor(matrix);
-        solution = lu_solve(lu, rhs);
-        condition = condition_1norm(matrix, lu);
-        pivot_ratio = lu.min_pivot / lu.max_pivot;
+        const auto factor_started = SteadyClock::now();
+        lu = factor(matrix);
+        factorization_ms = elapsed_ms(factor_started);
+        const auto condition_started = SteadyClock::now();
+        condition = condition_1norm(matrix, *lu);
+        condition_estimation_ms = elapsed_ms(condition_started);
+        pivot_ratio = lu->min_pivot / lu->max_pivot;
     }
-    double residual = 0.0, norm_a = 0.0, norm_x = 0.0, norm_b = 0.0;
+    if (!iterative_solver && (!std::isfinite(condition) || condition > kMaxCondition))
+        throw std::runtime_error("ill-conditioned electrode system (1-norm condition estimate above 1e13)");
+    if (!iterative_solver && condition > kWarnCondition) warnings.push_back("ill-conditioned\t1-norm condition estimate above 1e10");
+
+    std::cout << std::setprecision(17) << response_protocol << "\tOK\n";
+    const auto common_warnings = warnings;
+    for (const auto& scenario : scenarios) {
+        warnings = common_warnings;
+        std::fill(rhs.begin(), rhs.end(), 0.0);
+        for (auto& [id, group] : groups) {
+            (void)id;
+            group.injected_current = 0.0;
+            group.origin = "none";
+            group.net_current = 0.0;
+        }
+        double total_injection = 0.0;
+        for (const auto& [id, input] : scenario.injections) {
+            groups[id].injected_current = input.first;
+            groups[id].origin = input.second;
+            total_injection += std::abs(input.first);
+            rhs[n + group_index.at(id)] += input.first;
+        }
+        if (total_injection == 0.0) warnings.push_back("no-injection\tall group currents are zero; every potential is zero");
+        const auto solve_started = SteadyClock::now();
+        std::vector<double> solution;
+        int solver_iterations = 0;
+        if (iterative_solver) {
+            auto solved = gmres(matrix, rhs, row_scale);
+            solution = std::move(solved.x);
+            solver_iterations = solved.iterations;
+        } else {
+            solution = lu_solve(*lu, rhs);
+        }
+        const double solve_ms = elapsed_ms(solve_started);
+        double residual = 0.0, norm_a = 0.0, norm_x = 0.0, norm_b = 0.0;
     for (std::size_t i = 0; i < size; ++i) {
         double row_value = -rhs[i], row_norm = 0.0;
         for (std::size_t j = 0; j < size; ++j) { row_value += matrix[i][j] * solution[j]; row_norm += std::abs(matrix[i][j]); }
@@ -1244,34 +1535,44 @@ void run_request() {
     const double backward_error = scale > 0.0 ? residual / scale : 0.0;
     for (double v : solution)
         if (!std::isfinite(v)) throw std::runtime_error("solver produced a non-finite result");
-    if (!iterative_solver && (!std::isfinite(condition) || condition > kMaxCondition))
-        throw std::runtime_error("ill-conditioned electrode system (1-norm condition estimate above 1e13)");
     if (backward_error > kMaxBackwardError)
         throw std::runtime_error("solver residual above acceptance limit");
-    if (!iterative_solver && condition > kWarnCondition) warnings.push_back("ill-conditioned\t1-norm condition estimate above 1e10");
 
-    const double factor_v = rho / (4.0 * kPi);
     double max_balance_error = 0.0;
+    std::vector<double> node_potential(g, 0.0), node_injection(g, 0.0), node_leakage(g, 0.0);
+    for (const auto& [id, group] : groups) {
+        const std::size_t gi = group_index.at(id);
+        node_potential[gi] = factor_v * solution[n + gi];
+        node_injection[gi] += group.injected_current;
+    }
     for (std::size_t gi = 0; gi < g; ++gi) {
-        auto& group = groups[group_ids[gi]];
-        group.potential = factor_v * solution[n + gi];
         double low = std::numeric_limits<double>::infinity(), high = -low;
         for (std::size_t i = 0; i < n; ++i) {
             if (group_index.at(segments[i].group) != gi) continue;
-            group.net_current += solution[i];
+            node_leakage[gi] += solution[i];
             double v = 0.0;
             for (std::size_t j = 0; j < n; ++j) v += matrix[i][j] * solution[j];
             low = std::min(low, v); high = std::max(high, v);
         }
-        group.potential_spread = factor_v * (high - low);
-        const double error = std::abs(group.net_current - group.injected_current);
-        max_balance_error = std::max(max_balance_error, error / std::max(1.0, total_injection));
+        for (auto& [id, group] : groups) if (group_index.at(id) == gi) {
+            group.potential = node_potential[gi];
+            group.potential_spread = factor_v * (high - low);
+        }
     }
+    std::vector<double> node_residual(g, 0.0);
+    for (std::size_t gi = 0; gi < g; ++gi) node_residual[gi] = node_leakage[gi] - node_injection[gi];
+    for (const auto& connection : connections) if (connection.resistance > 0.0) {
+        const std::size_t a = group_index.at(connection.a), b = group_index.at(connection.b);
+        const double current = (node_potential[a] - node_potential[b]) / connection.resistance;
+        node_residual[a] += current; node_residual[b] -= current;
+    }
+    for (std::size_t gi = 0; gi < g; ++gi)
+        max_balance_error = std::max(max_balance_error, std::abs(node_residual[gi]) / std::max(1.0, total_injection));
     if (max_balance_error > kMaxRelativeBalanceError)
         throw std::runtime_error("current balance error above acceptance limit");
 
-    std::cout << std::setprecision(12) << kProtocol << "\tOK\n";
-    std::cout << "META\tprotocol\t" << kProtocol << '\n'
+    if (multiple_scenarios) std::cout << "SCENARIO\t" << scenario.id << '\n';
+    std::cout << "META\tprotocol\t" << response_protocol << '\n'
               << "META\tsolver_version\t" << kSolverVersion << '\n'
               << "META\tmethod\t" << (soil.nlayer ? kNLayerMethod : soil.layered ? kLayeredMethod : kMethod)
               << (iterative_solver ? ";gmres-row-equilibrated" : ";lu-partial-pivoting") << '\n'
@@ -1306,13 +1607,31 @@ void run_request() {
         std::cout << "META\tsoil_model\thomogeneous\n"
                   << "META\tsoil_resistivity_ohm_m\t" << rho << '\n';
     std::cout << "META\tsegment_count\t" << n << '\n'
-              << "META\tgroup_count\t" << g << '\n'
+              << "META\tgroup_count\t" << groups.size() << '\n'
+              << "META\telectrical_node_count\t" << g << '\n'
               << "META\tpoint_count\t" << points.size() << '\n';
     std::cout << "DIAG\tbackward_error\t" << backward_error << '\n'
               << "DIAG\tcondition_1norm_estimate\t" << condition << '\n'
               << "DIAG\tpivot_ratio\t" << pivot_ratio << '\n'
               << "DIAG\tsolver_iterations\t" << solver_iterations << '\n'
-              << "DIAG\tmax_relative_balance_error\t" << max_balance_error << '\n';
+              << "DIAG\tmax_relative_balance_error\t" << max_balance_error << '\n'
+              << "DIAG\tquadrature_tolerance\t" << gQuadratureTolerance << '\n'
+              << "DIAG\tquadrature_evaluations\t" << gQuadratureEvaluations << '\n'
+              << "DIAG\tquadrature_refinements\t" << gQuadratureRefinements << '\n'
+              << "DIAG\tquadrature_max_depth\t" << gQuadratureMaxDepth << '\n'
+              << "DIAG\tquadrature_interactions\t" << gQuadratureInteractions << '\n'
+              << "DIAG\tquadrature_max_evaluations_per_interaction\t" << gQuadratureMaxEvaluationsPerInteraction << '\n'
+              << "DIAG\tquadrature_converged\t1\n"
+              << "DIAG\tprofile_kernel_setup_ms\t" << kernel_setup_ms << '\n'
+              << "DIAG\tprofile_matrix_assembly_ms\t" << assembly_ms << '\n'
+              << "DIAG\tprofile_factorization_ms\t" << factorization_ms << '\n'
+              << "DIAG\tprofile_solve_ms\t" << solve_ms << '\n'
+              << "DIAG\tprofile_condition_estimation_ms\t" << condition_estimation_ms << '\n';
+    for (std::size_t i = 0; i < kInteractionNames.size(); ++i)
+        std::cout << "DIAG\tinteraction_" << kInteractionNames[i] << "_pairs\t"
+                  << interaction_counts.categories[i] << '\n';
+    std::cout << "DIAG\tinteraction_near_interface_pairs\t" << interaction_counts.near_interface << '\n'
+              << "DIAG\tmatrix_reciprocal_entries_reused\t" << reciprocal_entries_reused << '\n';
     if (soil.nlayer)
         std::cout << "DIAG\tkernel_density\t" << soil.kernel.density << '\n'
                   << "DIAG\tkernel_terms\t" << soil.kernel.terms << '\n'
@@ -1331,14 +1650,20 @@ void run_request() {
                   << "DIAG\timage_series_tail_bound\t" << soil.tail_bound << '\n';
     for (const auto& warning : warnings) std::cout << "WARNING\t" << warning << '\n';
     for (std::size_t i = 0; i < n; ++i) std::cout << "SEGMENT\t" << segments[i].id << '\t' << solution[i] << '\n';
-    for (const auto& id : group_ids) {
-        const auto& group = groups[id];
-        std::cout << "GROUP\t" << id << '\t' << group.injected_current << '\t' << group.potential << '\t';
-        if (std::abs(group.injected_current) > 1e-12) std::cout << group.potential / group.injected_current;
+    for (const auto& [id, group] : groups) {
+        const std::size_t gi = group_index.at(id);
+        const double potential = node_potential[gi];
+        std::cout << "GROUP\t" << id << '\t' << group.injected_current << '\t' << potential << '\t';
+        if (std::abs(group.injected_current) > 1e-12) std::cout << potential / group.injected_current;
         else std::cout << "null";
-        std::cout << '\t' << group.origin << '\t' << group.net_current - group.injected_current
+        std::cout << '\t' << group.origin << '\t' << node_residual[gi]
                   << '\t' << group.potential_spread << '\n';
     }
+    for (const auto& connection : connections) if (connection.resistance > 0.0) {
+        const double current = (node_potential[group_index.at(connection.a)] - node_potential[group_index.at(connection.b)]) / connection.resistance;
+        std::cout << "CONNECTION\t" << connection.id << '\t' << current << '\n';
+    }
+    const auto points_started = SteadyClock::now();
     for (const auto& point : points) {
         double potential = 0.0;
         if (soil.layered) {
@@ -1349,6 +1674,12 @@ void run_request() {
             for (std::size_t j = 0; j < n; ++j) potential += source_potential(point.p, segments[j]) * solution[j];
         }
         std::cout << "POINT\t" << point.id << '\t' << factor_v * potential << '\n';
+    }
+    const double point_evaluation_ms = elapsed_ms(points_started);
+    std::cout << "DIAG\tprofile_point_evaluation_ms\t" << point_evaluation_ms << '\n'
+              << "DIAG\tprofile_request_total_ms\t" << elapsed_ms(request_started) << '\n'
+              << "DIAG\tprofile_peak_rss_mib\t" << peak_rss_mib() << '\n';
+    if (multiple_scenarios) std::cout << "END_SCENARIO\n";
     }
     std::cout << "END\n";
 }

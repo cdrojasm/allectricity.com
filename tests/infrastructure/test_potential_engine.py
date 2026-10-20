@@ -5,6 +5,8 @@ import subprocess
 import pytest
 from src.infrastructure.calculations.potential_engine_client import (
     PROTOCOL,
+    PROTOCOL_V5,
+    ElectricalConnection,
     ElectrodeSegment,
     HomogeneousSoil,
     PotentialEngineClient,
@@ -142,8 +144,13 @@ def test_result_carries_diagnostics_and_trace(client):
     diagnostics = result["diagnostics"]
     assert diagnostics["backward_error"] < 1e-12
     assert diagnostics["max_relative_balance_error"] < 1e-12
+    assert diagnostics["matrix_reciprocal_entries_reused"] == 1
     assert 1 <= diagnostics["condition_1norm_estimate"] < 1e6
     assert 0 < diagnostics["pivot_ratio"] <= 1
+    for phase in ("kernel_setup", "matrix_assembly", "factorization", "solve", "condition_estimation",
+                  "point_evaluation", "request_total"):
+        assert diagnostics[f"profile_{phase}_ms"] >= 0
+    assert diagnostics["profile_peak_rss_mib"] > 0
     assert result["groups"]["b"]["resistance_to_remote_earth_ohm"] is None
     assert abs(result["groups"]["b"]["current_balance_error_a"]) < 1e-12
     assert result["groups"]["a"]["injection_origin"] == "fault:bus-1"
@@ -153,6 +160,14 @@ def test_result_carries_diagnostics_and_trace(client):
     assert len(trace["request_sha256"]) == 64 and trace["engine_sha256"]
     assert trace["injections"] == [{"group": "a", "current_a": 10.0, "origin": "fault:bus-1"}]
     assert [s["id"] for s in trace["segments"]] == ["a_0.0", "b_10"]
+
+
+def test_reciprocal_matrix_reuse_is_disabled_when_wire_radii_differ(client):
+    result = client.calculate(
+        soil_resistivity_ohm_m=100, segments=[rod("a", radius=0.008), rod("b", x=10, radius=0.01)],
+        injections_a={"a": 1.0}, points=[],
+    )
+    assert result["diagnostics"]["matrix_reciprocal_entries_reused"] == 0
 
 
 def test_zero_injection_is_flagged(client):
@@ -297,3 +312,58 @@ def test_engine_rejects_invalid_two_layer_requests(client, soil_line, rows, mess
     payload = "\n".join([PROTOCOL, soil_line, *rows, "1", "g 1 test", "0", "END", ""])
     done = subprocess.run([client.executable], input=payload, capture_output=True, text=True)
     assert done.returncode == 2 and message in done.stdout
+
+
+def test_finite_connection_obeys_signed_nodal_current_balance(client):
+    segments = [rod("a", x=0.0, segment_id="a_rod"), rod("b", x=3.0, segment_id="b_rod")]
+    connection = ElectricalConnection("link", "resistor", "a", "b", 2.0)
+    result = client.calculate(soil_resistivity_ohm_m=100, segments=segments,
+                              injections_a={"a": 1.0}, points=[], connections=[connection])
+    current_ab = result["connection_currents_a"]["link"]
+    leakage_a = result["segment_currents_a"]["a_rod"]
+    leakage_b = result["segment_currents_a"]["b_rod"]
+    assert current_ab > 0
+    assert math.isclose(leakage_a + current_ab, 1.0, abs_tol=1e-9)
+    assert math.isclose(leakage_b - current_ab, 0.0, abs_tol=1e-9)
+    assert result["diagnostics"]["max_relative_balance_error"] < 1e-9
+    assert result["trace"]["protocol"] == "SPAT-POTENTIAL-4"
+
+
+def test_ideal_bond_matches_single_equipotential_group(client):
+    segments = [rod("a", x=0.0, segment_id="a_rod"), rod("b", x=3.0, segment_id="b_rod")]
+    bonded = client.calculate(soil_resistivity_ohm_m=100, segments=segments,
+                              injections_a={"a": 1.0}, points=[],
+                              connections=[ElectricalConnection("bond", "bond", "a", "b")])
+    merged = client.calculate(
+        soil_resistivity_ohm_m=100,
+        segments=[ElectrodeSegment(s.id, "combined", s.kind, s.start_m, s.end_m, s.radius_m) for s in segments],
+        injections_a={"combined": 1.0}, points=[],
+    )
+    assert math.isclose(bonded["groups"]["a"]["potential_v"], bonded["groups"]["b"]["potential_v"], abs_tol=1e-12)
+    assert math.isclose(bonded["groups"]["a"]["potential_v"], merged["groups"]["combined"]["potential_v"], rel_tol=1e-10)
+
+
+def test_multiple_scenarios_reuse_matrix_and_match_individual_solves(client):
+    segments = [rod("a", x=0.0, segment_id="a_rod"), rod("b", x=3.0, segment_id="b_rod")]
+    points = [PotentialPoint("surface", (1.0, 0.0, 0.0))]
+    connections = [ElectricalConnection("link", "resistor", "a", "b", 2.0)]
+    scenarios = {"a_only": {"a": 1.0}, "b_sink": {"b": -0.4}, "combined": {"a": 1.0, "b": -0.4}}
+    batched = client.calculate_scenarios(
+        soil_resistivity_ohm_m=100, segments=segments, points=points,
+        scenarios=scenarios, connections=connections,
+    )
+    individual = {
+        name: client.calculate(soil_resistivity_ohm_m=100, segments=segments, points=points,
+                               injections_a=injections, connections=connections)
+        for name, injections in scenarios.items()
+    }
+    assert set(batched) == set(scenarios)
+    assert all(result["trace"]["protocol"] == PROTOCOL_V5 for result in batched.values())
+    for name, result in batched.items():
+        for segment_id, current in individual[name]["segment_currents_a"].items():
+            assert math.isclose(result["segment_currents_a"][segment_id], current, rel_tol=1e-10, abs_tol=1e-10)
+        for group_id, group in individual[name]["groups"].items():
+            assert math.isclose(result["groups"][group_id]["potential_v"], group["potential_v"], rel_tol=1e-10)
+        assert math.isclose(result["potentials_v"]["surface"], individual[name]["potentials_v"]["surface"], rel_tol=1e-10)
+        assert result["diagnostics"]["max_relative_balance_error"] < 1e-9
+    assert batched["combined"]["diagnostics"]["profile_factorization_ms"] == batched["a_only"]["diagnostics"]["profile_factorization_ms"]
