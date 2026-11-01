@@ -15,6 +15,7 @@ from threading import Lock
 from typing import Any, Callable
 
 from src.domain.spat.feasibility import FeasibilityStatus, classify
+from src.domain.spat.geometry_cost import evaluate_geometry_cost
 from src.domain.spat.optimizer_foundations import generate_rectangular_grid
 from src.domain.spat.optimizer_constraints import OptimizerGeometryRejected, require_optimizer_geometry
 from src.domain.spat.parametric_geometry import generate_traced_grid
@@ -138,6 +139,7 @@ def evaluate_design(
     constraint_context: dict[str, Any] | None = None,
     optimized_variables: list[str] | None = None,
     level: str = "L2",
+    cost_rates: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate one design and report solver quantities, safety constraints and status.
 
@@ -147,7 +149,8 @@ def evaluate_design(
     count against the evaluation budget. L1 runs the solver on a coarse raster without
     refinements, so `Vs` and `Vt` are lower bounds of the true maxima (not of L2's values): a
     violation is conclusive, a pass is not and
-    reports `Feasible=None`. L2 is the full evaluation.
+    reports `Feasible=None`. L2 is the full evaluation. With `cost_rates` every level also returns the
+    itemised `Cost` of the geometry, computed without the solver and without spending the budget.
 
     `design_parameters=None` evaluates a copy of `base_geometry`. Otherwise the selected
     generator maps parameters onto the baseline geometry; the default is the current OP-02
@@ -250,8 +253,10 @@ def evaluate_design(
         # Rejected like any other invalid geometry: before the budget is spent and before the solver.
         raise OptimizerGeometryRejected({
             **geometry_check, "status": "rejected", "violations": geometry_check["violations"] + discretization})
+    cost = evaluate_geometry_cost(geometry, cost_rates) if cost_rates is not None else None
     if level == "L0":
         return {
+            "Cost": cost,
             "schema_version": "spat.optimizer-evaluation/1.0",
             "Fidelity": {"level": "L0", "values_are": "none"},
             "geometry": geometry,
@@ -356,6 +361,7 @@ def evaluate_design(
     return {
         "schema_version": "spat.optimizer-evaluation/1.0",
         "Fidelity": solved["fidelity"],
+        "Cost": cost,
         "geometry": geometry,
         "Rg": quantities["Rg_ohm"],
         "Vs": quantities["Vs_v"],
