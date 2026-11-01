@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from math import cos, isfinite, log2, pi, sin
+from math import atan2, cos, hypot, isfinite, log2, pi, sin
 from time import monotonic, time
 from typing import Any
 
@@ -808,17 +808,103 @@ def _uncertainty(client, geometry, parameters, soil, current, origin, finest):
 
 
 def _field(client, geometry, soil, segments, current, origin, spacing, reach=0.0, coarse=False,
-           critical=None, coarse_spacing=None) -> dict[str, Any]:
+           critical=None, coarse_spacing=None, adaptive=None) -> dict[str, Any]:
     """`_field_search` on one prepared system: assemble, factor and solve once, then query points.
 
     Clients without `session` (test doubles, older callers) keep the one-solve-per-query path.
     """
     open_session = getattr(client, "session", None)
     if open_session is None:
-        return _field_search(client, geometry, soil, segments, current, origin, spacing, reach, coarse, critical, coarse_spacing)
+        return _field_search(client, geometry, soil, segments, current, origin, spacing, reach, coarse, critical, coarse_spacing, adaptive)
     with open_session(soil=soil, segments=segments, injections_a={GROUP: current},
                       injection_origins={GROUP: origin}) as session:
-        return _field_search(session, geometry, soil, segments, current, origin, spacing, reach, coarse, critical, coarse_spacing)
+        return _field_search(session, geometry, soil, segments, current, origin, spacing, reach, coarse, critical, coarse_spacing, adaptive)
+
+
+def _adaptive_refine(lookup, stats, in_structure, touch_box, gpr, touch_seeds, step_seeds, stride, budget, tolerance, min_stride):
+    """Pattern search from the strongest touch points and step pairs (fidelity L3).
+
+    Each search moves to its best neighbour (8 around the origin, plus two rotations for a step
+    pair) while one improves, halves its stride when none does, and stops on a relative gain below
+    `tolerance`, a stride below `min_stride`, or when the next round would exceed `budget` new
+    points. Seeds are (voltage, xy) for touch and (voltage, origin xy, end xy) for step; both maximise
+    a voltage, and the touch voltage is `gpr` minus the surface potential.
+    """
+    start = stats["fresh"]
+    ring = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]
+    searches = [{"kind": "touch", "x": xy[0], "y": xy[1], "h": stride, "value": value, "initial": value, "stop": None}
+                for value, xy in touch_seeds]
+    searches += [{"kind": "step", "x": a[0], "y": a[1], "theta": atan2(b[1] - a[1], b[0] - a[0]), "h": stride,
+                  "value": value, "initial": value, "stop": None} for value, a, b in step_seeds]
+    rounds = 0
+    while rounds < 60 and any(s["stop"] is None for s in searches):
+        rounds += 1
+        plan, moves = {}, []
+        for index, s in enumerate(searches):
+            if s["stop"] is not None:
+                continue
+            if s["kind"] == "touch":
+                options = [(s["x"] + dx * s["h"], s["y"] + dy * s["h"], None) for dx, dy in ring]
+            else:
+                turn = s["h"] / STEP_DISTANCE_M
+                options = [(s["x"] + dx * s["h"], s["y"] + dy * s["h"], s["theta"]) for dx, dy in ring]
+                options += [(s["x"], s["y"], s["theta"] + turn), (s["x"], s["y"], s["theta"] - turn)]
+            for k, (px, py, theta) in enumerate(options):
+                if s["kind"] == "touch":
+                    if not (touch_box[0] - 1e-9 <= px <= touch_box[1] + 1e-9 and touch_box[2] - 1e-9 <= py <= touch_box[3] + 1e-9) \
+                            or in_structure(px, py):
+                        continue
+                    plan[f"a{index}_{k}"] = (px, py, 0.0)
+                    moves.append((s, f"a{index}_{k}", None, (px, py, None)))
+                else:
+                    ex, ey = px + STEP_DISTANCE_M * cos(theta), py + STEP_DISTANCE_M * sin(theta)
+                    if in_structure(px, py) or in_structure(ex, ey):
+                        continue
+                    plan[f"b{index}_{k}a"], plan[f"b{index}_{k}b"] = (px, py, 0.0), (ex, ey, 0.0)
+                    moves.append((s, f"b{index}_{k}a", f"b{index}_{k}b", (px, py, theta)))
+        if not plan:
+            for s in searches:
+                s["stop"] = s["stop"] or "blocked"
+            break
+        values, _ = lookup(plan, limit=budget - (stats["fresh"] - start))
+        if values is None:
+            for s in searches:
+                s["stop"] = s["stop"] or "budget"
+            break
+        best = {}
+        for s, first_id, second_id, params in moves:
+            candidate = gpr - values[first_id] if second_id is None else abs(values[first_id] - values[second_id])
+            if id(s) not in best or candidate > best[id(s)][0]:
+                best[id(s)] = (candidate, params)
+        for s in searches:
+            if s["stop"] is not None:
+                continue
+            candidate, params = best.get(id(s), (None, None))
+            if candidate is not None and candidate > s["value"] * (1 + 1e-12):
+                gain = (candidate - s["value"]) / candidate
+                s["value"], s["x"], s["y"] = candidate, params[0], params[1]
+                if params[2] is not None:
+                    s["theta"] = params[2]
+                if gain < tolerance:
+                    s["stop"] = "tolerance"
+            else:
+                s["h"] /= 2
+                if s["h"] < min_stride:
+                    s["stop"] = "min_stride"
+    for s in searches:
+        s["stop"] = s["stop"] or "rounds"
+    stops = {}
+    for s in searches:
+        stops[s["stop"]] = stops.get(s["stop"], 0) + 1
+    summary = {"searches": len(searches), "rounds": rounds, "points_evaluated": stats["fresh"] - start, "budget_points": budget,
+               "stops": stops,
+               # Each search stopped improving from its own seed. This says nothing about maxima
+               # elsewhere on the surface, so it is never a certificate.
+               "locally_converged": all(s["stop"] in ("tolerance", "min_stride") for s in searches),
+               "certifies_global_maximum": False,
+               "touch_gain_v": max([s["value"] - s["initial"] for s in searches if s["kind"] == "touch"], default=0.0),
+               "step_gain_v": max([s["value"] - s["initial"] for s in searches if s["kind"] == "step"], default=0.0)}
+    return searches, summary
 
 
 def _touch_search_area(geometry: dict[str, Any], reach: float):
@@ -865,7 +951,7 @@ def touch_area_is_accessible(geometry: dict[str, Any], spacing: float, reach: fl
 
 
 def _field_search(client, geometry, soil, segments, current, origin, spacing, reach=0.0, coarse=False,
-                  critical=None, coarse_spacing=None) -> dict[str, Any]:
+                  critical=None, coarse_spacing=None, adaptive=None) -> dict[str, Any]:
     """Surface search for GPR, the worst touch over the grid and the worst 1 m step.
 
     The raster covers the whole site plus a margin. Touch is searched only over the grid's
@@ -881,7 +967,8 @@ def _field_search(client, geometry, soil, segments, current, origin, spacing, re
     on for a coarse search, off otherwise). With `coarse_spacing` and a full search (fidelity L2+)
     it also probes the step candidates a raster of that spacing would rank first, so the result is
     the union of the L1 and L2 searches. A point is evaluated once however many sub-searches ask
-    for it.
+    for it. `adaptive` ({"budget_points", "tolerance", "min_step_m"}, fidelity L3) then refines the
+    strongest touch and step candidates with a pattern search, within a budget of new points.
     """
     half_x, half_y = geometry["length_m"] / 2, geometry["width_m"] / 2
     touch_box, in_structure = _touch_search_area(geometry, reach)
@@ -905,15 +992,23 @@ def _field_search(client, geometry, soil, segments, current, origin, spacing, re
     gpr = first["groups"][GROUP]["potential_v"]
     known = {(round(x, 9), round(y, 9)): v[pid] for pid, (x, y, _) in {**raster, **critical}.items()}
 
-    def lookup(points: dict[str, tuple[float, float, float]]):
-        """Potentials at `points`, asking the engine only for coordinates not evaluated before."""
+    stats = {"fresh": 0}
+
+    def lookup(points: dict[str, tuple[float, float, float]], limit: int | None = None):
+        """Potentials at `points`, asking the engine only for coordinates not evaluated before.
+
+        With `limit`, returns (None, []) instead of evaluating when more new coordinates than that are needed.
+        """
         keys = {pid: (round(x, 9), round(y, 9)) for pid, (x, y, _) in points.items()}
         fresh: dict[tuple[float, float], str] = {}
         for pid, key in keys.items():
             if key not in known and key not in fresh:
                 fresh[key] = pid
         hashes: list[str] = []
+        if limit is not None and len(fresh) > limit:
+            return None, []
         if fresh:
+            stats["fresh"] += len(fresh)
             _, values, hashes = _solve(client, soil, segments, current,
                                        [PotentialPoint(pid, points[pid]) for pid in fresh.values()], origin)
             for key, pid in fresh.items():
@@ -982,11 +1077,13 @@ def _field_search(client, geometry, soil, segments, current, origin, spacing, re
             probes[f"{prefix}_{d}"] = (x + STEP_DISTANCE_M * cos(angle), y + STEP_DISTANCE_M * sin(angle), 0.0)
     probe_v, probe_hashes = lookup(probes)
     step_value, step_from, step_to = 0.0, None, None
+    step_pairs = []
     for prefix, origin_v, origin_xy in probe_origins:
         for d in range(STEP_DIRECTIONS):
             if in_structure(*probes[f"{prefix}_{d}"][:2]):
                 continue
             difference = abs(origin_v - probe_v[f"{prefix}_{d}"])
+            step_pairs.append((difference, tuple(origin_xy), tuple(probes[f"{prefix}_{d}"][:2])))
             if difference > step_value:
                 step_value, step_from, step_to = difference, list(origin_xy), list(probes[f"{prefix}_{d}"][:2])
 
@@ -1018,12 +1115,36 @@ def _field_search(client, geometry, soil, segments, current, origin, spacing, re
                     a, b = f"r{c}_{ix}_{iy}_{d}a", f"r{c}_{ix}_{iy}_{d}b"
                     if a in refined_v:
                         difference = abs(refined_v[a] - refined_v[b])
+                        step_pairs.append((difference, tuple(step_refine[a][:2]), tuple(step_refine[b][:2])))
                         if difference > step_value:
                             step_value = difference
                             step_from, step_to = list(step_refine[a][:2]), list(step_refine[b][:2])
+    adaptive_summary = None
+    if adaptive:
+        def distinct(ranked, count):
+            chosen = []
+            for entry in ranked:
+                if all(hypot(entry[1][0] - c[1][0], entry[1][1] - c[1][1]) > 0.5 for c in chosen):
+                    chosen.append(entry)
+                if len(chosen) == count:
+                    break
+            return chosen
+        touch_seeds = [(gpr - value, xy) for value, xy in distinct(sorted(touch_candidates, key=lambda item: item[0]), 3)]
+        step_seeds_a = distinct(sorted(step_pairs, key=lambda item: -item[0]), 3)
+        searches, adaptive_summary = _adaptive_refine(
+            lookup, stats, in_structure, touch_box, gpr, touch_seeds, step_seeds_a, spacing / LOCAL_REFINE_DIVISIONS / 2,
+            int(adaptive["budget_points"]), float(adaptive["tolerance"]), float(adaptive["min_step_m"]))
+        for s in searches:
+            if s["kind"] == "touch" and gpr - s["value"] < touch_min:
+                touch_min, touch_xy = gpr - s["value"], (s["x"], s["y"])
+            elif s["kind"] == "step" and s["value"] > step_value:
+                step_value = s["value"]
+                step_from = [s["x"], s["y"]]
+                step_to = [s["x"] + STEP_DISTANCE_M * cos(s["theta"]), s["y"] + STEP_DISTANCE_M * sin(s["theta"])]
     return {
         "first": first,
         "gpr_v": gpr,
+        "adaptive": adaptive_summary,
         # This is the raster solved by the engine; step-search probes are not included.
         "surface_potential": {
             "spacing_m": spacing,

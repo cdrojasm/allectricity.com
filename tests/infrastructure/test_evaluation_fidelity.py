@@ -47,7 +47,7 @@ def test_default_level_keeps_the_l2_fingerprint(client):
 
 
 def test_solver_rejects_levels_it_cannot_serve(client):
-    for level in ("L0", "L3"):
+    for level in ("L0", "L4"):
         with pytest.raises(ValueError):
             solver_evaluation.evaluate(geometry=GEOMETRY, soil=100.0, injection_a=1.0, points=[], client=client, level=level)
 
@@ -165,3 +165,91 @@ def test_a_grid_wholly_inside_a_building_has_no_touch_area_and_is_rejected_befor
         evaluate_design(design_parameters=None, base_geometry=inside_building, soil=100.0, injection_a=1000.0,
                         points=[], client=ForbiddenSolver(), exposure=EXPOSURE, standards=[], level="L2+")
     assert solver_evaluation.discretization_violations(GEOMETRY, 100.0) == []
+
+
+def test_feasibility_states_never_certify_without_a_registered_method():
+    from src.domain.spat.feasibility import CERTIFYING_METHODS, Certificate, FeasibilityStatus, classify
+    assert CERTIFYING_METHODS == frozenset()
+    assert classify(violated=True, evaluable=True) is FeasibilityStatus.VIOLATED
+    assert classify(violated=False, evaluable=True) is FeasibilityStatus.UNKNOWN
+    assert classify(violated=False, evaluable=False) is FeasibilityStatus.UNKNOWN
+    claim = Certificate("sampled-search", "upper bound", "none")
+    with pytest.raises(ValueError, match="not a registered certifying method"):
+        classify(violated=False, evaluable=True, certificate=claim)
+    # A violation is conclusive even next to a (rejected-in-principle) certificate claim.
+    assert classify(violated=True, evaluable=True, certificate=claim) is FeasibilityStatus.VIOLATED
+
+
+def test_evaluations_report_violated_or_unknown_and_never_certified(client):
+    common = dict(design_parameters=None, base_geometry=GEOMETRY, soil=100.0, points=[], client=client,
+                  standards=[safety_criteria.IEEE80_2013], exposure=EXPOSURE)
+    seen = set()
+    for level in ("L0", "L1", "L2", "L2+", "L3"):
+        for current in (1000.0, 50000.0):
+            result = evaluate_design(injection_a=current, level=level, **common)
+            assert result["FeasibilityStatus"] in {"VIOLATED", "UNKNOWN"}
+            assert result["FeasibilityBasis"]["certified"] is False
+            seen.add((level, result["FeasibilityStatus"]))
+            if result["FeasibilityStatus"] == "VIOLATED":
+                assert result["Feasible"] is False
+            if level == "L0":
+                assert result["FeasibilityStatus"] == "UNKNOWN"
+    assert ("L2+", "VIOLATED") in seen and ("L1", "VIOLATED") in seen
+
+
+def test_adaptive_refinement_climbs_the_voltage_not_the_potential():
+    """The touch voltage is gpr minus the potential, so the search must move toward LOWER potential."""
+    from src.infrastructure.calculations.artifact_potential import _adaptive_refine
+    gpr, peak = 1000.0, (3.2, 1.7)
+    surface = lambda x, y: gpr - 400.0 / (1.0 + (x - peak[0]) ** 2 + (y - peak[1]) ** 2)   # potential; touch voltage peaks at `peak`
+    stats = {"fresh": 0}
+    def lookup(points, limit=None):
+        if limit is not None and len(points) > limit:
+            return None, []
+        stats["fresh"] += len(points)
+        return {pid: surface(x, y) for pid, (x, y, _) in points.items()}, []
+    seed = (3.0, 2.0)
+    searches, summary = _adaptive_refine(lookup, stats, lambda x, y: False, (-10, 10, -10, 10), gpr,
+                                         [(gpr - surface(*seed), seed)], [], 0.125, 5000, 1e-6, 0.001)
+    touch = searches[0]
+    assert abs(touch["x"] - peak[0]) < 0.05 and abs(touch["y"] - peak[1]) < 0.05
+    assert touch["value"] > gpr - surface(*seed)
+    assert summary["locally_converged"] and summary["certifies_global_maximum"] is False
+
+
+def test_adaptive_refinement_respects_its_point_budget_and_never_goes_below_l2_plus(client):
+    import random
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "services" / "potential_engine" / "validation"))
+    import free_geometry_generator as generator
+    rng, checked = random.Random(5), 0
+    for family in ("regular", "diagonals", "irregular", "dense-close"):
+        produced = generator.valid_geometry(rng, family)
+        if not produced or solver_evaluation.discretization_violations(produced[0], 100.0):
+            continue
+        kwargs = dict(geometry=produced[0], soil=100.0, injection_a=1000.0, points=[], client=client)
+        plus = solver_evaluation.evaluate(level="L2+", **kwargs)
+        adaptive = solver_evaluation.evaluate(level="L3", **kwargs)
+        small = solver_evaluation.evaluate(level="L3", settings={"adaptive_budget_points": 40}, **kwargs)
+        for quantity in ("Vt_v", "Vs_v"):
+            assert adaptive["quantities"][quantity] >= plus["quantities"][quantity] * (1 - 1e-9)
+            assert small["quantities"][quantity] >= plus["quantities"][quantity] * (1 - 1e-9)
+        assert small["refinement"]["points_evaluated"] <= 40
+        assert small["refinement"]["stops"].get("budget", 0) > 0
+        assert adaptive["refinement"]["certifies_global_maximum"] is False
+        checked += 1
+    assert checked >= 3
+
+
+def test_l2_fingerprint_is_the_one_it_had_before_fidelity_levels_existed(client):
+    from src.infrastructure.calculations import artifact_potential
+    from src.infrastructure.calculations.potential_engine_client import as_soil, soil_record
+    result = solver_evaluation.evaluate(geometry=GEOMETRY, soil=100.0, injection_a=1000.0, points=[], client=client)
+    legacy = {
+        "schema": solver_evaluation.EVALUATION_SCHEMA, "geometry": GEOMETRY, "soil": soil_record(as_soil(100.0)),
+        "injection_a": 1000.0, "points": [],
+        "settings": {"conductor_radius_m": 0.00525, "discretization_m": 1.0, "surface_spacing_m": 0.5,
+                     "segmentation": artifact_potential.DEFAULT_SEGMENTATION, "touch_reach_m": 0.0},
+        "quadrature_tolerance": client.quadrature_tolerance,
+    }
+    assert result["input_sha256"] == solver_evaluation._canonical_hash(legacy)

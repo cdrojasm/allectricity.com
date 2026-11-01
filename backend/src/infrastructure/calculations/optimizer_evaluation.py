@@ -14,6 +14,7 @@ from math import isfinite
 from threading import Lock
 from typing import Any, Callable
 
+from src.domain.spat.feasibility import FeasibilityStatus, classify
 from src.domain.spat.optimizer_foundations import generate_rectangular_grid
 from src.domain.spat.optimizer_constraints import OptimizerGeometryRejected, require_optimizer_geometry
 from src.domain.spat.parametric_geometry import generate_traced_grid
@@ -154,8 +155,8 @@ def evaluate_design(
     families. The solver's `Vs` and `Vt` extrema are compared to limits computed from the
     explicit exposure and standards; no standard or edition is inferred.
     """
-    if level not in ("L0", "L1", "L2", "L2+"):
-        raise ValueError("level must be 'L0', 'L1', 'L2' or 'L2+'")
+    if level not in ("L0", "L1", "L2", "L2+", "L3"):
+        raise ValueError("level must be 'L0', 'L1', 'L2', 'L2+' or 'L3'")
     run = context if context is not None else EvaluationContext()
     selected_discrete_options: dict[str, str] = {}
     if isinstance(design_parameters, dict):
@@ -256,6 +257,9 @@ def evaluate_design(
             "geometry": geometry,
             "Rg": None, "Vs": None, "Vt": None,
             "Feasible": None,
+            "FeasibilityStatus": FeasibilityStatus.UNKNOWN.value,
+            "FeasibilityBasis": {"level": "L0", "search": "none", "certified": False,
+                                 "meaning": "geometry only; no electrical result exists"},
             "ComplianceStatus": "not_evaluated",
             "OptimizerGeometryCheck": geometry_check,
             "SelectedDiscreteOptions": selected_discrete_options,
@@ -335,6 +339,9 @@ def evaluate_design(
         feasible = None
     if level == "L1" and feasible:
         feasible = None  # lower bounds cannot certify compliance; only a violation is conclusive
+    # A criterion exceeded at an evaluated point is conclusive even when other criteria are missing.
+    violated = any(item.get("criterion") is not None and item.get("status") != "no_evaluable" for item in violations)
+    feasibility_status = classify(violated=violated, evaluable=evaluable and not missing_mandatory)
     compliance_status = (
         "blocked_missing_mandatory_criteria" if missing_mandatory
         else "evaluable" if evaluable
@@ -354,6 +361,14 @@ def evaluate_design(
         "Vs": quantities["Vs_v"],
         "Vt": quantities["Vt_v"],
         "Feasible": feasible,
+        # Feasible is the legacy gate the search and persistence use: True means "no violation found
+        # by the sampled search". FeasibilityStatus is the formal state and is never CERTIFIED today.
+        "FeasibilityStatus": feasibility_status.value,
+        "FeasibilityBasis": {
+            "level": level, "search": "sampled", "certified": feasibility_status is FeasibilityStatus.CERTIFIED,
+            "meaning": ("a criterion is exceeded at an evaluated point" if violated
+                        else "no violation found; sampling cannot certify compliance"),
+        },
         "ComplianceStatus": compliance_status,
         "MissingMandatoryCriteria": list(missing_mandatory),
         "OptimizerGeometryCheck": geometry_check,

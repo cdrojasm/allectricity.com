@@ -33,6 +33,16 @@ DEFAULT_SETTINGS = {
     "segmentation": artifact_potential.DEFAULT_SEGMENTATION,
     "touch_reach_m": 0.0,
     "l1_surface_spacing_m": 2.0,
+    "adaptive_budget_points": 4000,
+    "adaptive_tolerance": 1e-4,
+    "adaptive_min_step_m": 0.01,
+}
+# Settings that only matter at some levels: kept out of the fingerprint elsewhere, so a level's
+# fingerprint does not change when another level gains a setting.
+LEVEL_SETTINGS = {
+    "L1": {"l1_surface_spacing_m"},
+    "L2+": {"l1_surface_spacing_m"},
+    "L3": {"l1_surface_spacing_m", "adaptive_budget_points", "adaptive_tolerance", "adaptive_min_step_m"},
 }
 
 
@@ -126,7 +136,9 @@ def evaluate(
     independent of point ordering, timestamps, execution duration and engine location.
 
     `level` is the fidelity: "L2" (default) searches the full raster with local refinements;
-    "L2+" is the union of the L1 and L2 searches: the full search plus the critical touch points
+    "L3" adds an adaptive pattern search around the strongest touch and step candidates, with
+    convergence tolerance and a point budget (`adaptive_*` settings); `refinement` reports how it
+    stopped. "L2+" is the union of the L1 and L2 searches: the full search plus the critical touch points
     and the step origins the coarse raster ranks first, each point evaluated once, so it is never
     below either level. "L1" uses a coarser raster (`l1_surface_spacing_m`, 2 m by default), nine known critical
     points and no refinements. Every value is attained at a real surface point, so L1 `Vs` and
@@ -141,12 +153,12 @@ def evaluate(
     """
     if not isinstance(injection_a, (int, float)) or not math.isfinite(injection_a) or injection_a <= 0:
         raise ValueError("injection_a must be positive")
-    if level not in ("L1", "L2", "L2+"):
-        raise ValueError("solver evaluation level must be 'L1', 'L2' or 'L2+'; 'L0' never reaches the solver")
+    if level not in ("L1", "L2", "L2+", "L3"):
+        raise ValueError("solver evaluation level must be 'L1', 'L2', 'L2+' or 'L3'; 'L0' never reaches the solver")
     model = as_soil(soil)
     effective = {**DEFAULT_SETTINGS, **(settings or {})}
     allowed_settings = {"conductor_radius_m", "discretization_m", "surface_spacing_m", "segmentation", "touch_reach_m",
-                        "l1_surface_spacing_m"}
+                        "l1_surface_spacing_m", "adaptive_budget_points", "adaptive_tolerance", "adaptive_min_step_m"}
     unknown_settings = set(effective) - allowed_settings
     if unknown_settings:
         raise ValueError(f"unsupported evaluation settings: {', '.join(sorted(unknown_settings))}")
@@ -162,7 +174,8 @@ def evaluate(
         "soil": soil_record(model),
         "injection_a": float(injection_a),
         "points": point_records,
-        "settings": effective,
+        "settings": {k: v for k, v in effective.items()
+                     if k not in set().union(*LEVEL_SETTINGS.values()) or k in LEVEL_SETTINGS.get(level, set())},
         "quadrature_tolerance": client.quadrature_tolerance,
     }
     coarse = level == "L1"
@@ -180,7 +193,10 @@ def evaluate(
         max(float(effective["surface_spacing_m"]), float(effective["l1_surface_spacing_m"])) if coarse
         else float(effective["surface_spacing_m"]),
         float(effective["touch_reach_m"]), coarse,
-        **({"critical": True, "coarse_spacing": float(effective["l1_surface_spacing_m"])} if level == "L2+" else {}),
+        **({"critical": True, "coarse_spacing": float(effective["l1_surface_spacing_m"])} if level in ("L2+", "L3") else {}),
+        **({"adaptive": {"budget_points": int(effective["adaptive_budget_points"]),
+                         "tolerance": float(effective["adaptive_tolerance"]),
+                         "min_step_m": float(effective["adaptive_min_step_m"])}} if level == "L3" else {}),
     )
     first = field["first"]
     requested = {}
@@ -196,6 +212,7 @@ def evaluate(
         "input_sha256": input_sha256,
         "status": "approximate",
         "fidelity": {"level": level, "values_are": "lower_bounds" if coarse else "refined_estimates"},
+        "refinement": field.get("adaptive"),
         "quantities": {
             "Rg_ohm": group["resistance_to_remote_earth_ohm"],
             "GPR_v": field["gpr_v"],

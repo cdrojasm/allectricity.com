@@ -345,6 +345,8 @@ def create_optimizer_run(project_id: str, payload: OptimizerRunRequest, request:
             evaluation = candidate.get("safety") or {}
             evaluation_snapshot = {
                 "feasible": evaluation.get("Feasible") is True,
+                "feasibility_status": evaluation.get("FeasibilityStatus"),
+                "certified": (evaluation.get("FeasibilityBasis") or {}).get("certified") is True,
                 "cost": candidate.get("cost"),
                 "cost_detail": cost_detail,
                 "safety": evaluation,
