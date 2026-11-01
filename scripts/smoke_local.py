@@ -63,7 +63,7 @@ def frontend_port():
         for line in env_file.read_text().splitlines():
             if line.startswith("SPAT_FRONTEND_PORT="):
                 port = line.split("=", 1)[1].strip()
-    return port or "3000"
+    return port or "3001"
 
 
 def check_frontend(base):

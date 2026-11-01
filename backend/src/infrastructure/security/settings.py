@@ -13,7 +13,7 @@ class Settings:
     access_seconds: int = 900
     refresh_seconds: int = 2592000
     reset_seconds: int = 1800
-    reset_url: str = "http://localhost:3000/reset-password"
+    reset_url: str = "http://localhost:3001/reset-password"
     google_client_id: str = ""
     geocoder_search_url: str = "https://nominatim.openstreetmap.org/search"
     environment: str = "local"
@@ -48,7 +48,7 @@ class Settings:
             refresh_seconds=int(os.getenv("AUTH_REFRESH_SECONDS", "2592000")),
             reset_seconds=int(os.getenv("AUTH_RESET_SECONDS", "1800")),
             reset_url=os.getenv(
-                "AUTH_RESET_URL", "http://localhost:3000/reset-password"
+                "AUTH_RESET_URL", "http://localhost:3001/reset-password"
             ),
             google_client_id=os.getenv("GOOGLE_CLIENT_ID", ""),
             geocoder_search_url=os.getenv(

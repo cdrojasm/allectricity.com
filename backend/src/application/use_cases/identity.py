@@ -274,6 +274,10 @@ class IdentityService:
                 error = ServiceError(401, "Invalid refresh token")
             else:
                 db.change("refresh_tokens", stored["id"], consumed_at=now())
+                # The refresh lifetime is a sliding inactivity window. Active users
+                # keep their session; inactive users must return before this expires.
+                session["expires_at"] = now() + self.settings.refresh_seconds
+                db.change("auth_sessions", session["id"], expires_at=session["expires_at"])
                 result = self._pair(db, user, session)
         # Raise AFTER commit so reuse detection really revokes the family.
         if error:

@@ -1,6 +1,6 @@
 # Plan de prueba e2e — SE La Esperanza
 
-Se ejecuta en el frontend local (`http://127.0.0.1:3000`), modo **asistido**, con los archivos de
+Se ejecuta en el frontend local (`http://127.0.0.1:3001`), modo **asistido**, con los archivos de
 esta carpeta. Cada paso registra: qué se hizo, qué respondió el agente, versión del artefacto y
 desviaciones.
 

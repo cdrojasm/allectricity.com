@@ -14,7 +14,7 @@ COPY dependencies/pyproject.toml ./
 COPY backend/src ./src
 COPY backend/migrations ./migrations
 COPY backend/alembic.ini ./alembic.ini
-RUN pip install --no-cache-dir '.[api]'
+RUN pip install --no-cache-dir '.[api,agent]'
 RUN useradd --create-home --uid 10001 spat
 USER spat
 EXPOSE 8000

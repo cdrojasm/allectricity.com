@@ -9,7 +9,7 @@ commands build static files into `app/dist`; start the API and Nginx together:
 make frontend-up
 ```
 
-Open `http://localhost:3000`. Nginx proxies `/api/`, `/docs`, `/openapi.json`
+Open `http://localhost:3001`. Nginx proxies `/api/`, `/docs`, `/openapi.json`
 and `/ready` to the API service. The API is available through that Nginx
 endpoint; its container port is not published directly on the host. Run
 `make frontend-build` to build the static files without starting containers.
@@ -69,8 +69,10 @@ make create-admin
 make test
 ```
 
-La API queda disponible en `http://localhost:3000/docs` a través de Nginx, y el
-correo local en `http://localhost:18025`. Toda instalación de dependencias y ejecución de pruebas
+La API queda disponible en `http://localhost:3001/docs` a través de Nginx, el
+correo local en `http://localhost:3001/mailpit/` y las cargas de archivos pasan
+por el mismo Nginx hacia MinIO. Solo Nginx publica un puerto del host; los demás
+servicios permanecen en la red interna de Docker. Toda instalación de dependencias y ejecución de pruebas
 se realiza dentro de Docker. Los contenedores, redes y volúmenes tienen prefijo
 `grounding-design-ai-`. `make local-down` conserva los datos.
 
@@ -111,9 +113,10 @@ documento. Las menciones provenientes de OCR conservan su indicador de revisión
 Al terminar, copia el archivo limpio a `documents` o `designs`. Esta extracción
 usa reglas y OCR general, así que requiere revisión técnica; OCR de PDF
 escaneados e interpretación de símbolos CAD quedan pendientes. En local, MinIO
-usa `http://localhost:19000` y su consola
-`http://localhost:19001`; Neo4j Browser usa `http://localhost:17474`. Configura
-`MINIO_WEBHOOK_AUTH_TOKEN`, `NEO4J_USER` y `NEO4J_PASSWORD` en `.env`. Ajusta
+se sirve a través de Nginx en `http://localhost:3001`; la consola de MinIO y
+Neo4j quedan disponibles solo dentro de la red Docker. Los servicios se
+comunican usando sus nombres DNS de Compose (`minio`, `neo4j`, `api`, etc.).
+Configura `MINIO_WEBHOOK_AUTH_TOKEN`, `NEO4J_USER` y `NEO4J_PASSWORD` en `.env`. Ajusta
 `MINIO_*` y `CLAMAV_*` en otros entornos. El límite local de carga es 20 MiB
 (`UPLOAD_MAX_BYTES`).
 

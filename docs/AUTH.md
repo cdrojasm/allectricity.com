@@ -33,11 +33,14 @@ El dashboard muestra el mismo estado por componente («Estado del sistema»).
 
 Todos los contenedores tienen prefijo `grounding-design-ai-`, igual que las
 imágenes propias, red y volúmenes. PostgreSQL/Redis no publican puertos al host.
-Frontend y API: `http://localhost:3000`; Nginx sirve la UI y expone `/api/`,
+Frontend y API: `http://localhost:3001`; Nginx sirve la UI y expone `/api/`,
 `/docs`, `/openapi.json`, `/health` y `/ready`. La API no publica un puerto de host.
-Correo local: `http://localhost:18025` (Mailpit, captura mensajes sin enviarlos
-a Internet). Cambiar `SPAT_FRONTEND_PORT` y `SPAT_MAIL_PORT` en `.env` si esos
-puertos ya están ocupados.
+Las cargas de archivos se canalizan por el mismo Nginx a MinIO; la interfaz local
+de correo está en `http://localhost:3001/mailpit/`. Solo el puerto de Nginx se
+publica en el host; API, PostgreSQL, Redis, MinIO, Neo4j, Mailpit, OCR y workers
+se comunican por la red interna de Docker. Cambiar `SPAT_FRONTEND_PORT` en `.env`
+si 3001 está ocupado. El puerto local inicia en 3001 para evitar colisiones con
+otros proyectos que publican Nginx en el puerto 80.
 
 ## Arquitectura
 
@@ -59,8 +62,9 @@ al usuario/sesión local para conservar revocación y RBAC, no solo cambiar algo
 Todos los endpoints siguientes tienen prefijo `/api/v1`. Las respuestas de API
 llevan `Cache-Control: no-store`. La API no almacena tokens en cookies; recibe
 `Authorization: Bearer <access_token>`. La UI usa autenticación local mediante
-correo y contraseña, guarda el access token en `localStorage` y consulta
-`/auth/me` al iniciar para validar la sesión. La UI de restablecimiento sigue
+correo y contraseña, conserva el access y refresh token para rotarlos, y consulta
+`/auth/me` al iniciar para validar la sesión. Si la sesión no se puede renovar,
+muestra un modal de expiración con salida al login. La UI de restablecimiento sigue
 pendiente, incluido leer `#token=` en la página de restablecimiento.
 
 | Método y endpoint | Entrada / comportamiento | Autorización |
@@ -100,10 +104,13 @@ Una nueva ruta privada sin política explícita hace fallar el arranque.
 - HS256 fijo en el adaptador; nunca se elige algoritmo usando el header del token.
 - Se verifica firma con `AUTH_JWT_SECRET`, `iss`, `aud`, `exp`, `iat`, `nbf`,
   `sub`, `sid`, `jti`, `kind` y `token_use=access`. Secret mínimo 32 bytes.
-- Access: 15 minutos; sesión/refresh: 30 días de duración absoluta (configurables).
+- Access: 15 minutos. `AUTH_REFRESH_SECONDS` define la ventana móvil de inactividad
+  (30 días por defecto): cada renovación válida rota el refresh token y extiende
+  la sesión desde ese momento. Si el usuario no vuelve durante esa ventana, debe
+  iniciar sesión otra vez. Ambos valores son configurables.
 - Cada refresh se consume atómicamente y se sustituye por otro. Reutilizar uno
   consumido revoca su familia completa, también los JWT de acceso ya emitidos.
-  El cliente debe serializar peticiones de refresh para evitar carreras legítimas.
+  El cliente serializa las peticiones de refresh para evitar carreras legítimas.
 - Refresh y reset se almacenan como SHA-256 de valores aleatorios de alta entropía.
   Contraseñas y secretos M2M se guardan con Argon2id.
 - Se verifica actividad de usuario y sesión en base de datos en cada petición;

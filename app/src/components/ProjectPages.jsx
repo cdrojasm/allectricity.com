@@ -18,7 +18,7 @@ function Login({ onLogin }) {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "Unable to sign in.");
-      onLogin(result.access_token);
+      onLogin(result);
     } catch (err) {
       setError(err.message || "Unable to reach the authentication service.");
     } finally {
