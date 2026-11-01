@@ -110,3 +110,58 @@ def test_regular_grids_and_junction_free_geometry_pass_the_discretization_check(
                  "conductors": [{"start": {"x": 0, "y": 5}, "end": {"x": 10, "y": 5}},
                                 {"start": {"x": 5, "y": 0}, "end": {"x": 5, "y": 10}}]}
     assert solver_evaluation.discretization_violations(two_layer, 100.0) == []
+
+
+def test_l2_plus_is_never_below_l1_or_l2(client):
+    """OPT-002: the union search keeps every maximum either level found."""
+    import random
+    import sys
+    validation = Path(__file__).resolve().parents[2] / "services" / "potential_engine" / "validation"
+    sys.path.insert(0, str(validation))
+    import free_geometry_generator as generator
+    rng, checked = random.Random(11), 0
+    for family in generator.FAMILIES:
+        produced = generator.valid_geometry(rng, family)
+        if not produced or solver_evaluation.discretization_violations(produced[0], 100.0):
+            continue
+        kwargs = dict(geometry=produced[0], soil=100.0, injection_a=1000.0, points=[], client=client)
+        levels = {name: solver_evaluation.evaluate(level=name, **kwargs)["quantities"] for name in ("L1", "L2", "L2+")}
+        for quantity in ("Vt_v", "Vs_v"):
+            assert levels["L2+"][quantity] >= max(levels["L1"][quantity], levels["L2"][quantity]) * (1 - 1e-9), (family, quantity)
+        checked += 1
+    assert checked >= 4
+
+
+@pytest.mark.parametrize("side,soil,vt,vs", [
+    (20, 100.0, 577.9, 377.8),
+    (40, 100.0, 229.6, 151.9),
+])
+def test_original_l2_values_are_unchanged(client, side, soil, vt, vs):
+    """OPT-002 compatibility: values measured before L2+ and duplicate-free queries existed."""
+    geometry = {**GEOMETRY, "length_m": side, "width_m": side}
+    quantities = solver_evaluation.evaluate(geometry=geometry, soil=soil, injection_a=1000.0, points=[], client=client)["quantities"]
+    assert quantities["Vt_v"] == pytest.approx(vt, rel=5e-4)
+    assert quantities["Vs_v"] == pytest.approx(vs, rel=5e-4)
+
+
+def test_l2_plus_fingerprint_differs_and_l2_keeps_its_own(client):
+    kwargs = dict(geometry=GEOMETRY, soil=100.0, injection_a=1000.0, points=[], client=client)
+    hashes = {level: solver_evaluation.evaluate(level=level, **kwargs)["input_sha256"] for level in ("L1", "L2", "L2+")}
+    assert len(set(hashes.values())) == 3
+    assert hashes["L2"] == solver_evaluation.evaluate(**kwargs)["input_sha256"]
+
+
+def test_a_grid_wholly_inside_a_building_has_no_touch_area_and_is_rejected_before_the_solver():
+    from src.domain.spat.optimizer_constraints import OptimizerGeometryRejected
+    inside_building = {
+        "length_m": 20, "width_m": 20, "burial_depth_m": 0.5, "rods": [],
+        "structures": [{"x": 10, "y": 10, "width": 12, "height": 12, "label": "edificio"}],
+        "conductors": [{"start": {"x": 7, "y": 10}, "end": {"x": 13, "y": 10}},
+                       {"start": {"x": 10, "y": 7}, "end": {"x": 10, "y": 13}}],
+    }
+    kinds = [v["kind"] for v in solver_evaluation.discretization_violations(inside_building, 100.0)]
+    assert "no_touch_area" in kinds
+    with pytest.raises(OptimizerGeometryRejected):
+        evaluate_design(design_parameters=None, base_geometry=inside_building, soil=100.0, injection_a=1000.0,
+                        points=[], client=ForbiddenSolver(), exposure=EXPOSURE, standards=[], level="L2+")
+    assert solver_evaluation.discretization_violations(GEOMETRY, 100.0) == []

@@ -807,31 +807,22 @@ def _uncertainty(client, geometry, parameters, soil, current, origin, finest):
     }, hashes
 
 
-def _field(client, geometry, soil, segments, current, origin, spacing, reach=0.0, coarse=False) -> dict[str, Any]:
+def _field(client, geometry, soil, segments, current, origin, spacing, reach=0.0, coarse=False,
+           critical=None, coarse_spacing=None) -> dict[str, Any]:
     """`_field_search` on one prepared system: assemble, factor and solve once, then query points.
 
     Clients without `session` (test doubles, older callers) keep the one-solve-per-query path.
     """
     open_session = getattr(client, "session", None)
     if open_session is None:
-        return _field_search(client, geometry, soil, segments, current, origin, spacing, reach, coarse)
+        return _field_search(client, geometry, soil, segments, current, origin, spacing, reach, coarse, critical, coarse_spacing)
     with open_session(soil=soil, segments=segments, injections_a={GROUP: current},
                       injection_origins={GROUP: origin}) as session:
-        return _field_search(session, geometry, soil, segments, current, origin, spacing, reach, coarse)
+        return _field_search(session, geometry, soil, segments, current, origin, spacing, reach, coarse, critical, coarse_spacing)
 
 
-def _field_search(client, geometry, soil, segments, current, origin, spacing, reach=0.0, coarse=False) -> dict[str, Any]:
-    """Surface search for GPR, the worst touch over the grid and the worst 1 m step.
-
-    The raster covers the whole site plus a margin. Touch is searched only over the grid's
-    footprint (its conductors' bounding box, widened by `reach`), not over the rest of the site;
-    step is searched everywhere except inside structures, whose floor is not open ground.
-
-    `coarse` (fidelity L1) skips both local refinements, adds nine known critical points to the
-    touch search and ranks step candidates by gradient, since raster neighbours are no longer 1 m
-    apart. Every value is still exact at its own points, so `Vt` and `Vs` are lower bounds of the true
-    maxima, though not necessarily of the refined search, which samples different points.
-    """
+def _touch_search_area(geometry: dict[str, Any], reach: float):
+    """Touch search box (xmin, xmax, ymin, ymax) and an `in_structure(x, y)` test, in the engine's centred frame."""
     half_x, half_y = geometry["length_m"] / 2, geometry["width_m"] / 2
     fx0, fx1, fy0, fy1 = grid_geometry.footprint(geometry)
     touch_box = (max(fx0 - reach, -SURFACE_MARGIN_M) - half_x, min(fx1 + reach, 2 * half_x + SURFACE_MARGIN_M) - half_x,
@@ -849,6 +840,51 @@ def _field_search(client, geometry, soil, segments, current, origin, spacing, re
     def in_structure(x: float, y: float) -> bool:
         return any(x0 + 1e-9 < x < x1 - 1e-9 and y0 + 1e-9 < y < y1 - 1e-9
                    for x0, x1, y0, y1 in obstacles)
+    return touch_box, in_structure
+
+
+def touch_area_is_accessible(geometry: dict[str, Any], spacing: float, reach: float = 0.0) -> bool:
+    """Whether the touch search finds at least one raster point outside every structure.
+
+    The search area is the conductors' bounding box widened by `reach`; a grid drawn wholly inside a
+    building has none and the field search refuses it, so callers can reject it before solving.
+    """
+    half_x, half_y = geometry["length_m"] / 2, geometry["width_m"] / 2
+    box, in_structure = _touch_search_area(geometry, reach)
+    nx = round(2 * (half_x + SURFACE_MARGIN_M) / spacing)
+    ny = round(2 * (half_y + SURFACE_MARGIN_M) / spacing)
+    for i in range(nx + 1):
+        x = -half_x - SURFACE_MARGIN_M + i * spacing
+        if not box[0] - 1e-9 <= x <= box[1] + 1e-9:
+            continue
+        for j in range(ny + 1):
+            y = -half_y - SURFACE_MARGIN_M + j * spacing
+            if box[2] - 1e-9 <= y <= box[3] + 1e-9 and not in_structure(x, y):
+                return True
+    return False
+
+
+def _field_search(client, geometry, soil, segments, current, origin, spacing, reach=0.0, coarse=False,
+                  critical=None, coarse_spacing=None) -> dict[str, Any]:
+    """Surface search for GPR, the worst touch over the grid and the worst 1 m step.
+
+    The raster covers the whole site plus a margin. Touch is searched only over the grid's
+    footprint (its conductors' bounding box, widened by `reach`), not over the rest of the site;
+    step is searched everywhere except inside structures, whose floor is not open ground.
+
+    `coarse` (fidelity L1) skips both local refinements, adds nine known critical points to the
+    touch search and ranks step candidates by gradient, since raster neighbours are no longer 1 m
+    apart. Every value is still exact at its own points, so `Vt` and `Vs` are lower bounds of the true
+    maxima, though not necessarily of the refined search, which samples different points.
+
+    `critical` adds the nine known critical touch points and starts step probes from them (default:
+    on for a coarse search, off otherwise). With `coarse_spacing` and a full search (fidelity L2+)
+    it also probes the step candidates a raster of that spacing would rank first, so the result is
+    the union of the L1 and L2 searches. A point is evaluated once however many sub-searches ask
+    for it.
+    """
+    half_x, half_y = geometry["length_m"] / 2, geometry["width_m"] / 2
+    touch_box, in_structure = _touch_search_area(geometry, reach)
 
     nx = round(2 * (half_x + SURFACE_MARGIN_M) / spacing)
     ny = round(2 * (half_y + SURFACE_MARGIN_M) / spacing)
@@ -856,8 +892,9 @@ def _field_search(client, geometry, soil, segments, current, origin, spacing, re
         f"s{i}_{j}": (-half_x - SURFACE_MARGIN_M + i * spacing, -half_y - SURFACE_MARGIN_M + j * spacing, 0.0)
         for i in range(nx + 1) for j in range(ny + 1)
     }
+    critical_on = coarse if critical is None else critical
     critical = {}
-    if coarse:
+    if critical_on:
         mid_x, mid_y = (touch_box[0] + touch_box[1]) / 2, (touch_box[2] + touch_box[3]) / 2
         for cx in (touch_box[0], mid_x, touch_box[1]):
             for cy in (touch_box[2], mid_y, touch_box[3]):
@@ -866,6 +903,22 @@ def _field_search(client, geometry, soil, segments, current, origin, spacing, re
     first, v, hashes = _solve(client, soil, segments, current,
                               [PotentialPoint(pid, xyz) for pid, xyz in {**raster, **critical}.items()], origin)
     gpr = first["groups"][GROUP]["potential_v"]
+    known = {(round(x, 9), round(y, 9)): v[pid] for pid, (x, y, _) in {**raster, **critical}.items()}
+
+    def lookup(points: dict[str, tuple[float, float, float]]):
+        """Potentials at `points`, asking the engine only for coordinates not evaluated before."""
+        keys = {pid: (round(x, 9), round(y, 9)) for pid, (x, y, _) in points.items()}
+        fresh: dict[tuple[float, float], str] = {}
+        for pid, key in keys.items():
+            if key not in known and key not in fresh:
+                fresh[key] = pid
+        hashes: list[str] = []
+        if fresh:
+            _, values, hashes = _solve(client, soil, segments, current,
+                                       [PotentialPoint(pid, points[pid]) for pid in fresh.values()], origin)
+            for key, pid in fresh.items():
+                known[key] = values[pid]
+        return {pid: known[key] for pid, key in keys.items()}, hashes
 
     inside = [pid for pid, (x, y, _) in raster.items()
               if touch_box[0] - 1e-9 <= x <= touch_box[1] + 1e-9 and touch_box[2] - 1e-9 <= y <= touch_box[3] + 1e-9]
@@ -887,8 +940,7 @@ def _field_search(client, geometry, soil, segments, current, origin, spacing, re
                         and touch_box[2] - 1e-9 <= py <= touch_box[3] + 1e-9
                         and not in_structure(px, py)):
                     touch_refine[f"t{c}_{ix}_{iy}"] = (px, py, 0.0)
-    _, touch_v, touch_hashes = _solve(client, soil, segments, current,
-                                       [PotentialPoint(pid, xyz) for pid, xyz in touch_refine.items()], origin)
+    touch_v, touch_hashes = lookup(touch_refine)
     touch_candidates = [(v[pid], raster[pid][:2]) for pid in touchable]
     touch_candidates.extend((value, touch_refine[pid][:2]) for pid, value in touch_v.items())
     touch_candidates.extend((v[pid], xyz[:2]) for pid, xyz in critical.items())
@@ -907,6 +959,20 @@ def _field_search(client, geometry, soil, segments, current, origin, spacing, re
     candidates = sorted(open_ground, key=axis_step, reverse=True)[:STEP_CANDIDATES]
     # (id prefix, potential at the origin, origin xy); a coarse search also starts from the critical points.
     probe_origins = [(f"p{c}", v[pid], raster[pid][:2]) for c, pid in enumerate(candidates)]
+    if critical_on and not coarse and coarse_spacing and coarse_spacing > spacing:
+        # Fidelity L2+: also the origins the coarse (L1) raster ranks first by gradient.
+        ratio = max(2, round(coarse_spacing / spacing))
+        reach_nodes = max(1, round(STEP_DISTANCE_M / (ratio * spacing))) * ratio
+        def coarse_gradient(pid: str) -> float:
+            i, j = map(int, pid[1:].split("_"))
+            return max((abs(v[pid] - v[f"s{i + di}_{j + dj}"]) for di, dj in
+                        ((reach_nodes, 0), (0, reach_nodes), (-reach_nodes, 0), (0, -reach_nodes))
+                        if f"s{i + di}_{j + dj}" in v), default=0.0) / (reach_nodes * spacing)
+        lattice = [pid for pid in open_ground if all(int(n) % ratio == 0 for n in pid[1:].split("_"))]
+        already = set(candidates)
+        probe_origins += [(f"g{c}", v[pid], raster[pid][:2]) for c, pid in
+                          enumerate(sorted(lattice, key=coarse_gradient, reverse=True)[:STEP_CANDIDATES])
+                          if pid not in already]
     probe_origins += [(f"q{c}", v[cid], xyz[:2]) for c, (cid, xyz) in enumerate(critical.items())
                       if not in_structure(*xyz[:2])]
     probes = {}
@@ -914,8 +980,7 @@ def _field_search(client, geometry, soil, segments, current, origin, spacing, re
         for d in range(STEP_DIRECTIONS):
             angle = 2 * pi * d / STEP_DIRECTIONS
             probes[f"{prefix}_{d}"] = (x + STEP_DISTANCE_M * cos(angle), y + STEP_DISTANCE_M * sin(angle), 0.0)
-    _, probe_v, probe_hashes = _solve(client, soil, segments, current,
-                                      [PotentialPoint(pid, xyz) for pid, xyz in probes.items()], origin)
+    probe_v, probe_hashes = lookup(probes)
     step_value, step_from, step_to = 0.0, None, None
     for prefix, origin_v, origin_xy in probe_origins:
         for d in range(STEP_DIRECTIONS):
@@ -944,8 +1009,7 @@ def _field_search(client, geometry, soil, segments, current, origin, spacing, re
                     if not in_structure(ex, ey):
                         step_refine[f"r{c}_{ix}_{iy}_{d}a"] = (sx, sy, 0.0)
                         step_refine[f"r{c}_{ix}_{iy}_{d}b"] = (ex, ey, 0.0)
-    _, refined_v, refined_hashes = _solve(client, soil, segments, current,
-                                          [PotentialPoint(pid, xyz) for pid, xyz in step_refine.items()], origin)
+    refined_v, refined_hashes = lookup(step_refine)
     for c, pid in enumerate(step_seeds):
         x, y, _ = raster[pid]
         for ix in range(-LOCAL_REFINE_DIVISIONS, LOCAL_REFINE_DIVISIONS + 1):
@@ -976,7 +1040,8 @@ def _field_search(client, geometry, soil, segments, current, origin, spacing, re
         },
         "max_touch_v": {"value": gpr - touch_min, "x_m": touch_xy[0], "y_m": touch_xy[1]},
         "max_step_v": {"value": step_value, "from_m": step_from, "to_m": step_to},
-        "point_count": len(raster) + len(probes) + len(touch_refine) + len(step_refine),
+        "point_count": len(known),
+        "points_requested": len(raster) + len(critical) + len(probes) + len(touch_refine) + len(step_refine),
         "hashes": hashes + probe_hashes + touch_hashes + refined_hashes,
     }
 

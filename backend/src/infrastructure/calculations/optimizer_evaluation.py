@@ -154,8 +154,8 @@ def evaluate_design(
     families. The solver's `Vs` and `Vt` extrema are compared to limits computed from the
     explicit exposure and standards; no standard or edition is inferred.
     """
-    if level not in ("L0", "L1", "L2"):
-        raise ValueError("level must be 'L0', 'L1' or 'L2'")
+    if level not in ("L0", "L1", "L2", "L2+"):
+        raise ValueError("level must be 'L0', 'L1', 'L2' or 'L2+'")
     run = context if context is not None else EvaluationContext()
     selected_discrete_options: dict[str, str] = {}
     if isinstance(design_parameters, dict):
@@ -244,7 +244,7 @@ def evaluate_design(
         else geometry_generator(deepcopy(base_geometry), parameters)
     )
     geometry_check = require_optimizer_geometry(geometry)
-    discretization = solver_evaluation.discretization_violations(geometry, soil, settings)
+    discretization = solver_evaluation.discretization_violations(geometry, soil, settings, level)
     if discretization:
         # Rejected like any other invalid geometry: before the budget is spent and before the solver.
         raise OptimizerGeometryRejected({

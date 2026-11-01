@@ -56,13 +56,14 @@ def _element_at(geometry: dict[str, Any], segment: ElectrodeSegment) -> tuple[st
 
 
 def discretization_violations(
-    geometry: dict[str, Any], soil: SoilModel | float, settings: dict[str, Any] | None = None,
+    geometry: dict[str, Any], soil: SoilModel | float, settings: dict[str, Any] | None = None, level: str = "L2",
 ) -> list[dict[str, Any]]:
     """Reasons the solver would refuse this geometry once discretised, found without calling it.
 
     Applies the engine's thin-wire rule (every segment at least 5 radii long, which a junction or
-    crossing close to a node can break), the same rule for the parts a soil interface cuts, and the
-    segment limit. Returns violations shaped like the OP-05 geometry check, each naming the drawn
+    crossing close to a node can break), the same rule for the parts a soil interface cuts, the
+    segment limit, and a touch search area wholly inside structures (no accessible point at the
+    raster spacing of `level`). Returns violations shaped like the OP-05 geometry check, each naming the drawn
     conductor or rod that holds the offending segment when there is one.
     """
     effective = {**DEFAULT_SETTINGS, **(settings or {})}
@@ -88,6 +89,11 @@ def discretization_violations(
                 "message": f"segment {segment.id}{where} is {length:.4f} m long; the thin-wire model needs at least "
                            f"{minimum:.4f} m (5 radii). Move the nearby junction or crossing, or merge the nodes",
             })
+    spacing = float(effective["l1_surface_spacing_m"] if level == "L1" else effective["surface_spacing_m"])
+    if not artifact_potential.touch_area_is_accessible(geometry, spacing, float(effective["touch_reach_m"])):
+        violations.append({"kind": "no_touch_area", "element": "geometry", "index": None,
+                           "message": "every point of the touch search area (the grid's bounding box) lies inside a structure; "
+                                      "no accessible touch point exists"})
     if not violations:
         try:
             split_at_interface(segments, model)
@@ -120,7 +126,9 @@ def evaluate(
     independent of point ordering, timestamps, execution duration and engine location.
 
     `level` is the fidelity: "L2" (default) searches the full raster with local refinements;
-    "L1" uses a coarser raster (`l1_surface_spacing_m`, 2 m by default), nine known critical
+    "L2+" is the union of the L1 and L2 searches: the full search plus the critical touch points
+    and the step origins the coarse raster ranks first, each point evaluated once, so it is never
+    below either level. "L1" uses a coarser raster (`l1_surface_spacing_m`, 2 m by default), nine known critical
     points and no refinements. Every value is attained at a real surface point, so L1 `Vs` and
     `Vt` are lower bounds of the true maxima: an L1 violation is conclusive, an L1 pass is not.
     They are not lower bounds of the L2 values, because L2 is also a sampled search: L1 finds a
@@ -133,8 +141,8 @@ def evaluate(
     """
     if not isinstance(injection_a, (int, float)) or not math.isfinite(injection_a) or injection_a <= 0:
         raise ValueError("injection_a must be positive")
-    if level not in ("L1", "L2"):
-        raise ValueError("solver evaluation level must be 'L1' or 'L2'; 'L0' never reaches the solver")
+    if level not in ("L1", "L2", "L2+"):
+        raise ValueError("solver evaluation level must be 'L1', 'L2' or 'L2+'; 'L0' never reaches the solver")
     model = as_soil(soil)
     effective = {**DEFAULT_SETTINGS, **(settings or {})}
     allowed_settings = {"conductor_radius_m", "discretization_m", "surface_spacing_m", "segmentation", "touch_reach_m",
@@ -158,7 +166,7 @@ def evaluate(
         "quadrature_tolerance": client.quadrature_tolerance,
     }
     coarse = level == "L1"
-    if coarse:  # L2 fingerprints stay as they were before fidelity levels existed
+    if level != "L2":  # L2 fingerprints stay as they were before fidelity levels existed
         fingerprint_data["level"] = level
     input_sha256 = _canonical_hash(fingerprint_data)
 
@@ -172,6 +180,7 @@ def evaluate(
         max(float(effective["surface_spacing_m"]), float(effective["l1_surface_spacing_m"])) if coarse
         else float(effective["surface_spacing_m"]),
         float(effective["touch_reach_m"]), coarse,
+        **({"critical": True, "coarse_spacing": float(effective["l1_surface_spacing_m"])} if level == "L2+" else {}),
     )
     first = field["first"]
     requested = {}
