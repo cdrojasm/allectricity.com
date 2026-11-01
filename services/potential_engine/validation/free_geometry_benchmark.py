@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "backend"))
 
 import free_geometry_generator as generator  # noqa: E402
 
-LEVELS = ("L1", "L2", "L2+")
+LEVELS = ("L1", "L2", "L2+", "L3")
 FINE_SPACING_M = 0.125
 SOILS = {"homog": 100.0, "2layer": (100.0, 300.0, 2.0)}
 EXPOSURES = {"gravel 3000 ohm-m": 3000.0, "no surface layer": 100.0}
@@ -82,6 +82,8 @@ def evaluate_design_levels(job: dict) -> dict:
                                                 points=[], client=client, level=level)
             row["t_" + level] = time.perf_counter() - started
             row[level] = {"Vt": result["quantities"]["Vt_v"], "Vs": result["quantities"]["Vs_v"]}
+            if result.get("refinement"):
+                row["refinement"] = result["refinement"]
     except Exception as exc:  # noqa: BLE001 - a refusal L0 missed is itself a result
         row["solver_error"] = f"{type(exc).__name__}: {str(exc)[:120]}"
     return row
@@ -143,6 +145,36 @@ def report(rows: list[dict], fine: dict[str, dict]) -> dict:
     below = [r["key"] for r in evaluated for q in ("Vt", "Vs")
              if r["L2+"][q] < max(r["L1"][q], r["L2"][q]) * (1 - 1e-9)]
     out["l2plus_below_l1_or_l2"] = len(set(below))
+    out["l3_below_l2plus"] = len({r["key"] for r in evaluated for q in ("Vt", "Vs") if r["L3"][q] < r["L2+"][q] * (1 - 1e-9)})
+
+    # OPT-004: precision against the fine-raster reference, cost against L2+, and how the search stopped.
+    sampled = [r for r in evaluated if r["key"] in fine]
+    out["against_fine_reference"] = {}
+    for level in LEVELS:
+        out["against_fine_reference"][level] = {}
+        for q in ("Vt", "Vs"):
+            errors = [r[level][q] / fine[r["key"]][q] - 1 for r in sampled]
+            if errors:
+                out["against_fine_reference"][level][q] = {
+                    "n": len(errors), "median": statistics.median(errors), "p5": _pct(errors, 0.05), "worst": min(errors),
+                    "short_over_1pct": sum(e < -0.01 for e in errors), "above_reference_over_half_pct": sum(e > 0.005 for e in errors)}
+    refined = [r for r in evaluated if "refinement" in r]
+    stops: dict[str, int] = {}
+    for r in refined:
+        for reason, count in r["refinement"]["stops"].items():
+            stops[reason] = stops.get(reason, 0) + count
+    short_after_convergence = [r["key"] for r in sampled if r.get("refinement", {}).get("locally_converged")
+                               and any(r["L3"][q] / fine[r["key"]][q] - 1 < -0.01 for q in ("Vt", "Vs"))]
+    out["adaptive_refinement"] = {
+        "designs": len(refined), "stops": stops,
+        "locally_converged": sum(r["refinement"]["locally_converged"] for r in refined),
+        "points_evaluated_median": statistics.median(r["refinement"]["points_evaluated"] for r in refined) if refined else None,
+        "points_evaluated_max": max((r["refinement"]["points_evaluated"] for r in refined), default=None),
+        "gain_vs_l2plus_Vs_max": max((r["L3"]["Vs"] / r["L2+"]["Vs"] - 1 for r in evaluated), default=None),
+        "gain_vs_l2plus_Vt_max": max((r["L3"]["Vt"] / r["L2+"]["Vt"] - 1 for r in evaluated), default=None),
+        # Local convergence is not a certificate: these converged and still fall short of the fine reference.
+        "converged_but_short_of_fine_reference": len(short_after_convergence),
+        "certifies_global_maximum": False}
 
     out["underestimation"] = {}   # level -> quantity -> family or "all" -> stats (relative to best known)
     for level in LEVELS:
@@ -191,6 +223,7 @@ def report(rows: list[dict], fine: dict[str, dict]) -> dict:
         out["time_s"][level] = {"total": sum(times), "median": statistics.median(times)}
     out["time_s"]["median_ratio_L2_over_L1"] = statistics.median(r["t_L2"] / r["t_L1"] for r in evaluated)
     out["time_s"]["median_ratio_L2plus_over_L2"] = statistics.median(r["t_L2+"] / r["t_L2"] for r in evaluated)
+    out["time_s"]["median_ratio_L3_over_L2plus"] = statistics.median(r["t_L3"] / r["t_L2+"] for r in evaluated)
     return out
 
 
@@ -198,7 +231,7 @@ def markdown(result: dict, meta: dict) -> str:
     lines = ["# Free-geometry fidelity benchmark", "",
              f"Seeds {meta['seeds']}, {result['designs']} designs ({result['evaluated']} evaluated, "
              f"{result['fine_references']} with a fine reference). Geometry set `{meta['geometry_set_sha256'][:16]}`.", "",
-             f"L2+ below L1 or L2: **{result['l2plus_below_l1_or_l2']}**", "",
+             f"L2+ below L1 or L2: **{result['l2plus_below_l1_or_l2']}** | L3 below L2+: **{result['l3_below_l2plus']}**", "",
              "## Errors by family", "", "| family | designs | L0 rejected | solver refusals missed by L0 |", "|---|---|---|---|"]
     for family, e in result["errors_by_family"].items():
         lines.append(f"| {family} | {e['designs']} | {e['l0_rejected']} | {e['solver_errors_missed_by_l0']} |")
@@ -210,11 +243,19 @@ def markdown(result: dict, meta: dict) -> str:
             lines.append(f"| {level} | {q} | {a['median']:+.4f} | {a['p5']:+.4f} | {a['worst']:+.4f} | "
                          f"{a['short_over_2pct']} | {a['short_over_5pct']} |")
     lines += ["", "## Apparent false compliance (best known value violates, level says it complies)", "",
-              "| exposure | share violating | L1 | L2 | L2+ |", "|---|---|---|---|---|"]
+              "| exposure | share violating | " + " | ".join(LEVELS) + " |", "|---|---|" + "---|" * len(LEVELS)]
     for exposure, entry in result["false_compliance"].items():
         for share, data in entry.items():
             cells = " | ".join(str(data["levels"][level]["false_compliance"]) for level in LEVELS)
             lines.append(f"| {exposure} | {share} | {cells} |")
+    lines += ["", "## Against the fine-raster reference (negative = falls short)", "",
+              "| level | quantity | n | median | p5 | worst | short >1% | above reference >0.5% |", "|---|---|---|---|---|---|---|---|"]
+    for level, quantities in result["against_fine_reference"].items():
+        for q, a in quantities.items():
+            lines.append(f"| {level} | {q} | {a['n']} | {a['median']:+.4f} | {a['p5']:+.4f} | {a['worst']:+.4f} | "
+                         f"{a['short_over_1pct']} | {a['above_reference_over_half_pct']} |")
+    lines += ["", "## Adaptive refinement (L3)", "", "Local convergence is not certification: the searches stop improving from their own seeds only.",
+              "", "```json", json.dumps(result["adaptive_refinement"], indent=1), "```"]
     lines += ["", "## Ranking", "", "```json", json.dumps(result["ranking"], indent=1), "```", "",
               "## Time (s)", "", "```json", json.dumps(result["time_s"], indent=1), "```"]
     return "\n".join(lines) + "\n"
