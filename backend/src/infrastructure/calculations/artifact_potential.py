@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from math import cos, log2, pi, sin
+from math import cos, isfinite, log2, pi, sin
 from time import monotonic, time
 from typing import Any
 
@@ -18,6 +18,7 @@ from src.infrastructure.calculations.potential_engine_client import (
     MAX_SCENARIO_RESULT_ROWS,
     MAX_LAYERS,
     MAX_SEGMENTS,
+    MAX_COORDINATE_M,
     ElectricalConnection,
     ElectrodeSegment,
     HomogeneousSoil,
@@ -262,6 +263,8 @@ def _calculate_v2(snapshot: dict[str, Any], parameters: dict[str, Any], client: 
     if missing:
         raise UnsupportedModelError("El artefacto 2.0 está incompleto para calcular; faltan: " + ", ".join(missing))
     scenarios = parameters.get("scenarios") or []
+    if (parameters.get("transfer_exposures") or parameters.get("transfer_assessment_complete") is True) and not scenarios:
+        raise UnsupportedModelError("La evaluación de tensión transferida requiere escenarios 2.0 nombrados.")
     if scenarios:
         if parameters.get("fault_split") or parameters.get("x_over_r") is not None:
             raise UnsupportedModelError(
@@ -400,6 +403,7 @@ def _calculate_v2_scenarios(snapshot, parameters, client, scenario_requests):
         raise UnsupportedModelError("La tabla de potenciales transferidos supera 100 000 pares; reduzca entidades o escenarios.")
     scenarios = {}
     scenario_origins = {}
+    scenario_injected_entities = {}
     for scenario in scenario_requests:
         scenario_id = scenario["id"]
         if scenario_id in scenarios:
@@ -415,6 +419,78 @@ def _calculate_v2_scenarios(snapshot, parameters, client, scenario_requests):
             mapped[group] = float(current)
         scenarios[scenario_id] = mapped
         scenario_origins[scenario_id] = {group: f"artifact:scenario.{scenario_id}" for group in mapped}
+        scenario_injected_entities[scenario_id] = {
+            entity_id for entity_id, current in injections.items() if float(current) != 0.0
+        }
+
+    transfer_exposures = parameters.get("transfer_exposures") or []
+    if transfer_exposures and not parameters.get("scenarios"):
+        raise UnsupportedModelError("Las exposiciones transferidas requieren escenarios 2.0 nombrados.")
+    if len({item.get("id") for item in transfer_exposures}) != len(transfer_exposures):
+        raise UnsupportedModelError("Los ids de exposiciones transferidas deben ser únicos.")
+
+    # A transfer exposure is evaluated only when the accessible metal entity is
+    # explicitly connected to an injected entity in this scenario.
+    adjacency = {entity_id: set() for entity_id in entity_group}
+    for connection in snapshot.get("connections", []):
+        a, b = connection.get("group_a"), connection.get("group_b")
+        if a in adjacency and b in adjacency:
+            adjacency[a].add(b)
+            adjacency[b].add(a)
+
+    transfer_rows_by_scenario: dict[str, list[dict[str, Any]]] = {key: [] for key in scenarios}
+    transfer_point_by_id: dict[str, str] = {}
+    transfer_points: list[PotentialPoint] = []
+    for exposure in transfer_exposures:
+        exposure_id = exposure.get("id")
+        scenario_id = exposure.get("scenario_id")
+        metal_entity_id = exposure.get("metal_entity_id")
+        if scenario_id not in scenarios:
+            raise UnsupportedModelError(f"La exposición transferida {exposure_id} referencia un escenario desconocido.")
+        if metal_entity_id not in entity_group:
+            raise UnsupportedModelError(f"La exposición transferida {exposure_id} referencia una entidad desconocida.")
+        row = {
+            "id": exposure_id,
+            "scenario_id": scenario_id,
+            "metal_entity_id": metal_entity_id,
+            "contact_surface_xyz_m": list(exposure.get("contact_surface_xyz_m") or []),
+            "accessibility": exposure.get("accessibility"),
+            "evidence": exposure.get("evidence"),
+            "exposure_class": exposure.get("exposure_class"),
+            "surface_layer_present": exposure.get("surface_layer_present"),
+            "surface_resistivity_ohm_m": exposure.get("surface_resistivity_ohm_m"),
+            "surface_thickness_m": exposure.get("surface_thickness_m"),
+            "clearing_time_s": exposure.get("clearing_time_s"),
+            "status": "no_evaluable",
+        }
+        transfer_rows_by_scenario[scenario_id].append(row)
+        if exposure.get("accessibility") == "not_accessible":
+            row.update(status="not_applicable", reason="El inventario declara que el elemento no es accesible.")
+            continue
+        if exposure.get("accessibility") != "confirmed" or not (exposure.get("evidence") or "").strip():
+            row["reason"] = "La accesibilidad y su evidencia deben estar confirmadas para evaluar la exposición."
+            continue
+        xyz = row["contact_surface_xyz_m"]
+        if len(xyz) != 3 or any(isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value) for value in xyz):
+            row["reason"] = "El punto de contacto debe tener tres coordenadas finitas."
+            continue
+        if abs(xyz[0]) > MAX_COORDINATE_M or abs(xyz[1]) > MAX_COORDINATE_M:
+            row["reason"] = "El punto de contacto excede el dominio espacial admitido por el solver."
+            continue
+        reached = set(scenario_injected_entities[scenario_id])
+        frontier = list(reached)
+        while frontier:
+            current_entity = frontier.pop()
+            for neighbor in adjacency[current_entity] - reached:
+                reached.add(neighbor)
+                frontier.append(neighbor)
+        if metal_entity_id not in reached:
+            row["reason"] = "La entidad metálica no tiene un camino eléctrico explícito desde una entidad inyectada en este escenario."
+            continue
+        point_id = "transfer_" + hashlib.sha256(str(exposure_id).encode("utf-8")).hexdigest()[:20]
+        transfer_point_by_id[exposure_id] = point_id
+        transfer_points.append(PotentialPoint(point_id, (float(xyz[0]), float(xyz[1]), 0.0)))
+        row["status"] = "pending_solver"
 
     spacing = float(settings["surface_spacing_m"])
     site_length = max(float(entity["geometry"]["length_m"]) for entity in entities)
@@ -472,6 +548,35 @@ def _calculate_v2_scenarios(snapshot, parameters, client, scenario_requests):
     def accessible(x, y):
         return not any(x0 < x < x1 and y0 < y < y1 for x0, x1, y0, y1 in obstacles)
 
+    # Sample each declared local soil-contact point exactly. The existing surface
+    # raster is only for extrema and must not be reused as an approximate transfer endpoint.
+    eligible_transfer_points = []
+    for rows in transfer_rows_by_scenario.values():
+        for row in rows:
+            if row.get("status") != "pending_solver":
+                continue
+            x, y, _ = row["contact_surface_xyz_m"]
+            if not accessible(x, y):
+                row.update(status="no_evaluable",
+                           reason="El punto declarado como contacto del suelo cae dentro de una estructura no accesible.")
+                continue
+            eligible_transfer_points.append(PotentialPoint(
+                transfer_point_by_id[row["id"]], (float(x), float(y), 0.0),
+            ))
+    if eligible_transfer_points:
+        transfer_solutions = client.calculate_scenarios(
+            soil=soil,
+            segments=segments,
+            points=eligible_transfer_points,
+            scenarios=scenarios,
+            injection_origins=scenario_origins,
+            connections=engine_connections,
+        )
+        for scenario_id, solved_transfer in transfer_solutions.items():
+            outcome = outcome_by_scenario[scenario_id]
+            outcome["potentials"].update(solved_transfer["potentials_v"])
+            outcome["hashes"].append(solved_transfer["trace"]["request_sha256"])
+
     scenario_results = {}
     evaluation_trace = []
     segment_group = {segment.id: segment.group for segment in segments}
@@ -487,9 +592,36 @@ def _calculate_v2_scenarios(snapshot, parameters, client, scenario_requests):
             entity_results[entity_id] = {
                 "injected_current_a": scenario.get(group, 0.0),
                 "potential_v": solved_group["potential_v"],
+                "potential_spread_v": solved_group["potential_spread_v"],
                 "leakage_current_a": leakage,
                 "current_balance_error_a": solved_group["current_balance_error_a"],
             }
+
+        transfer_results = []
+        for row in transfer_rows_by_scenario[scenario_id]:
+            result_row = dict(row)
+            if row.get("status") == "pending_solver":
+                point_id = transfer_point_by_id[row["id"]]
+                if point_id not in potentials:
+                    result_row.update(status="no_evaluable",
+                                      reason="El solver no devolvió el potencial del punto de contacto local.")
+                else:
+                    metal = entity_results[row["metal_entity_id"]]
+                    result_row.update(
+                        status="computed",
+                        calculation_status="computed",
+                        metal_potential_v=metal["potential_v"],
+                        metal_entity_potential_spread_v=metal["potential_spread_v"],
+                        local_surface_potential_v=potentials[point_id],
+                        actual_touch_v=abs(metal["potential_v"] - potentials[point_id]),
+                        solver_point_id=point_id,
+                        model_assumption=(
+                            "La entidad metálica representa el objeto accesible equipotencial y su ruta eléctrica "
+                            "se representa mediante las conexiones explícitas del artefacto; el potencial del nodo "
+                            "se usa como potencial del punto tocable."
+                        ),
+                    )
+            transfer_results.append(result_row)
 
         transfers = []
         ordered_entities = sorted(entity_group)
@@ -536,6 +668,11 @@ def _calculate_v2_scenarios(snapshot, parameters, client, scenario_requests):
             "entities": entity_results,
             "gpr_v": max((abs(item["potential_v"]) for item in entity_results.values()), default=0.0),
             "transferred_potentials_v": transfers,
+            "transfer_exposure_results": transfer_results,
+            "transfer_assessment": {
+                "complete": parameters.get("transfer_assessment_complete") is True,
+                "evidence": parameters.get("transfer_assessment_evidence"),
+            },
             "connection_currents_a": link_currents,
             "touch_by_entity": touches,
             "max_touch_v": touch,
@@ -551,11 +688,18 @@ def _calculate_v2_scenarios(snapshot, parameters, client, scenario_requests):
             "max_touch_v": {"value": touch["value_v"]},
             "max_step_v": {"value": step["value_v"]},
         }, snapshot["fault"], top_resistivity(soil), parameters)
+        _evaluate_transferred_safety(
+            values["safety"], transfer_results,
+            assessment_complete=parameters.get("transfer_assessment_complete") is True,
+            assessment_evidence=parameters.get("transfer_assessment_evidence"),
+            fault=snapshot["fault"], rho=top_resistivity(soil),
+        )
         scenario_results[scenario_id] = values
         evaluation_trace.append({
             "kind": "scenario", "id": scenario_id,
             "input_sha256": first["trace"]["request_sha256"],
             "solver_version": first["trace"].get("solver_version"),
+            "additional_input_sha256s": outcome["hashes"][1:],
         })
 
     records: dict[str, dict[str, Any]] = {"networks": {}, "electrodes": {}}
@@ -574,6 +718,9 @@ def _calculate_v2_scenarios(snapshot, parameters, client, scenario_requests):
         "electrodes": sorted(snapshot.get("electrodes", []), key=lambda item: item["id"]),
         "connections": sorted(snapshot.get("connections", []), key=lambda item: item["id"]),
         "scenarios": scenario_requests,
+        "transfer_assessment_complete": parameters.get("transfer_assessment_complete"),
+        "transfer_assessment_evidence": parameters.get("transfer_assessment_evidence"),
+        "transfer_exposures": parameters.get("transfer_exposures", []),
         "fault": snapshot["fault"], "soil": soil_record(soil), "settings": settings,
     }
     input_sha256 = hashlib.sha256(json.dumps(
@@ -803,15 +950,143 @@ def _field(client, geometry, soil, segments, current, origin, spacing, reach=0.0
     }
 
 
-def _safety(result: dict[str, Any], fault: dict[str, Any], rho: float, parameters: dict[str, Any]) -> list[dict[str, Any]]:
-    """Normative decision, kept apart from the field result it reads."""
-    exposure = safety_criteria.FaultExposure(
+def _fault_exposure(fault: dict[str, Any], rho: float) -> safety_criteria.FaultExposure:
+    return safety_criteria.FaultExposure(
         clearing_time_s=float(fault["clearing_time_s"]),
         body_weight_kg=float(fault.get("body_weight_kg", 50)),
         surface_resistivity_ohm_m=float(fault.get("surface_resistivity_ohm_m", 3000)),
         surface_thickness_m=float(fault.get("surface_thickness_m", 0.1)),
         soil_resistivity_ohm_m=rho,
+        exposure_class=fault.get("exposure_class"),
+        surface_layer_present=fault.get("surface_layer_present"),
     )
+
+
+def _evaluate_transferred_safety(
+    safety: list[dict[str, Any]],
+    transfer_rows: list[dict[str, Any]],
+    *,
+    assessment_complete: bool,
+    assessment_evidence: str | None,
+    fault: dict[str, Any],
+    rho: float,
+) -> None:
+    """Evaluate explicit metal-to-local-soil touch exposures; never use pairwise GPR deltas."""
+    for standard_result in safety:
+        standard = standard_result["standard"]
+        criteria = [item for item in standard_result.get("criteria", [])
+                    if item.get("criterion") != "transferred"]
+        candidate_rows = [item for item in transfer_rows if item.get("accessibility") != "not_accessible"]
+        source = None
+        method = (
+            "Tensión de contacto transferida = potencial del nodo metálico accesible menos potencial "
+            "del suelo en el punto local de contacto, calculado en la coordenada declarada. "
+            "La red/conexión y la entidad metálica deben estar representadas explícitamente."
+        )
+        if not assessment_complete:
+            transferred = {
+                "criterion": "transferred", "status": "no_evaluable",
+                "reason": "El inventario de exposiciones transferidas no fue declarado completo y documentado.",
+                "assessment_evidence": assessment_evidence,
+            }
+        elif not candidate_rows:
+            transferred = {
+                "criterion": "transferred", "status": "not_applicable",
+                "reason": "El inventario completo no identificó puntos accesibles de potencial transferido.",
+                "assessment_evidence": assessment_evidence,
+                "method": method,
+            }
+        else:
+            missing_rows = [item for item in candidate_rows if item.get("calculation_status", item.get("status")) != "computed"]
+            evaluated_rows = []
+            unevaluated_ids = [item["id"] for item in missing_rows]
+            for row in candidate_rows:
+                if row.get("calculation_status", row.get("status")) != "computed":
+                    continue
+                local_fault = dict(fault)
+                for key in ("exposure_class", "surface_layer_present", "surface_resistivity_ohm_m",
+                            "surface_thickness_m", "clearing_time_s"):
+                    if row.get(key) is not None:
+                        local_fault[key] = row[key]
+                try:
+                    limits = safety_criteria.tolerable_limits(standard, _fault_exposure(local_fault, rho))
+                except (safety_criteria.StandardNotLoadedError, ValueError):
+                    unevaluated_ids.append(row["id"])
+                    reason = "No hay límite tolerable aplicable con los datos de exposición declarados."
+                    row.update(status="no_evaluable", reason=reason)
+                    row.setdefault("safety_by_standard", {})[standard] = {
+                        "status": "no_evaluable", "reason": reason,
+                    }
+                    continue
+                limit = limits["touch_v"]
+                source = limits.get("source") or limits.get("touch_source") or {
+                    "document": standard, "edition": "seleccionada explícitamente",
+                    "clause": "límite tolerable de contacto",
+                }
+                actual = float(row["actual_touch_v"])
+                margin = limit - actual
+                standard_evaluation = {
+                    "status": "cumple" if margin >= 0 else "no_cumple",
+                    "actual_v": actual, "tolerable_v": limit, "margin_v": margin,
+                    "safety_source": source, "safety_method": method,
+                }
+                row.setdefault("safety_by_standard", {})[standard] = standard_evaluation
+                # Keep legacy single-standard fields for existing consumers;
+                # keyed evaluations are authoritative for multi-standard runs.
+                if "safety_standard" not in row:
+                    row.update(criterion_status=standard_evaluation["status"],
+                               tolerable_touch_v=limit, margin_v=margin, safety_standard=standard,
+                               safety_source=source, safety_method=method)
+                evaluated_rows.append(row)
+            worst_row = min(evaluated_rows, key=lambda item: item["safety_by_standard"][standard]["margin_v"]) if evaluated_rows else None
+            if unevaluated_ids:
+                transferred = {
+                    "criterion": "transferred", "status": "no_evaluable",
+                    "reason": "Una o más exposiciones no se pudieron modelar o no tienen datos para seleccionar su límite.",
+                    "assessment_evidence": assessment_evidence,
+                    "evaluated_exposure_ids": [item["id"] for item in evaluated_rows],
+                    "unevaluated_exposure_ids": sorted(set(unevaluated_ids)),
+                    "actual_v": worst_row["safety_by_standard"][standard]["actual_v"] if worst_row else None,
+                    "tolerable_v": worst_row["safety_by_standard"][standard]["tolerable_v"] if worst_row else None,
+                    "source": worst_row["safety_by_standard"][standard]["safety_source"] if worst_row else None,
+                    "method": method,
+                }
+            elif worst_row is None:
+                transferred = {"criterion": "transferred", "status": "no_evaluable",
+                              "reason": "No se obtuvo un valor de tensión transferida para las exposiciones declaradas.",
+                              "assessment_evidence": assessment_evidence}
+            else:
+                transferred = {
+                    "criterion": "transferred", "actual_v": worst_row["safety_by_standard"][standard]["actual_v"],
+                    "tolerable_v": worst_row["safety_by_standard"][standard]["tolerable_v"],
+                    "margin_v": worst_row["safety_by_standard"][standard]["margin_v"],
+                    "status": "cumple" if all(item["safety_by_standard"][standard]["status"] == "cumple" for item in evaluated_rows) else "no_cumple",
+                    "evaluated_exposure_ids": [item["id"] for item in evaluated_rows],
+                    "assessment_evidence": assessment_evidence,
+                    "source": worst_row["safety_by_standard"][standard]["safety_source"],
+                    "method": method,
+                    "model_assumption": "La entidad metálica se aproxima como equipotencial; su potencial de nodo se usa como potencial tocable.",
+                }
+        criteria.append(transferred)
+        standard_result["criteria"] = criteria
+        statuses = [item.get("status") for item in criteria]
+        if "no_cumple" in statuses:
+            standard_result["status"] = "no_cumple"
+        elif "no_evaluable" in statuses or not statuses:
+            standard_result["status"] = "no_evaluable"
+        else:
+            standard_result["status"] = "cumple"
+        standard_result.pop("reason", None)
+        if standard_result["status"] == "no_evaluable":
+            standard_result["reason"] = transferred.get("reason", "Faltan criterios de seguridad por evaluar.")
+        standard_result["unassessed_criteria"] = [
+            item["criterion"] for item in criteria if item.get("status") == "no_evaluable"
+        ]
+
+
+def _safety(result: dict[str, Any], fault: dict[str, Any], rho: float, parameters: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normative decision, kept apart from the field result it reads."""
+    exposure = _fault_exposure(fault, rho)
     field = {"touch_v": result["max_touch_v"]["value"], "step_v": result["max_step_v"]["value"], "gpr_v": result["gpr_v"]}
     standards = parameters.get("safety_standards") or [safety_criteria.IEEE80_2013]
     return safety_criteria.evaluate(field, exposure, standards)

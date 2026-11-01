@@ -16,6 +16,31 @@
     "warnings": {"type": "array", "items": {"type": "string"}}
   },
   "$defs": {
+    "transfer_exposure_result": {
+      "type": "object",
+      "required": ["id", "scenario_id", "metal_entity_id", "contact_surface_xyz_m", "accessibility", "status"],
+      "properties": {
+        "id": {"type": "string"},
+        "scenario_id": {"type": "string"},
+        "metal_entity_id": {"type": "string"},
+        "contact_surface_xyz_m": {"type": "array", "prefixItems": [{"type": "number"}, {"type": "number"}, {"const": 0}], "minItems": 3, "maxItems": 3},
+        "accessibility": {"enum": ["confirmed", "assumed", "not_accessible"]},
+        "status": {"enum": ["pending_solver", "computed", "no_evaluable", "not_applicable"]},
+        "calculation_status": {"type": "string"},
+        "actual_touch_v": {"type": "number", "minimum": 0},
+        "tolerable_touch_v": {"type": "number", "minimum": 0},
+        "margin_v": {"type": "number"},
+        "safety_standard": {"type": "string"},
+        "criterion_status": {"enum": ["cumple", "no_cumple"]},
+        "safety_by_standard": {"type": "object", "additionalProperties": {"type": "object", "required": ["status"], "properties": {
+          "status": {"enum": ["cumple", "no_cumple", "no_evaluable"]}, "actual_v": {"type": "number"},
+          "tolerable_v": {"type": "number"}, "margin_v": {"type": "number"},
+          "safety_source": {"type": "object"}, "safety_method": {"type": "string"}, "reason": {"type": "string"}
+        }, "additionalProperties": true}},
+        "reason": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
     "entity_result": {
       "type": "object",
       "required": ["id", "name"],
@@ -50,6 +75,11 @@
         "entities": {"type": "object", "additionalProperties": {"type": "object"}},
         "gpr_v": {"type": "number"},
         "transferred_potentials_v": {"type": "array", "items": {"type": "object"}},
+        "transfer_assessment": {"type": "object", "properties": {
+          "complete": {"type": "boolean"},
+          "evidence": {"type": ["string", "null"]}
+        }, "required": ["complete", "evidence"], "additionalProperties": false},
+        "transfer_exposure_results": {"type": "array", "items": {"$ref": "#/$defs/transfer_exposure_result"}},
         "connection_currents_a": {"type": "object", "additionalProperties": {"type": "number"}},
         "touch_by_entity": {"type": "array", "items": {"type": "object"}},
         "max_touch_v": {"type": "object"},

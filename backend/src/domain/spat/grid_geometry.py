@@ -1,7 +1,7 @@
 """Plan geometry of the artifact's site and grounding grid.
 
 Coordinates are in metres on the plan, with the origin at one corner of the site:
-0 <= x <= length_m and 0 <= y <= width_m. The site may be divided into rectangular `areas`:
+0 <= x <= length_m and 0 <= y <= width_m. The site may be divided into polygonal `areas`:
 when any is `intervenible`, the grid must stay inside them; `non_intervenible` areas and
 `structures` (existing buildings, foundations...) cannot be crossed. Areas are available space:
 the grid may use one of them, or part of one. A grid is either regular (conductors every
@@ -82,26 +82,63 @@ def site_areas(geometry: dict, kind: str) -> list[dict]:
     return [area for area in geometry.get("areas") or [] if area.get("type") == kind]
 
 
-def _area_rect(area: dict) -> dict:
-    """An area as a structure-like rectangle (centre and size)."""
-    x_min, x_max, y_min, y_max = (float(area[k]) for k in ("x_min", "x_max", "y_min", "y_max"))
-    return {"x": (x_min + x_max) / 2, "y": (y_min + y_max) / 2, "width": x_max - x_min, "height": y_max - y_min,
-            "label": area.get("label")}
+def area_polygon(area: dict) -> list[tuple[float, float]]:
+    """Polygon vertices, accepting legacy rectangular area dictionaries while artifacts migrate."""
+    polygon = area.get("polygon") or area.get("vertices")
+    if polygon:
+        return [(float(p["x"]), float(p["y"])) if isinstance(p, dict) else (float(p[0]), float(p[1]))
+                for p in polygon]
+    return [(float(area["x_min"]), float(area["y_min"])), (float(area["x_max"]), float(area["y_min"])),
+            (float(area["x_max"]), float(area["y_max"])), (float(area["x_min"]), float(area["y_max"]))]
+
+
+def _point_on_segment(point: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> bool:
+    (x, y), (ax, ay), (bx, by) = point, a, b
+    cross = (x - ax) * (by - ay) - (y - ay) * (bx - ax)
+    return abs(cross) <= TOLERANCE_M * max(1.0, hypot(bx - ax, by - ay)) and \
+        min(ax, bx) - TOLERANCE_M <= x <= max(ax, bx) + TOLERANCE_M and \
+        min(ay, by) - TOLERANCE_M <= y <= max(ay, by) + TOLERANCE_M
+
+
+def _point_in_polygon(x: float, y: float, polygon: list[tuple[float, float]]) -> bool:
+    point = (x, y)
+    inside = False
+    for a, b in zip(polygon, polygon[1:] + polygon[:1]):
+        if _point_on_segment(point, a, b):
+            return True
+        if (a[1] > y) != (b[1] > y) and x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]:
+            inside = not inside
+    return inside
 
 
 def obstacles(geometry: dict) -> list[tuple[str, dict, dict]]:
     """Every rectangle the grid cannot enter: (name used in messages, rectangle, reference)."""
     named = [(f"structure [{i}]", s, {"kind": "structure", "index": i, "label": s.get("label")})
              for i, s in enumerate(geometry.get("structures") or [])]
-    named += [(f"non-intervenible area [{i}]" + (f" ({a['label']})" if a.get("label") else ""), _area_rect(a),
-               {"kind": "area", "index": i, "label": a.get("label")})
-              for i, a in enumerate(geometry.get("areas") or []) if a.get("type") == "non_intervenible"]
     return named
 
 
 def _point_in_area(x: float, y: float, area: dict) -> bool:
-    return (float(area["x_min"]) - TOLERANCE_M <= x <= float(area["x_max"]) + TOLERANCE_M
-            and float(area["y_min"]) - TOLERANCE_M <= y <= float(area["y_max"]) + TOLERANCE_M)
+    return _point_in_polygon(x, y, area_polygon(area))
+
+
+def _line_intersects_polygon(line: Line, polygon: list[tuple[float, float]]) -> bool:
+    (x1, y1), (x2, y2) = line
+    if _point_in_polygon(x1, y1, polygon) or _point_in_polygon(x2, y2, polygon):
+        return True
+    dx, dy = x2 - x1, y2 - y1
+    for a, b in zip(polygon, polygon[1:] + polygon[:1]):
+        if _point_on_segment(a, (x1, y1), (x2, y2)) or _point_on_segment(b, (x1, y1), (x2, y2)):
+            return True
+        ex, ey = b[0] - a[0], b[1] - a[1]
+        denominator = dx * ey - dy * ex
+        if abs(denominator) < 1e-12:
+            continue
+        t = ((a[0] - x1) * ey - (a[1] - y1) * ex) / denominator
+        u = ((a[0] - x1) * dy - (a[1] - y1) * dx) / denominator
+        if -TOLERANCE_M <= t <= 1 + TOLERANCE_M and -TOLERANCE_M <= u <= 1 + TOLERANCE_M:
+            return True
+    return False
 
 
 def _segment_within_areas(line: Line, areas: list[dict]) -> bool:
@@ -111,28 +148,21 @@ def _segment_within_areas(line: Line, areas: list[dict]) -> bool:
     length = hypot(dx, dy)
     if length < TOLERANCE_M:
         return any(_point_in_area(x1, y1, area) for area in areas)
-    intervals = []
+    cuts = [0.0, 1.0]
     for area in areas:
-        t0, t1 = 0.0, 1.0
-        for p, q in ((-dx, x1 - float(area["x_min"]) + TOLERANCE_M), (dx, float(area["x_max"]) + TOLERANCE_M - x1),
-                     (-dy, y1 - float(area["y_min"]) + TOLERANCE_M), (dy, float(area["y_max"]) + TOLERANCE_M - y1)):
-            if abs(p) < 1e-12:
-                if q < 0:
-                    t0, t1 = 1.0, 0.0
+        polygon = area_polygon(area)
+        for a, b in zip(polygon, polygon[1:] + polygon[:1]):
+            ex, ey = b[0] - a[0], b[1] - a[1]
+            denominator = dx * ey - dy * ex
+            if abs(denominator) < 1e-12:
                 continue
-            t = q / p
-            if p < 0:
-                t0 = max(t0, t)
-            else:
-                t1 = min(t1, t)
-        if t1 >= t0:
-            intervals.append((t0, t1))
-    reach, slack = 0.0, TOLERANCE_M / length
-    for t0, t1 in sorted(intervals):
-        if t0 > reach + slack:
-            return False
-        reach = max(reach, t1)
-    return reach >= 1.0 - slack
+            t = ((a[0] - x1) * ey - (a[1] - y1) * ex) / denominator
+            u = ((a[0] - x1) * dy - (a[1] - y1) * dx) / denominator
+            if -TOLERANCE_M <= t <= 1 + TOLERANCE_M and -TOLERANCE_M <= u <= 1 + TOLERANCE_M:
+                cuts.append(min(1.0, max(0.0, t)))
+    cuts = sorted(set(round(t, 10) for t in cuts))
+    samples = cuts + [(a + b) / 2 for a, b in zip(cuts, cuts[1:])]
+    return all(any(_point_in_area(x1 + t * dx, y1 + t * dy, area) for area in areas) for t in samples)
 
 
 def _merge_spans(spans: list[tuple[float, float]]) -> list[tuple[float, float]]:
@@ -143,6 +173,39 @@ def _merge_spans(spans: list[tuple[float, float]]) -> list[tuple[float, float]]:
         else:
             merged.append((start, end))
     return merged
+
+
+def _scanline_spans(polygon: list[tuple[float, float]], fixed: float, horizontal: bool,
+                    low: float, high: float) -> list[tuple[float, float]]:
+    crossings = []
+    for a, b in zip(polygon, polygon[1:] + polygon[:1]):
+        av, bv = (a[1], b[1]) if horizontal else (a[0], b[0])
+        if (av <= fixed < bv) or (bv <= fixed < av):
+            u = (fixed - av) / (bv - av)
+            crossings.append((a[0] + u * (b[0] - a[0])) if horizontal else (a[1] + u * (b[1] - a[1])))
+    crossings = sorted(set(round(v, 8) for v in crossings))
+    spans = []
+    for a, b in zip(crossings[::2], crossings[1::2]):
+        a, b = max(a, low), min(b, high)
+        if b - a > TOLERANCE_M:
+            spans.append((a, b))
+    return spans
+
+
+def _subtract_spans(spans: list[tuple[float, float]], blocked: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    remaining = spans
+    for cut_start, cut_end in _merge_spans(blocked):
+        next_remaining = []
+        for start, end in remaining:
+            if cut_end <= start + TOLERANCE_M or cut_start >= end - TOLERANCE_M:
+                next_remaining.append((start, end))
+            else:
+                if cut_start > start + TOLERANCE_M:
+                    next_remaining.append((start, min(end, cut_start)))
+                if cut_end < end - TOLERANCE_M:
+                    next_remaining.append((max(start, cut_end), end))
+        remaining = next_remaining
+    return remaining
 
 
 def snapped_positions(start: float, end: float, spacing: float, snap: float) -> list[float]:
@@ -196,28 +259,67 @@ def area_grid(geometry: dict, spacing_x_m: float, spacing_y_m: float, areas: lis
     snap = float(geometry.get("snap_m") or DEFAULT_SNAP_M)
     pieces = []
     for area in _select_areas(geometry, areas):
-        x_min, x_max, y_min, y_max = (float(area[k]) for k in ("x_min", "x_max", "y_min", "y_max"))
+        polygon = area_polygon(area)
+        x_min, x_max = min(p[0] for p in polygon), max(p[0] for p in polygon)
+        y_min, y_max = min(p[1] for p in polygon), max(p[1] for p in polygon)
         if bounds:
             x_min, x_max = max(x_min, float(bounds["x_min"])), min(x_max, float(bounds["x_max"]))
             y_min, y_max = max(y_min, float(bounds["y_min"])), min(y_max, float(bounds["y_max"]))
         if x_max - x_min > TOLERANCE_M and y_max - y_min > TOLERANCE_M:
-            pieces.append((x_min, x_max, y_min, y_max))
+            pieces.append((polygon, x_min, x_max, y_min, y_max))
     if not pieces:
         raise ValueError("the bounds leave no room inside the chosen areas")
     along_x, along_y = defaultdict(list), defaultdict(list)
-    for x_min, x_max, y_min, y_max in pieces:
+    for polygon, x_min, x_max, y_min, y_max in pieces:
         for y in snapped_positions(y_min, y_max, spacing_y_m, snap):
-            along_x[y].append((x_min, x_max))
+            along_x[y].extend(_scanline_spans(polygon, y, True, x_min, x_max))
         for x in snapped_positions(x_min, x_max, spacing_x_m, snap):
-            along_y[x].append((y_min, y_max))
+            along_y[x].extend(_scanline_spans(polygon, x, False, y_min, y_max))
     conductors = [{"start": {"x": round(a, 6), "y": y}, "end": {"x": round(b, 6), "y": y}}
                   for y, spans in sorted(along_x.items()) for a, b in _merge_spans(spans)]
     conductors += [{"start": {"x": x, "y": round(a, 6)}, "end": {"x": x, "y": round(b, 6)}}
                    for x, spans in sorted(along_y.items()) for a, b in _merge_spans(spans)]
+    for polygon, x_min, x_max, y_min, y_max in pieces:
+        for a, b in zip(polygon, polygon[1:] + polygon[:1]):
+            if (x_min - TOLERANCE_M <= a[0] <= x_max + TOLERANCE_M and
+                    y_min - TOLERANCE_M <= a[1] <= y_max + TOLERANCE_M and
+                    x_min - TOLERANCE_M <= b[0] <= x_max + TOLERANCE_M and
+                    y_min - TOLERANCE_M <= b[1] <= y_max + TOLERANCE_M):
+                conductors.append({"start": {"x": a[0], "y": a[1]}, "end": {"x": b[0], "y": b[1]}})
+    unique = {}
+    for conductor in conductors:
+        a = (round(conductor["start"]["x"], 6), round(conductor["start"]["y"], 6))
+        b = (round(conductor["end"]["x"], 6), round(conductor["end"]["y"], 6))
+        unique[tuple(sorted((a, b)))] = conductor
+    conductors = list(unique.values())
     for _, rect, _ in obstacles(geometry):
         half_w, half_h = float(rect["width"]) / 2, float(rect["height"]) / 2
         conductors = clip_conductors(conductors, float(rect["x"]) - half_w, float(rect["x"]) + half_w,
                                      float(rect["y"]) - half_h, float(rect["y"]) + half_h)
+    forbidden = [area_polygon(area) for area in geometry.get("areas") or []
+                 if area.get("type") == "non_intervenible"]
+    if forbidden:
+        clipped = []
+        for conductor in conductors:
+            a = (conductor["start"]["x"], conductor["start"]["y"])
+            b = (conductor["end"]["x"], conductor["end"]["y"])
+            horizontal = abs(a[1] - b[1]) <= TOLERANCE_M
+            vertical = abs(a[0] - b[0]) <= TOLERANCE_M
+            if not (horizontal or vertical):
+                clipped.append(conductor)
+                continue
+            fixed = a[1] if horizontal else a[0]
+            low, high = sorted((a[0], b[0]) if horizontal else (a[1], b[1]))
+            cuts = []
+            for polygon in forbidden:
+                for offset in (-TOLERANCE_M, 0.0, TOLERANCE_M):
+                    cuts.extend((max(low, start - 2 * TOLERANCE_M), min(high, end + 2 * TOLERANCE_M))
+                                for start, end in _scanline_spans(polygon, fixed + offset, horizontal, low, high))
+            for start, end in _subtract_spans([(low, high)], cuts):
+                first, last = ((start, fixed), (end, fixed)) if horizontal else ((fixed, start), (fixed, end))
+                clipped.append({"start": {"x": first[0], "y": first[1]},
+                                "end": {"x": last[0], "y": last[1]}})
+        conductors = clipped
     return conductors
 
 
@@ -233,8 +335,7 @@ def rod_layout(pattern: str, geometry: dict, spacing_x_m: float | None = None,
         areas = site_areas(geometry, "intervenible")
         if areas:  # the corners of the intervenible areas the grid uses, not of the site
             lines = conductor_lines(geometry)
-            points = sorted(p for p in {(float(a[x]), float(a[y])) for a in areas
-                                        for x in ("x_min", "x_max") for y in ("y_min", "y_max")}
+            points = sorted(p for p in {point for area in areas for point in area_polygon(area)}
                             if any(_point_segment_distance(p, line) <= TOLERANCE_M for line in lines))
         else:
             points = [(0.0, 0.0), (length, 0.0), (length, width), (0.0, width)]
@@ -433,11 +534,17 @@ def geometry_conflicts(geometry: dict) -> list[dict]:
         if conflicts:
             return conflicts
     for area_index, area in enumerate(geometry.get("areas") or []):
-        x_min, x_max, y_min, y_max = (area.get(k) for k in ("x_min", "x_max", "y_min", "y_max"))
-        if not all(isinstance(v, (int, float)) for v in (x_min, x_max, y_min, y_max)) or x_max <= x_min or y_max <= y_min:
-            conflicts.append(_conflict("area", area_index, "bounds",
-                                       f"geometry.areas[{area_index}] needs x_min < x_max and y_min < y_max"))
-        elif x_min < -TOLERANCE_M or y_min < -TOLERANCE_M or x_max > length + TOLERANCE_M or y_max > width + TOLERANCE_M:
+        try:
+            polygon = area_polygon(area)
+            valid_polygon = len(polygon) >= 3 and abs(sum(a[0] * b[1] - b[0] * a[1]
+                                                          for a, b in zip(polygon, polygon[1:] + polygon[:1]))) > TOLERANCE_M
+        except (KeyError, TypeError, ValueError):
+            polygon, valid_polygon = [], False
+        if not valid_polygon:
+            conflicts.append(_conflict("area", area_index, "polygon",
+                                       f"geometry.areas[{area_index}] needs a non-degenerate polygon with at least 3 vertices"))
+        elif any(x < -TOLERANCE_M or y < -TOLERANCE_M or x > length + TOLERANCE_M or y > width + TOLERANCE_M
+                 for x, y in polygon):
             conflicts.append(_conflict("area", area_index, "outside_site",
                                        f"geometry.areas[{area_index}] leaves the site (0..{length:g} x 0..{width:g} m)"))
     if conflicts:
@@ -468,6 +575,12 @@ def geometry_conflicts(geometry: dict) -> list[dict]:
             if _segment_crosses_structure(line, rect):
                 conflicts.append(_conflict("conductor", index, "crosses_obstacle",
                                            f"geometry.conductors[{index}] crosses {name}", ref))
+        for area_index, area in enumerate(geometry.get("areas") or []):
+            if area.get("type") == "non_intervenible" and _line_intersects_polygon(line, area_polygon(area)):
+                conflicts.append(_conflict("conductor", index, "crosses_obstacle",
+                                           f"geometry.conductors[{index}] crosses non-intervenible area [{area_index}]"
+                                           + (f" ({area['label']})" if area.get("label") else ""),
+                                           {"kind": "area", "index": area_index, "label": area.get("label")}))
         if allowed and explicit and not _segment_within_areas(line, allowed):
             conflicts.append(_conflict("conductor", index, "outside_areas",
                                        f"geometry.conductors[{index}] leaves the intervenible areas"))
@@ -487,6 +600,11 @@ def geometry_conflicts(geometry: dict) -> list[dict]:
         for name, rect, ref in blocked:
             if _point_in_structure(x, y, rect):
                 conflicts.append(_conflict("rod", index, "inside_obstacle", f"geometry.rods[{index}] is inside {name}", ref))
+        for area_index, area in enumerate(geometry.get("areas") or []):
+            if area.get("type") == "non_intervenible" and _point_in_area(x, y, area):
+                conflicts.append(_conflict("rod", index, "inside_obstacle",
+                                           f"geometry.rods[{index}] is inside non-intervenible area [{area_index}]",
+                                           {"kind": "area", "index": area_index, "label": area.get("label")}))
         if allowed and not any(_point_in_area(x, y, area) for area in allowed):
             conflicts.append(_conflict("rod", index, "outside_areas",
                                        f"geometry.rods[{index}] at ({x:g}, {y:g}) is outside the intervenible areas"))

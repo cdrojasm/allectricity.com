@@ -1,3 +1,4 @@
+from math import isfinite
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -112,19 +113,36 @@ class StructureRequest(PlanPoint):
 
 
 class SiteAreaRequest(StrictRequestModel):
-    """Rectangular zone of the site: grid work is allowed (`intervenible`) or forbidden (`non_intervenible`)."""
+    """Polygonal site zone. Legacy rectangular artifacts are normalized on input."""
 
     type: Literal["intervenible", "non_intervenible"]
     label: str | None = Field(default=None, max_length=160)
-    x_min: float = Field(ge=0, le=1e5)
-    x_max: float = Field(ge=0, le=1e5)
-    y_min: float = Field(ge=0, le=1e5)
-    y_max: float = Field(ge=0, le=1e5)
+    polygon: list[PlanPoint] = Field(min_length=3, max_length=1000,
+                                     description="Vértices del polígono en metros, sin repetir el primero al final")
+
+    @model_validator(mode="before")
+    @classmethod
+    def convert_legacy_rectangle(cls, value):
+        if isinstance(value, dict) and "polygon" not in value and all(
+                key in value for key in ("x_min", "x_max", "y_min", "y_max")):
+            bounds = {key: value[key] for key in ("x_min", "x_max", "y_min", "y_max")}
+            value = {key: item for key, item in value.items()
+                     if key not in {"x_min", "x_max", "y_min", "y_max"}}
+            value["polygon"] = [
+                {"x": bounds["x_min"], "y": bounds["y_min"]},
+                {"x": bounds["x_max"], "y": bounds["y_min"]},
+                {"x": bounds["x_max"], "y": bounds["y_max"]},
+                {"x": bounds["x_min"], "y": bounds["y_max"]},
+            ]
+        return value
 
     @model_validator(mode="after")
-    def bounds_are_ordered(self):
-        if self.x_max <= self.x_min or self.y_max <= self.y_min:
-            raise ValueError("an area needs x_min < x_max and y_min < y_max")
+    def polygon_is_valid(self):
+        from src.domain.spat.grid_geometry import area_polygon
+        points = area_polygon(self.model_dump(mode="python"))
+        area2 = sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(points, points[1:] + points[:1]))
+        if abs(area2) < 1e-3:
+            raise ValueError("an area polygon must have nonzero area")
         return self
 
 
@@ -189,6 +207,8 @@ class FaultScenarioRequest(StrictRequestModel):
     surface_resistivity_ohm_m: float = Field(default=3000, gt=0)
     surface_thickness_m: float = Field(default=0.1, gt=0)
     body_weight_kg: float = Field(default=50, ge=50, le=70)
+    exposure_class: Literal["public", "occupational"] | None = None
+    surface_layer_present: bool | None = None
 
 
 class ArtifactFaultRequest(FaultScenarioRequest):
@@ -370,6 +390,45 @@ class FaultSplitRequest(BaseModel):
         return self
 
 
+class TransferExposureRequest(StrictRequestModel):
+    """A documented scenario in which an accessible metal object may transfer potential."""
+
+    id: str = Field(min_length=1, max_length=100)
+    scenario_id: str = Field(min_length=1, max_length=80)
+    metal_entity_id: str = Field(min_length=1, max_length=100)
+    contact_surface_xyz_m: tuple[float, float, float] = Field(
+        description="Contact point in metres; z must be zero because this contract records a ground surface point"
+    )
+    accessibility: Literal["confirmed", "assumed", "not_accessible"]
+    evidence: str | None = Field(default=None, max_length=4000)
+    exposure_class: Literal["public", "occupational"] | None = None
+    surface_layer_present: bool | None = None
+    surface_resistivity_ohm_m: float | None = Field(default=None, gt=0)
+    surface_thickness_m: float | None = Field(default=None, gt=0)
+    clearing_time_s: float | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_contact_surface(self):
+        if not all(isfinite(coordinate) for coordinate in self.contact_surface_xyz_m):
+            raise ValueError("contact_surface_xyz_m coordinates must be finite")
+        if self.contact_surface_xyz_m[2] != 0:
+            raise ValueError("contact_surface_xyz_m z coordinate must be 0")
+        if self.accessibility in {"confirmed", "not_accessible"} and not (self.evidence or "").strip():
+            raise ValueError("evidence is required when accessibility is confirmed or not_accessible")
+        if self.accessibility == "confirmed":
+            if self.exposure_class is None or self.surface_layer_present is None:
+                raise ValueError("confirmed transfer exposure requires exposure_class and surface_layer_present")
+            if self.surface_layer_present and (
+                self.surface_resistivity_ohm_m is None or self.surface_thickness_m is None
+            ):
+                raise ValueError("a declared surface layer requires its resistivity and thickness")
+        if self.surface_layer_present is False and (
+            self.surface_resistivity_ohm_m is not None or self.surface_thickness_m is not None
+        ):
+            raise ValueError("surface layer properties cannot be supplied when surface_layer_present is false")
+        return self
+
+
 class PotentialCalculationRequest(BaseModel):
     """Engine parameters the artifact does not carry; all are recorded in the calculation trace."""
 
@@ -395,6 +454,18 @@ class PotentialCalculationRequest(BaseModel):
         default_factory=list, max_length=100,
         description="Named signed current injections for a joint 2.0 network calculation",
     )
+    transfer_assessment_complete: bool | None = Field(
+        default=None,
+        description="True only when transfer-voltage exposure assessment is complete and documented",
+    )
+    transfer_assessment_evidence: str | None = Field(
+        default=None, max_length=4000,
+        description="Evidence supporting a complete transfer-voltage exposure assessment",
+    )
+    transfer_exposures: list[TransferExposureRequest] = Field(
+        default_factory=list, max_length=500,
+        description="Documented accessible-metal transfer exposure scenarios; inputs only, not a safety result",
+    )
 
     @model_validator(mode="after")
     def raster_spacing_divides_step_distance(self):
@@ -408,8 +479,20 @@ class PotentialCalculationRequest(BaseModel):
         scenario_ids = [scenario.id for scenario in self.scenarios]
         if len(scenario_ids) != len(set(scenario_ids)):
             raise ValueError("scenario ids must be unique")
+        if (self.transfer_exposures or self.transfer_assessment_complete is True) and not scenario_ids:
+            raise ValueError("transfer assessment requires at least one named scenario")
         if self.scenarios and (self.fault_split is not None or self.x_over_r is not None):
             raise ValueError("scenario injections must already include current division and decrement factors")
+        if self.transfer_assessment_complete is True and not (self.transfer_assessment_evidence or "").strip():
+            raise ValueError("transfer_assessment_evidence is required when transfer_assessment_complete is true")
+        if self.transfer_assessment_complete is not True and self.transfer_assessment_evidence is not None:
+            raise ValueError("transfer_assessment_evidence cannot be supplied unless the assessment is complete")
+        exposure_ids = [exposure.id for exposure in self.transfer_exposures]
+        if len(exposure_ids) != len(set(exposure_ids)):
+            raise ValueError("transfer exposure ids must be unique")
+        unknown_exposure_scenarios = sorted({exposure.scenario_id for exposure in self.transfer_exposures} - set(scenario_ids))
+        if unknown_exposure_scenarios:
+            raise ValueError(f"transfer exposures reference unknown scenarios: {unknown_exposure_scenarios}")
         return self
 
 

@@ -17,11 +17,46 @@ def summarize(calculation: dict) -> dict:
     if calculation["status"] != "completed" or not result:
         summary["verdict"] = "no_evaluado"
         return summary
+    if result.get("schema_version") == "2.0" or result.get("scenario_results"):
+        scenarios = {}
+        statuses = set()
+        for scenario_id, scenario in (result.get("scenario_results") or {}).items():
+            standards = []
+            for evaluation in scenario.get("safety") or []:
+                criteria = {}
+                for criterion in evaluation.get("criteria", []):
+                    item = {"status": criterion.get("status"), "reason": criterion.get("reason")}
+                    for key in ("actual_v", "tolerable_v", "margin_v"):
+                        if isinstance(criterion.get(key), (int, float)):
+                            item[key] = round(criterion[key], 1)
+                    if isinstance(criterion.get("margin_rel"), (int, float)):
+                        item["margin_percent"] = round(100 * criterion["margin_rel"], 1)
+                    criteria[criterion.get("criterion", "unknown")] = item
+                standards.append({"standard": evaluation.get("standard"),
+                                  "status": evaluation.get("status"), **criteria,
+                                  "reason": evaluation.get("reason")})
+                statuses.add(evaluation.get("status"))
+            scenarios[scenario_id] = {
+                "standards": standards,
+                "transfer_assessment": scenario.get("transfer_assessment"),
+                "transfer_exposure_results": scenario.get("transfer_exposure_results", []),
+            }
+        summary.update(
+            verdict="no_cumple" if "no_cumple" in statuses else "cumple" if statuses == {"cumple"} else "no_evaluable",
+            scenarios=scenarios,
+        )
+        return summary
     standards = []
     for evaluation in result.get("safety") or []:
-        criteria = {c["criterion"]: {"actual_v": round(c["actual_v"], 1), "tolerable_v": round(c["tolerable_v"], 1),
-                                     "margin_percent": round(100 * c["margin_rel"], 1), "status": c["status"]}
-                    for c in evaluation.get("criteria", [])}
+        criteria = {}
+        for criterion in evaluation.get("criteria", []):
+            item = {"status": criterion.get("status"), "reason": criterion.get("reason")}
+            for key in ("actual_v", "tolerable_v"):
+                if isinstance(criterion.get(key), (int, float)):
+                    item[key] = round(criterion[key], 1)
+            if isinstance(criterion.get("margin_rel"), (int, float)):
+                item["margin_percent"] = round(100 * criterion["margin_rel"], 1)
+            criteria[criterion["criterion"]] = item
         standards.append({"standard": evaluation["standard"], "status": evaluation["status"], **criteria,
                           "reason": evaluation.get("reason"),
                           "gpr_below_tolerable_touch": evaluation.get("gpr_below_tolerable_touch")})

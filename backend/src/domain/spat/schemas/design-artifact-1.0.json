@@ -48,6 +48,15 @@
           "minimum": 50,
           "title": "Body Weight Kg",
           "type": "number"
+        },
+        "exposure_class": {
+          "enum": ["public", "occupational", null],
+          "title": "Exposure Class",
+          "type": ["string", "null"]
+        },
+        "surface_layer_present": {
+          "title": "Surface Layer Present",
+          "type": ["boolean", "null"]
         }
       },
       "title": "ArtifactFaultRequest",
@@ -486,12 +495,19 @@
       "properties": {
         "type": { "enum": ["intervenible", "non_intervenible"], "type": "string" },
         "label": { "anyOf": [{ "maxLength": 160, "type": "string" }, { "type": "null" }], "default": null },
+        "polygon": { "type": "array", "minItems": 3, "maxItems": 1000,
+          "items": { "$ref": "#/$defs/PlanPoint" },
+          "description": "Vértices del polígono en metros, sin repetir el primero al final" },
         "x_min": { "minimum": 0, "maximum": 100000.0, "type": "number" },
         "x_max": { "minimum": 0, "maximum": 100000.0, "type": "number" },
         "y_min": { "minimum": 0, "maximum": 100000.0, "type": "number" },
         "y_max": { "minimum": 0, "maximum": 100000.0, "type": "number" }
       },
-      "required": ["type", "x_min", "x_max", "y_min", "y_max"],
+      "required": ["type"],
+      "oneOf": [
+        { "required": ["polygon"] },
+        { "required": ["x_min", "x_max", "y_min", "y_max"] }
+      ],
       "title": "SiteAreaRequest",
       "type": "object"
     },

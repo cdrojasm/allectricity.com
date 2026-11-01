@@ -13,7 +13,7 @@ def propose_plan_from_image(client, data: bytes, mime_type: str, geometry: dict)
         "task": "Identify buildings, roads, foundations and other non-excavatable obstacles in this plan.",
         "output": {"structures": [{"x": "center x in metres", "y": "center y in metres", "width": "metres",
                                     "height": "metres", "label": "short label"}],
-                   "zone": {"x_min": "metres", "x_max": "metres", "y_min": "metres", "y_max": "metres"}},
+                   "zone": {"polygon": [{"x": "metres", "y": "metres"}] }},
         "constraints": "Use the existing plan extent; do not invent a scale or electrical connection. Return [] when unsure.",
         "extent_m": {"length": geometry.get("length_m"), "width": geometry.get("width_m")},
     }

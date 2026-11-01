@@ -16,7 +16,8 @@
         "kind": {"enum": ["network", "electrode", "scenario"]},
         "id": {"type": "string"},
         "input_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-        "solver_version": {"type": ["string", "null"]}
+        "solver_version": {"type": ["string", "null"]},
+        "additional_input_sha256s": {"type": "array", "items": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}
       },
       "additionalProperties": false
     }},
