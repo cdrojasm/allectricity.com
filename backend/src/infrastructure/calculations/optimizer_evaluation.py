@@ -143,7 +143,8 @@ def evaluate_design(
     `level` selects the fidelity. L0 only builds the geometry and checks it (invalid geometry
     raises `OptimizerGeometryRejected`, as at every level); it never calls the solver and does not
     count against the evaluation budget. L1 runs the solver on a coarse raster without
-    refinements, so `Vs` and `Vt` are lower bounds: a violation is conclusive, a pass is not and
+    refinements, so `Vs` and `Vt` are lower bounds of the true maxima (not of L2's values): a
+    violation is conclusive, a pass is not and
     reports `Feasible=None`. L2 is the full evaluation.
 
     `design_parameters=None` evaluates a copy of `base_geometry`. Otherwise the selected

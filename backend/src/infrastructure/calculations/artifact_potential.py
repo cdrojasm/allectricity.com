@@ -829,8 +829,8 @@ def _field_search(client, geometry, soil, segments, current, origin, spacing, re
 
     `coarse` (fidelity L1) skips both local refinements, adds nine known critical points to the
     touch search and ranks step candidates by gradient, since raster neighbours are no longer 1 m
-    apart. Every value is still exact at its own points, so `Vt` and `Vs` are lower bounds of the
-    refined result.
+    apart. Every value is still exact at its own points, so `Vt` and `Vs` are lower bounds of the true
+    maxima, though not necessarily of the refined search, which samples different points.
     """
     half_x, half_y = geometry["length_m"] / 2, geometry["width_m"] / 2
     fx0, fx1, fy0, fy1 = grid_geometry.footprint(geometry)

@@ -49,9 +49,12 @@ def evaluate(
 
     `level` is the fidelity: "L2" (default) searches the full raster with local refinements;
     "L1" uses a coarser raster (`l1_surface_spacing_m`, 2 m by default), nine known critical
-    points and no refinements, so its `Vs` and `Vt` are lower bounds of the L2 values: an L1
-    violation is conclusive, an L1 pass is not. L0 does not call the solver (see
-    `optimizer_evaluation.evaluate_design`).
+    points and no refinements. Every value is attained at a real surface point, so L1 `Vs` and
+    `Vt` are lower bounds of the true maxima: an L1 violation is conclusive, an L1 pass is not.
+    They are not lower bounds of the L2 values, because L2 is also a sampled search: L1 finds a
+    higher `Vt` when the maximum sits on a critical point L2 does not sample, and L2 finds a
+    higher `Vs` when the worst step starts off the coarse raster. L0 does not call the solver
+    (see `optimizer_evaluation.evaluate_design`).
 
     The extrema are approximate because their global search is finite, even though SV-08
     locally refines candidates. `points` are returned separately as requested point values.
