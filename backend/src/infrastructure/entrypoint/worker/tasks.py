@@ -25,6 +25,7 @@ celery_app.conf.update(
     timezone="UTC",
     task_default_queue="default",
     task_routes={
+        "spat.discover_materials": {"queue": "agent"},
         "spat.agent_run_step": {"queue": "agent"},
         "spat.resolve_chat_message": {"queue": "agent"},
         "spat.scan_file_upload": {"queue": "documents"},
@@ -40,6 +41,43 @@ celery_app.conf.update(
         "reconcile-file-uploads": {"task": "spat.reconcile_file_uploads", "schedule": 60.0},
     },
 )
+
+
+@celery_app.task(name="spat.discover_materials", soft_time_limit=240, time_limit=270)
+def discover_materials_job(job_id):
+    """Run bounded supplier discovery and persist a pollable result."""
+    from src.infrastructure.services import material_catalog_discovery
+
+    store = upload_store()
+    with store.transaction(write=True) as db:
+        job = db.one("material_discovery_jobs", id=job_id)
+        if not job or job["status"] != "queued":
+            return
+        db.change("material_discovery_jobs", job_id, status="running", updated_at=int(now()))
+    try:
+        request = job["request"]
+        result = material_catalog_discovery.discover(
+            geography=request.get("geography") or {},
+            category=request["category"],
+            query=request["query"],
+            max_results=int(request.get("max_results", 8)),
+        )
+        with store.transaction(write=True) as db:
+            db.change("material_discovery_jobs", job_id, status="completed", result=result,
+                      error=None, updated_at=int(now()))
+    except material_catalog_discovery.DiscoveryNotConfigured:
+        error = ("Búsqueda de materiales no configurada. Define TAVILY_API_KEY, OPENROUTER_API_KEY, "
+                 "o configura LLM_API_KEY con LLM_BASE_URL vacío para usar OpenAI Responses y web_search.")
+        with store.transaction(write=True) as db:
+            db.change("material_discovery_jobs", job_id, status="failed", error=error, updated_at=int(now()))
+    except material_catalog_discovery.DiscoveryProviderError as exc:
+        with store.transaction(write=True) as db:
+            db.change("material_discovery_jobs", job_id, status="failed", error=str(exc)[:1000], updated_at=int(now()))
+    except Exception:
+        with store.transaction(write=True) as db:
+            db.change("material_discovery_jobs", job_id, status="failed",
+                      error="Ocurrió un error interno durante la búsqueda.", updated_at=int(now()))
+        raise
 
 
 @celery_app.task(name="spat.render_study_pdf", autoretry_for=(Exception,), retry_backoff=30, max_retries=2)
