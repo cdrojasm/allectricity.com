@@ -807,12 +807,30 @@ def _uncertainty(client, geometry, parameters, soil, current, origin, finest):
     }, hashes
 
 
-def _field(client, geometry, soil, segments, current, origin, spacing, reach=0.0) -> dict[str, Any]:
+def _field(client, geometry, soil, segments, current, origin, spacing, reach=0.0, coarse=False) -> dict[str, Any]:
+    """`_field_search` on one prepared system: assemble, factor and solve once, then query points.
+
+    Clients without `session` (test doubles, older callers) keep the one-solve-per-query path.
+    """
+    open_session = getattr(client, "session", None)
+    if open_session is None:
+        return _field_search(client, geometry, soil, segments, current, origin, spacing, reach, coarse)
+    with open_session(soil=soil, segments=segments, injections_a={GROUP: current},
+                      injection_origins={GROUP: origin}) as session:
+        return _field_search(session, geometry, soil, segments, current, origin, spacing, reach, coarse)
+
+
+def _field_search(client, geometry, soil, segments, current, origin, spacing, reach=0.0, coarse=False) -> dict[str, Any]:
     """Surface search for GPR, the worst touch over the grid and the worst 1 m step.
 
     The raster covers the whole site plus a margin. Touch is searched only over the grid's
     footprint (its conductors' bounding box, widened by `reach`), not over the rest of the site;
     step is searched everywhere except inside structures, whose floor is not open ground.
+
+    `coarse` (fidelity L1) skips both local refinements, adds nine known critical points to the
+    touch search and ranks step candidates by gradient, since raster neighbours are no longer 1 m
+    apart. Every value is still exact at its own points, so `Vt` and `Vs` are lower bounds of the
+    refined result.
     """
     half_x, half_y = geometry["length_m"] / 2, geometry["width_m"] / 2
     fx0, fx1, fy0, fy1 = grid_geometry.footprint(geometry)
@@ -838,8 +856,15 @@ def _field(client, geometry, soil, segments, current, origin, spacing, reach=0.0
         f"s{i}_{j}": (-half_x - SURFACE_MARGIN_M + i * spacing, -half_y - SURFACE_MARGIN_M + j * spacing, 0.0)
         for i in range(nx + 1) for j in range(ny + 1)
     }
+    critical = {}
+    if coarse:
+        mid_x, mid_y = (touch_box[0] + touch_box[1]) / 2, (touch_box[2] + touch_box[3]) / 2
+        for cx in (touch_box[0], mid_x, touch_box[1]):
+            for cy in (touch_box[2], mid_y, touch_box[3]):
+                if not in_structure(cx, cy):
+                    critical[f"c{len(critical)}"] = (cx, cy, 0.0)
     first, v, hashes = _solve(client, soil, segments, current,
-                              [PotentialPoint(pid, xyz) for pid, xyz in raster.items()], origin)
+                              [PotentialPoint(pid, xyz) for pid, xyz in {**raster, **critical}.items()], origin)
     gpr = first["groups"][GROUP]["potential_v"]
 
     inside = [pid for pid, (x, y, _) in raster.items()
@@ -851,7 +876,7 @@ def _field(client, geometry, soil, segments, current, origin, spacing, reach=0.0
     # Refine the surface minimum on a local lattice; keep only points inside the touch search box
     # and on open ground. This lets the reported coordinate move off the coarse raster.
     local_spacing = spacing / LOCAL_REFINE_DIVISIONS
-    touch_seeds = sorted(touchable, key=v.__getitem__)[:TOUCH_REFINE_CANDIDATES]
+    touch_seeds = [] if coarse else sorted(touchable, key=v.__getitem__)[:TOUCH_REFINE_CANDIDATES]
     touch_refine = {}
     for c, pid in enumerate(touch_seeds):
         x, y, _ = raster[pid]
@@ -866,38 +891,44 @@ def _field(client, geometry, soil, segments, current, origin, spacing, reach=0.0
                                        [PotentialPoint(pid, xyz) for pid, xyz in touch_refine.items()], origin)
     touch_candidates = [(v[pid], raster[pid][:2]) for pid in touchable]
     touch_candidates.extend((value, touch_refine[pid][:2]) for pid, value in touch_v.items())
+    touch_candidates.extend((v[pid], xyz[:2]) for pid, xyz in critical.items())
     touch_min, touch_xy = min(touch_candidates, key=lambda item: item[0])
 
     # Step voltage: rank raster points by their largest 1 m axis difference, then search
     # 16 directions around the strongest candidates (the worst step is usually diagonal at a corner).
     k = max(1, round(STEP_DISTANCE_M / spacing))
+    # Neighbours are k * spacing apart; on a coarse raster that is not 1 m, so rank by gradient.
+    step_scale = STEP_DISTANCE_M / (k * spacing) if coarse else 1.0
     def axis_step(pid: str) -> float:
         i, j = map(int, pid[1:].split("_"))
-        return max((abs(v[pid] - v[f"s{i + di}_{j + dj}"]) for di, dj in ((k, 0), (0, k), (-k, 0), (0, -k))
+        return step_scale * max((abs(v[pid] - v[f"s{i + di}_{j + dj}"]) for di, dj in ((k, 0), (0, k), (-k, 0), (0, -k))
                     if f"s{i + di}_{j + dj}" in v), default=0.0)
     open_ground = [pid for pid, (x, y, _) in raster.items() if not in_structure(x, y)]
     candidates = sorted(open_ground, key=axis_step, reverse=True)[:STEP_CANDIDATES]
+    # (id prefix, potential at the origin, origin xy); a coarse search also starts from the critical points.
+    probe_origins = [(f"p{c}", v[pid], raster[pid][:2]) for c, pid in enumerate(candidates)]
+    probe_origins += [(f"q{c}", v[cid], xyz[:2]) for c, (cid, xyz) in enumerate(critical.items())
+                      if not in_structure(*xyz[:2])]
     probes = {}
-    for c, pid in enumerate(candidates):
-        x, y, _ = raster[pid]
+    for prefix, _, (x, y) in probe_origins:
         for d in range(STEP_DIRECTIONS):
             angle = 2 * pi * d / STEP_DIRECTIONS
-            probes[f"p{c}_{d}"] = (x + STEP_DISTANCE_M * cos(angle), y + STEP_DISTANCE_M * sin(angle), 0.0)
+            probes[f"{prefix}_{d}"] = (x + STEP_DISTANCE_M * cos(angle), y + STEP_DISTANCE_M * sin(angle), 0.0)
     _, probe_v, probe_hashes = _solve(client, soil, segments, current,
                                       [PotentialPoint(pid, xyz) for pid, xyz in probes.items()], origin)
     step_value, step_from, step_to = 0.0, None, None
-    for c, pid in enumerate(candidates):
+    for prefix, origin_v, origin_xy in probe_origins:
         for d in range(STEP_DIRECTIONS):
-            if in_structure(*probes[f"p{c}_{d}"][:2]):
+            if in_structure(*probes[f"{prefix}_{d}"][:2]):
                 continue
-            difference = abs(v[pid] - probe_v[f"p{c}_{d}"])
+            difference = abs(origin_v - probe_v[f"{prefix}_{d}"])
             if difference > step_value:
-                step_value, step_from, step_to = difference, list(raster[pid][:2]), list(probes[f"p{c}_{d}"][:2])
+                step_value, step_from, step_to = difference, list(origin_xy), list(probes[f"{prefix}_{d}"][:2])
 
     # Search a finer set of step origins around the strongest coarse candidates, keeping both
     # feet on open ground. Directions remain on the existing angular set so each reported pair
     # stays exactly STEP_DISTANCE_M apart.
-    step_seeds = candidates[:STEP_REFINE_CANDIDATES]
+    step_seeds = [] if coarse else candidates[:STEP_REFINE_CANDIDATES]
     step_refine = {}
     refine_radius = spacing
     for c, pid in enumerate(step_seeds):

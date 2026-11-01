@@ -1115,6 +1115,29 @@ std::vector<Segment> read_segments(std::size_t count, std::map<std::string, Grou
     return segments;
 }
 
+// `--session` keeps the prepared system (segments, soil, factorization and currents) alive after
+// the first response and answers `POINTS <n>` commands until `CLOSE` or end of input.
+bool gSession = false;
+
+std::vector<Point> read_point_rows(std::size_t count) {
+    std::vector<Point> points;
+    points.reserve(count);
+    std::set<std::string> point_ids;
+    std::string line;
+    for (std::size_t i = 0; i < count; ++i) {
+        if (!std::getline(std::cin, line)) throw std::runtime_error("missing point row");
+        auto f = fields(line);
+        if (f.size() != 4) throw std::runtime_error("point row must contain id x y z");
+        require_id(f[0], "point id");
+        if (!point_ids.insert(f[0]).second) throw std::runtime_error("duplicate point id: " + f[0]);
+        Point p{f[0], {number(f[1], "point x"), number(f[2], "point y"), number(f[3], "point z")}};
+        require_coordinate(p.p, "point " + p.id);
+        if (p.p.z < 0) throw std::runtime_error("potential query points must be at or above z=0");
+        points.push_back(p);
+    }
+    return points;
+}
+
 void run_request() {
     const auto request_started = SteadyClock::now();
     std::string line;
@@ -1316,20 +1339,7 @@ void run_request() {
         static_cast<double>(segment_count + point_count + groups.size() + connections.size() + 128);
     if (scenario_rows > kMaxScenarioResultRows)
         throw std::runtime_error("multi-scenario response exceeds the supported output row budget");
-    std::vector<Point> points;
-    points.reserve(point_count);
-    std::set<std::string> point_ids;
-    for (std::size_t i = 0; i < point_count; ++i) {
-        if (!std::getline(std::cin, line)) throw std::runtime_error("missing point row");
-        auto f = fields(line);
-        if (f.size() != 4) throw std::runtime_error("point row must contain id x y z");
-        require_id(f[0], "point id");
-        if (!point_ids.insert(f[0]).second) throw std::runtime_error("duplicate point id: " + f[0]);
-        Point p{f[0], {number(f[1], "point x"), number(f[2], "point y"), number(f[3], "point z")}};
-        require_coordinate(p.p, "point " + p.id);
-        if (p.p.z < 0) throw std::runtime_error("potential query points must be at or above z=0");
-        points.push_back(p);
-    }
+    std::vector<Point> points = read_point_rows(point_count);
     if (!std::getline(std::cin, line) || line != "END") throw std::runtime_error("expected END protocol marker");
     validate_geometry(segments, explicit_topology);
     ImageTable table;
@@ -1491,6 +1501,22 @@ void run_request() {
     if (!iterative_solver && (!std::isfinite(condition) || condition > kMaxCondition))
         throw std::runtime_error("ill-conditioned electrode system (1-norm condition estimate above 1e13)");
     if (!iterative_solver && condition > kWarnCondition) warnings.push_back("ill-conditioned\t1-norm condition estimate above 1e10");
+
+    if (gSession && scenarios.size() != 1) throw std::runtime_error("--session supports exactly one scenario");
+    std::vector<double> session_solution;
+    const auto evaluate_points = [&](const std::vector<Point>& query, const std::vector<double>& currents) {
+        for (const auto& point : query) {
+            double potential = 0.0;
+            if (soil.layered) {
+                const int observation_layer = layer_of(point.p.z, soil);
+                for (std::size_t j = 0; j < n; ++j)
+                    potential += layered_source_potential(point.p, observation_layer, segments[j], layers[j], table) * currents[j];
+            } else {
+                for (std::size_t j = 0; j < n; ++j) potential += source_potential(point.p, segments[j]) * currents[j];
+            }
+            std::cout << "POINT\t" << point.id << '\t' << factor_v * potential << '\n';
+        }
+    };
 
     std::cout << std::setprecision(17) << response_protocol << "\tOK\n";
     const auto common_warnings = warnings;
@@ -1664,17 +1690,8 @@ void run_request() {
         std::cout << "CONNECTION\t" << connection.id << '\t' << current << '\n';
     }
     const auto points_started = SteadyClock::now();
-    for (const auto& point : points) {
-        double potential = 0.0;
-        if (soil.layered) {
-            const int observation_layer = layer_of(point.p.z, soil);
-            for (std::size_t j = 0; j < n; ++j)
-                potential += layered_source_potential(point.p, observation_layer, segments[j], layers[j], table) * solution[j];
-        } else {
-            for (std::size_t j = 0; j < n; ++j) potential += source_potential(point.p, segments[j]) * solution[j];
-        }
-        std::cout << "POINT\t" << point.id << '\t' << factor_v * potential << '\n';
-    }
+    evaluate_points(points, solution);
+    if (gSession) session_solution = solution;
     const double point_evaluation_ms = elapsed_ms(points_started);
     std::cout << "DIAG\tprofile_point_evaluation_ms\t" << point_evaluation_ms << '\n'
               << "DIAG\tprofile_request_total_ms\t" << elapsed_ms(request_started) << '\n'
@@ -1682,11 +1699,28 @@ void run_request() {
     if (multiple_scenarios) std::cout << "END_SCENARIO\n";
     }
     std::cout << "END\n";
+    if (!gSession) return;
+    std::cout.flush();
+    while (std::getline(std::cin, line)) {
+        const auto command = fields(line);
+        if (command.empty()) continue;
+        if (command[0] == "CLOSE") break;
+        if (command[0] != "POINTS" || command.size() != 2) throw std::runtime_error("expected POINTS <count> or CLOSE");
+        const std::size_t count = count_value(command[1], "point count", kMaxPoints);
+        if (static_cast<double>(count) * static_cast<double>(segment_count) > kMaxPointSegmentWork)
+            throw std::runtime_error("points x segments exceeds 2e7; split the surface query into batches");
+        const auto query = read_point_rows(count);
+        if (!std::getline(std::cin, line) || line != "END") throw std::runtime_error("expected END protocol marker");
+        evaluate_points(query, session_solution);
+        std::cout << "END\n";
+        std::cout.flush();
+    }
 }
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     std::ios::sync_with_stdio(false);
+    for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--session") gSession = true;
     try {
         run_request();
         return 0;

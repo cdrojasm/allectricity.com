@@ -38,6 +38,7 @@ def evaluate(
     points: list[PotentialPoint],
     client: PotentialEngineClient,
     settings: dict[str, Any] | None = None,
+    level: str = "L2",
 ) -> dict[str, Any]:
     """Evaluate a single network without reading or mutating artifact/application state.
 
@@ -46,11 +47,19 @@ def evaluate(
     `touch_reach_m`; defaults match artifact calculations. The returned input hash is
     independent of point ordering, timestamps, execution duration and engine location.
 
+    `level` is the fidelity: "L2" (default) searches the full raster with local refinements;
+    "L1" uses a coarser raster (`l1_surface_spacing_m`, 2 m by default), nine known critical
+    points and no refinements, so its `Vs` and `Vt` are lower bounds of the L2 values: an L1
+    violation is conclusive, an L1 pass is not. L0 does not call the solver (see
+    `optimizer_evaluation.evaluate_design`).
+
     The extrema are approximate because their global search is finite, even though SV-08
     locally refines candidates. `points` are returned separately as requested point values.
     """
     if not isinstance(injection_a, (int, float)) or not math.isfinite(injection_a) or injection_a <= 0:
         raise ValueError("injection_a must be positive")
+    if level not in ("L1", "L2"):
+        raise ValueError("solver evaluation level must be 'L1' or 'L2'; 'L0' never reaches the solver")
     model = as_soil(soil)
     effective = {
         "conductor_radius_m": 0.00525,
@@ -58,9 +67,11 @@ def evaluate(
         "surface_spacing_m": 0.5,
         "segmentation": artifact_potential.DEFAULT_SEGMENTATION,
         "touch_reach_m": 0.0,
+        "l1_surface_spacing_m": 2.0,
         **(settings or {}),
     }
-    allowed_settings = {"conductor_radius_m", "discretization_m", "surface_spacing_m", "segmentation", "touch_reach_m"}
+    allowed_settings = {"conductor_radius_m", "discretization_m", "surface_spacing_m", "segmentation", "touch_reach_m",
+                        "l1_surface_spacing_m"}
     unknown_settings = set(effective) - allowed_settings
     if unknown_settings:
         raise ValueError(f"unsupported evaluation settings: {', '.join(sorted(unknown_settings))}")
@@ -79,6 +90,9 @@ def evaluate(
         "settings": effective,
         "quadrature_tolerance": client.quadrature_tolerance,
     }
+    coarse = level == "L1"
+    if coarse:  # L2 fingerprints stay as they were before fidelity levels existed
+        fingerprint_data["level"] = level
     input_sha256 = _canonical_hash(fingerprint_data)
 
     segments = artifact_potential._segments(geometry, effective, model)
@@ -88,7 +102,9 @@ def evaluate(
         )
     field = artifact_potential._field(
         client, geometry, model, segments, float(injection_a), "evaluation:injection_a",
-        float(effective["surface_spacing_m"]), float(effective["touch_reach_m"]),
+        max(float(effective["surface_spacing_m"]), float(effective["l1_surface_spacing_m"])) if coarse
+        else float(effective["surface_spacing_m"]),
+        float(effective["touch_reach_m"]), coarse,
     )
     first = field["first"]
     requested = {}
@@ -103,6 +119,7 @@ def evaluate(
         "solver_version": first["trace"].get("solver_version"),
         "input_sha256": input_sha256,
         "status": "approximate",
+        "fidelity": {"level": level, "values_are": "lower_bounds" if coarse else "refined_estimates"},
         "quantities": {
             "Rg_ohm": group["resistance_to_remote_earth_ohm"],
             "GPR_v": field["gpr_v"],

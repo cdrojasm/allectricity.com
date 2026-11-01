@@ -6,6 +6,7 @@ import hashlib
 import math
 import os
 import subprocess
+import threading
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -685,6 +686,20 @@ class PotentialEngineClient:
         `injection_origins` maps each injected group to a token naming where its current came
         from (for example `user`, `fault:bus-7`); it defaults to `unspecified`.
         """
+        soil, segments, connections, origins, protocol, payload = self._prepare(
+            segments=segments, injections_a=injections_a, points=points,
+            soil_resistivity_ohm_m=soil_resistivity_ohm_m, soil=soil,
+            injection_origins=injection_origins, connections=connections)
+        started = time.monotonic()
+        if self.remote_url:
+            stdout = self._calculate_remote(payload, project_id)
+        else:
+            stdout = self._calculate_local(payload)
+        return self._finish(stdout, soil, segments, connections, origins, injections_a, protocol, payload, started)
+
+    def _prepare(self, *, segments, injections_a, points, soil_resistivity_ohm_m=None, soil=None,
+                 injection_origins=None, connections=None):
+        """Validate a request and build its wire payload: (soil, segments, connections, origins, protocol, payload)."""
         if (soil is None) == (soil_resistivity_ohm_m is None):
             raise ValueError("give exactly one of soil_resistivity_ohm_m or soil")
         soil = as_soil(soil if soil is not None else soil_resistivity_ohm_m)
@@ -714,13 +729,9 @@ class PotentialEngineClient:
         for point in points:
             lines.append(f"{point.id} {_floats(point.xyz_m)}")
         lines.append("END")
-        payload = "\n".join(lines) + "\n"
+        return soil, segments, connections, origins, protocol, "\n".join(lines) + "\n"
 
-        started = time.monotonic()
-        if self.remote_url:
-            stdout = self._calculate_remote(payload, project_id)
-        else:
-            stdout = self._calculate_local(payload)
+    def _finish(self, stdout, soil, segments, connections, origins, injections_a, protocol, payload, started):
         result = self._decode(stdout)
         if isinstance(soil, LayerStackSoil) and result["metadata"].get("soil_model") != "n-layer":
             raise PotentialEngineError("C++ engine did not solve the n-layer soil; rebuild it (make potential-engine)")
@@ -741,6 +752,20 @@ class PotentialEngineClient:
             "connections": [asdict(connection) for connection in connections],
         }
         return result
+
+    def session(self, *, segments, injections_a, soil=None, soil_resistivity_ohm_m=None,
+                injection_origins=None, connections=None, project_id=None):
+        """Prepare one system (assemble, factor, solve) and evaluate potentials on it many times.
+
+        Use as a context manager. Results match `calculate` for the same inputs. With a remote engine
+        there is no persistent process, so the session falls back to one `calculate` call per query.
+        """
+        kwargs = dict(segments=segments, injections_a=injections_a, soil=soil,
+                      soil_resistivity_ohm_m=soil_resistivity_ohm_m, injection_origins=injection_origins,
+                      connections=connections, project_id=project_id)
+        if self.remote_url:
+            return _StatelessSession(self, kwargs)
+        return PotentialSession(self, kwargs)
 
     def calculate_scenarios(
         self,
@@ -922,6 +947,159 @@ class PotentialEngineClient:
         if not results:
             raise PotentialEngineError("C++ engine returned no scenarios")
         return results
+
+
+class _StatelessSession:
+    """Session API over `calculate` for engines that cannot keep state (remote service)."""
+
+    def __init__(self, client, kwargs):
+        self._client, self._kwargs = client, kwargs
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def close(self) -> None:
+        pass
+
+    def calculate(self, **kwargs):
+        return self._client.calculate(**kwargs)
+
+
+class PotentialSession:
+    """One persistent engine process holding a prepared system: matrix, LU factors and currents.
+
+    `calculate` accepts the same keywords as `PotentialEngineClient.calculate` so existing callers
+    can use a session as the client. A request for the prepared system only evaluates the new
+    points; any other system is solved afresh through the owning client. The returned trace is the
+    preparation's: its `request_sha256` identifies the system, not each point query.
+    """
+
+    def __init__(self, client: PotentialEngineClient, kwargs: dict[str, Any]):
+        self._client = client
+        self._kwargs = kwargs
+        (self._soil, self._segments, self._connections, self._origins, protocol, payload) = client._prepare(
+            points=[], **{k: v for k, v in kwargs.items() if k != "project_id"})
+        self._injections = kwargs["injections_a"]
+        self._process: subprocess.Popen | None = None
+        self.preparations = 1
+        self.evaluations = 0
+        started = time.monotonic()
+        try:
+            self._process = subprocess.Popen(
+                [client.executable, "--session"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True, preexec_fn=_limit_memory(client.memory_limit_mb),
+            )
+        except OSError as exc:
+            raise PotentialEngineError(f"could not start C++ potential engine: {exc}") from exc
+        stdout = self._exchange(payload)
+        self.prepared = client._finish(stdout, self._soil, self._segments, self._connections, self._origins,
+                                       self._injections, protocol, payload, started)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def _exchange(self, text: str) -> str:
+        """Send one message and read the response up to its END line, with the client's time limit."""
+        process = self._process
+        if process is None or process.poll() is not None:
+            raise PotentialEngineError("C++ engine session is closed")
+        timer = threading.Timer(self._client.timeout_s, process.kill)
+        timer.start()
+        try:
+            process.stdin.write(text)
+            process.stdin.flush()
+            rows = []
+            while True:
+                row = process.stdout.readline()
+                if not row:
+                    detail = next((r.split("\t", 2)[2] for r in rows if "\tERROR\t" in r), None)
+                    raise PotentialEngineError(detail or "C++ engine session ended without a response (time limit or crash)")
+                row = row.rstrip("\n")
+                if "\tERROR\t" in row:
+                    raise PotentialEngineError(row.split("\t", 2)[2])
+                rows.append(row)
+                if row == "END":
+                    return "\n".join(rows) + "\n"
+        except (BrokenPipeError, ValueError) as exc:
+            raise PotentialEngineError("C++ engine session closed unexpectedly") from exc
+        finally:
+            timer.cancel()
+
+    def currents(self) -> dict[str, float]:
+        """Segment currents of the prepared system (ids of the split parts)."""
+        return dict(self.prepared["segment_currents_a"])
+
+    def evaluate(self, points: list[PotentialPoint]) -> dict[str, float]:
+        """Potentials at surface points, without re-assembling or re-solving the system."""
+        validate_request(self._soil, self._segments, self._injections, points, self._origins, self._connections)
+        values: dict[str, float] = {}
+        if not points:
+            return values
+        batch = point_batch_size(self._soil, self._segments, points)
+        for start in range(0, len(points), batch):
+            chunk = points[start:start + batch]
+            lines = [f"POINTS {len(chunk)}"] + [f"{p.id} {_floats(p.xyz_m)}" for p in chunk] + ["END"]
+            for row in self._exchange("\n".join(lines) + "\n").splitlines():
+                fields = row.split("\t")
+                if fields[0] == "POINT" and len(fields) == 3:
+                    values[fields[1]] = float(fields[2])
+                elif row != "END":
+                    raise PotentialEngineError("C++ engine returned an invalid session row")
+            self.evaluations += 1
+        return values
+
+    def calculate(self, *, segments, injections_a, points, soil_resistivity_ohm_m=None, soil=None,
+                  injection_origins=None, connections=None, project_id=None):
+        same = False
+        try:
+            same = (soil is None) != (soil_resistivity_ohm_m is None) and \
+                split_at_interface(segments, as_soil(soil if soil is not None else soil_resistivity_ohm_m)) == self._segments \
+                and as_soil(soil if soil is not None else soil_resistivity_ohm_m) == self._soil \
+                and dict(injections_a) == dict(self._injections) \
+                and {g: (injection_origins or {}).get(g, "unspecified") for g in injections_a} == self._origins \
+                and list(connections or []) == self._connections
+        except ValueError:
+            same = False
+        if not same:
+            return self._client.calculate(
+                segments=segments, injections_a=injections_a, points=points, soil_resistivity_ohm_m=soil_resistivity_ohm_m,
+                soil=soil, injection_origins=injection_origins, connections=connections, project_id=project_id)
+        result = dict(self.prepared)
+        result["potentials_v"] = self.evaluate(points)
+        return result
+
+    def close(self) -> None:
+        process, self._process = getattr(self, "_process", None), None
+        if process is None:
+            return
+        try:
+            if process.poll() is None:
+                process.stdin.write("CLOSE\n")
+                process.stdin.flush()
+                process.stdin.close()
+                process.wait(timeout=5)
+        except Exception:
+            process.kill()
+            process.wait()
+        finally:
+            for stream in (process.stdout,):
+                try:
+                    stream.close()
+                except Exception:
+                    pass
 
 
 def _file_sha256(path: str) -> str | None:

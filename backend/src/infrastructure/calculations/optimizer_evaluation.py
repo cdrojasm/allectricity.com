@@ -136,8 +136,15 @@ def evaluate_design(
     geometry_generator: GeometryGenerator = _generate_geometry,
     constraint_context: dict[str, Any] | None = None,
     optimized_variables: list[str] | None = None,
+    level: str = "L2",
 ) -> dict[str, Any]:
     """Evaluate one design and report solver quantities, safety constraints and status.
+
+    `level` selects the fidelity. L0 only builds the geometry and checks it (invalid geometry
+    raises `OptimizerGeometryRejected`, as at every level); it never calls the solver and does not
+    count against the evaluation budget. L1 runs the solver on a coarse raster without
+    refinements, so `Vs` and `Vt` are lower bounds: a violation is conclusive, a pass is not and
+    reports `Feasible=None`. L2 is the full evaluation.
 
     `design_parameters=None` evaluates a copy of `base_geometry`. Otherwise the selected
     generator maps parameters onto the baseline geometry; the default is the current OP-02
@@ -145,6 +152,8 @@ def evaluate_design(
     families. The solver's `Vs` and `Vt` extrema are compared to limits computed from the
     explicit exposure and standards; no standard or edition is inferred.
     """
+    if level not in ("L0", "L1", "L2"):
+        raise ValueError("level must be 'L0', 'L1' or 'L2'")
     run = context if context is not None else EvaluationContext()
     selected_discrete_options: dict[str, str] = {}
     if isinstance(design_parameters, dict):
@@ -233,6 +242,18 @@ def evaluate_design(
         else geometry_generator(deepcopy(base_geometry), parameters)
     )
     geometry_check = require_optimizer_geometry(geometry)
+    if level == "L0":
+        return {
+            "schema_version": "spat.optimizer-evaluation/1.0",
+            "Fidelity": {"level": "L0", "values_are": "none"},
+            "geometry": geometry,
+            "Rg": None, "Vs": None, "Vt": None,
+            "Feasible": None,
+            "ComplianceStatus": "not_evaluated",
+            "OptimizerGeometryCheck": geometry_check,
+            "SelectedDiscreteOptions": selected_discrete_options,
+            "EvaluationCount": run.evaluation_count,
+        }
 
     # Count immediately before entering the stateless solver call. A failed call still uses
     # computational budget and therefore remains in the count.
@@ -244,6 +265,7 @@ def evaluate_design(
         points=points,
         client=client,
         settings=settings,
+        level=level,
     )
     quantities = solved["quantities"]
     field = {
@@ -304,6 +326,8 @@ def evaluate_design(
     missing_mandatory = sorted(set(context.get("missing_mandatory_criteria", [])) | set(unassessed_criteria))
     if missing_mandatory:
         feasible = None
+    if level == "L1" and feasible:
+        feasible = None  # lower bounds cannot certify compliance; only a violation is conclusive
     compliance_status = (
         "blocked_missing_mandatory_criteria" if missing_mandatory
         else "evaluable" if evaluable
@@ -317,6 +341,7 @@ def evaluate_design(
     }
     return {
         "schema_version": "spat.optimizer-evaluation/1.0",
+        "Fidelity": solved["fidelity"],
         "geometry": geometry,
         "Rg": quantities["Rg_ohm"],
         "Vs": quantities["Vs_v"],
