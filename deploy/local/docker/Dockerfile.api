@@ -29,6 +29,8 @@ COPY tests ./tests
 COPY services/potential_engine/src/main.cpp ./services/potential_engine/src/main.cpp
 COPY services/potential_engine/validation/reference_cases.json ./services/potential_engine/validation/reference_cases.json
 COPY services/potential_engine/validation/axisymmetric_fv.py ./services/potential_engine/validation/axisymmetric_fv.py
+COPY services/potential_engine/validation/free_geometry_generator.py ./services/potential_engine/validation/free_geometry_generator.py
+COPY services/potential_engine/validation/free_geometry_benchmark.py ./services/potential_engine/validation/free_geometry_benchmark.py
 COPY pytest.ini ./pytest.ini
 COPY docs/documentos_prueba ./docs/documentos_prueba
 COPY evaluation ./evaluation

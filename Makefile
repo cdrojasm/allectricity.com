@@ -2,6 +2,10 @@ COMPOSE = docker compose --env-file .env -f deploy/local/docker/docker-compose.y
 
 .DEFAULT_GOAL := help
 
+BENCH_OUT ?= /tmp/free-geometry-benchmark.json
+free-geometry-benchmark: potential-engine
+	python3 services/potential_engine/validation/free_geometry_benchmark.py --json "$(BENCH_OUT)" $(ARGS)
+
 .PHONY: help
 help:
 	@printf '%s\n' \
@@ -9,6 +13,7 @@ help:
 	  '  frontend-build Build frontend static files' \
 	  '  potential-engine Build the C++ grounding-potential engine' \
 	  '  potential-engine-profile Profile solver phases (ARGS=..., PROFILE_OUT=...)' \
+	  '  free-geometry-benchmark Compare L1, L2 and L2+ on seeded drawn geometries (ARGS=..., BENCH_OUT=...)' \
 	  '  frontend-up    Build static files and start Nginx' \
 	  '  frontend-down  Stop the Nginx container' \
 	  '  local-build    Build local Docker services' \
@@ -27,7 +32,7 @@ help:
 
 .PHONY: local-up local-down local-build test lint
 
-.PHONY: frontend-build frontend-up frontend-down potential-engine potential-engine-profile
+.PHONY: frontend-build frontend-up frontend-down potential-engine potential-engine-profile free-geometry-benchmark
 potential-engine:
 	mkdir -p services/potential_engine/build
 	g++ -std=c++17 -O3 -Wall -Wextra -Wpedantic services/potential_engine/src/main.cpp -o services/potential_engine/build/spat-potential-engine
