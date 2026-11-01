@@ -10,6 +10,7 @@ from sqlalchemy import (
     Float,
     Boolean,
     ForeignKey,
+    ForeignKeyConstraint,
     UniqueConstraint,
     CheckConstraint,
     JSON,
@@ -393,6 +394,76 @@ project_context_memory = Table(
     Column("items", JSON, nullable=False),
     Column("updated_at", BigInteger, nullable=False),
 )
+material_discovery_jobs = Table(
+    "material_discovery_jobs",
+    metadata,
+    key(),
+    Column("owner_id", ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True),
+    Column("status", String(20), nullable=False),
+    Column("request", JSON, nullable=False),
+    Column("result", JSON),
+    Column("error", Text),
+    Column("created_at", BigInteger, nullable=False),
+    Column("updated_at", BigInteger, nullable=False),
+    CheckConstraint("status IN ('queued', 'running', 'completed', 'failed')", name="ck_material_discovery_status"),
+)
+material_catalog_conversations = Table(
+    "material_catalog_conversations",
+    metadata,
+    Column("project_id", ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True),
+    Column("owner_id", ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True),
+    Column("messages", JSON, nullable=False),
+    Column("updated_at", BigInteger, nullable=False),
+)
+optimizer_runs = Table(
+    "optimizer_runs",
+    metadata,
+    key(),
+    Column("project_id", ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True),
+    # Artifact versions are immutable but use a composite identity in the artifact table,
+    # so keep this reference as a snapshot instead of an incomplete foreign key.
+    Column("artifact_id", String(36), nullable=False),
+    Column("artifact_version", BigInteger, nullable=False),
+    Column("status", String(20), nullable=False),
+    # Freeze the resolved context, selected profile/domain/catalog versions, and search config.
+    Column("request_snapshot", JSON, nullable=False),
+    Column("result_summary", JSON),
+    Column("error", Text),
+    Column("created_by", ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("created_at", BigInteger, nullable=False),
+    Column("updated_at", BigInteger, nullable=False),
+    CheckConstraint("status IN ('queued', 'running', 'completed', 'failed', 'rejected', 'cancelled')",
+                    name="ck_optimizer_run_status"),
+    CheckConstraint("artifact_version > 0", name="ck_optimizer_run_artifact_version"),
+    UniqueConstraint("project_id", "id", name="uq_optimizer_run_project_id"),
+)
+Index("ix_optimizer_runs_project_created", optimizer_runs.c.project_id,
+      optimizer_runs.c.created_at.desc(), optimizer_runs.c.id)
+optimizer_alternatives = Table(
+    "optimizer_alternatives",
+    metadata,
+    key(),
+    Column("run_id", String(36), nullable=False),
+    Column("project_id", ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True),
+    Column("candidate_sha256", String(64), nullable=False),
+    # Rank is optional because mixed currencies cannot be compared without an explicit policy.
+    Column("rank", BigInteger),
+    Column("recommended", Boolean, nullable=False, server_default="false"),
+    Column("candidate_snapshot", JSON, nullable=False),
+    Column("evaluation_snapshot", JSON, nullable=False),
+    Column("created_at", BigInteger, nullable=False),
+    ForeignKeyConstraint(
+        ["project_id", "run_id"],
+        ["optimizer_runs.project_id", "optimizer_runs.id"],
+        ondelete="CASCADE",
+        name="fk_optimizer_alternative_project_run",
+    ),
+    UniqueConstraint("run_id", "candidate_sha256", name="uq_optimizer_alternative_candidate"),
+    UniqueConstraint("run_id", "rank", name="uq_optimizer_alternative_rank"),
+    CheckConstraint("rank IS NULL OR rank > 0", name="ck_optimizer_alternative_rank"),
+)
+Index("ix_optimizer_alternatives_run_rank", optimizer_alternatives.c.run_id,
+      optimizer_alternatives.c.rank)
 rate_limits = Table(
     "rate_limits",
     metadata,
