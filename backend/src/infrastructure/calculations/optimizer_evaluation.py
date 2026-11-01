@@ -15,7 +15,7 @@ from threading import Lock
 from typing import Any, Callable
 
 from src.domain.spat.optimizer_foundations import generate_rectangular_grid
-from src.domain.spat.optimizer_constraints import require_optimizer_geometry
+from src.domain.spat.optimizer_constraints import OptimizerGeometryRejected, require_optimizer_geometry
 from src.domain.spat.parametric_geometry import generate_traced_grid
 from src.infrastructure.calculations import safety_criteria, solver_evaluation
 from src.infrastructure.calculations.optimizer_safety import utilization_from_exposure
@@ -140,8 +140,9 @@ def evaluate_design(
 ) -> dict[str, Any]:
     """Evaluate one design and report solver quantities, safety constraints and status.
 
-    `level` selects the fidelity. L0 only builds the geometry and checks it (invalid geometry
-    raises `OptimizerGeometryRejected`, as at every level); it never calls the solver and does not
+    `level` selects the fidelity. L0 only builds the geometry and checks it, including the
+    thin-wire and segment-limit rules the solver would apply after discretising (a violation
+    raises `OptimizerGeometryRejected`, as at every level, before the budget is spent); it never calls the solver and does not
     count against the evaluation budget. L1 runs the solver on a coarse raster without
     refinements, so `Vs` and `Vt` are lower bounds of the true maxima (not of L2's values): a
     violation is conclusive, a pass is not and
@@ -243,6 +244,11 @@ def evaluate_design(
         else geometry_generator(deepcopy(base_geometry), parameters)
     )
     geometry_check = require_optimizer_geometry(geometry)
+    discretization = solver_evaluation.discretization_violations(geometry, soil, settings)
+    if discretization:
+        # Rejected like any other invalid geometry: before the budget is spent and before the solver.
+        raise OptimizerGeometryRejected({
+            **geometry_check, "status": "rejected", "violations": geometry_check["violations"] + discretization})
     if level == "L0":
         return {
             "schema_version": "spat.optimizer-evaluation/1.0",

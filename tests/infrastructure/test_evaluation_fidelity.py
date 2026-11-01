@@ -75,3 +75,38 @@ def test_l1_pass_is_not_certified_but_a_violation_is_conclusive(client):
     # A current large enough to violate the limits fails at L1 too, which is enough to prune.
     harsh = dict(common, injection_a=50000.0)
     assert evaluate_design(exposure=easy, level="L1", **harsh)["Feasible"] is False
+
+
+# Two verticals 1 cm apart, crossed by a horizontal: valid on paper, but the horizontal is cut into
+# a 1 cm piece between them, shorter than the 5 radii (2.6 cm) the thin-wire model needs.
+THIN_PIECE = {
+    "length_m": 10, "width_m": 10, "burial_depth_m": 0.5, "rods": [],
+    "conductors": [
+        {"start": {"x": 0, "y": 5}, "end": {"x": 10, "y": 5}},
+        {"start": {"x": 5.0, "y": 0}, "end": {"x": 5.0, "y": 10}},
+        {"start": {"x": 5.01, "y": 0}, "end": {"x": 5.01, "y": 10}},
+    ],
+}
+
+
+@pytest.mark.parametrize("level", ["L0", "L1", "L2"])
+def test_thin_wire_pieces_are_rejected_before_the_budget_and_the_solver(level):
+    from src.domain.spat.optimizer_constraints import OptimizerGeometryRejected, require_optimizer_geometry
+    assert require_optimizer_geometry(THIN_PIECE)["status"] == "valid"      # the plan itself is fine
+    context = EvaluationContext()
+    with pytest.raises(OptimizerGeometryRejected) as raised:
+        evaluate_design(design_parameters=None, base_geometry=THIN_PIECE, soil=100.0, injection_a=1000.0,
+                        points=[], client=ForbiddenSolver(), exposure=EXPOSURE, standards=[],
+                        context=context, level=level)
+    violation = raised.value.report["violations"][0]
+    assert violation["kind"] == "thin_wire" and violation["element"] == "conductor" and violation["index"] == 0
+    assert violation["length_m"] < violation["minimum_m"]
+    assert context.evaluation_count == 0
+
+
+def test_regular_grids_and_junction_free_geometry_pass_the_discretization_check():
+    assert solver_evaluation.discretization_violations(GEOMETRY, 100.0) == []
+    two_layer = {"length_m": 10, "width_m": 10, "burial_depth_m": 0.5, "rods": [],
+                 "conductors": [{"start": {"x": 0, "y": 5}, "end": {"x": 10, "y": 5}},
+                                {"start": {"x": 5, "y": 0}, "end": {"x": 5, "y": 10}}]}
+    assert solver_evaluation.discretization_violations(two_layer, 100.0) == []
