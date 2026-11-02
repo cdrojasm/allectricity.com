@@ -1,5 +1,7 @@
 """Fidelity controller and topological search, against a made-up electrical model (no solver)."""
 
+import functools
+
 import pytest
 from src.domain.spat import geometry_graph as gg, geometry_seeds as seeds
 from src.domain.spat.optimizer_topology_search import search_topology
@@ -33,14 +35,19 @@ class Model:
         return {"status": "VIOLATED" if ratio > 1 else "UNKNOWN", "ratio": ratio}
 
 
+@functools.lru_cache(maxsize=8)
+def _seeds(seed, count):
+    return tuple(seeds.generate_seeds(DOMAIN, seed=seed, count=count))
+
+
 def run(model, seed=1, calls=80, **kwargs):
-    return search_topology(domain=DOMAIN, seeds=seeds.generate_seeds(DOMAIN, seed=seed, count=4), evaluate_cost=model.cost,
+    return search_topology(domain=DOMAIN, seeds=list(_seeds(seed, 4)), evaluate_cost=model.cost,
                            evaluate_electrical=model.electrical, seed=seed, max_solver_calls=calls, **kwargs)
 
 
 def test_search_improves_on_the_best_feasible_seed_and_never_claims_certification():
     model = Model()
-    start = seeds.generate_seeds(DOMAIN, seed=1, count=4)
+    start = _seeds(1, 4)
     feasible_seeds = [length(s.geometry) * 1000 for s in start if length(s.geometry) >= 120]
     result = run(model)
     assert result["best"] is not None and result["certified"] is False
@@ -81,7 +88,7 @@ def test_finalists_that_fail_the_finest_check_are_demoted():
 
 
 def test_a_violating_seed_is_repaired_before_it_is_made_cheaper():
-    start = [s for s in seeds.generate_seeds(DOMAIN, seed=1, count=6) if length(s.geometry) < 120][:1]
+    start = [s for s in _seeds(1, 4) if length(s.geometry) < 120][:1]
     assert start
     model = Model()
     result = search_topology(domain=DOMAIN, seeds=start, evaluate_cost=model.cost, evaluate_electrical=model.electrical,
@@ -105,3 +112,71 @@ def test_invalid_arguments_are_refused():
         search_topology(domain=DOMAIN, seeds=[], evaluate_cost=model.cost, evaluate_electrical=model.electrical, seed=True, max_solver_calls=5)
     with pytest.raises(ValueError):
         search_topology(domain=DOMAIN, seeds=[], evaluate_cost=model.cost, evaluate_electrical=model.electrical, seed=1, max_solver_calls=0)
+
+
+# ---- exploring through costlier states ------------------------------------------------------------------
+
+from src.domain.spat import geometry_operators as ops   # noqa: E402
+
+
+def _rods(geometry):
+    return len(geometry.get("rods") or [])
+
+
+class Ridge:
+    """Cost depends on the rod count only: a local minimum, three costlier steps, then a much cheaper design."""
+    TABLE = {0: 1000.0, 1: 1100.0, 2: 1200.0, 3: 1300.0, 4: 700.0}
+
+    def __init__(self):
+        self.calls = []                                   # (level, cost) of every solver call
+
+    def cost(self, geometry):
+        return self.TABLE.get(_rods(geometry), 5000.0)
+
+    def electrical(self, level, geometry):
+        self.calls.append((level, self.cost(geometry)))
+        return {"status": "UNKNOWN", "ratio": 0.5}
+
+
+def add_next_rod(graph, rng):
+    free = [n for n in sorted(graph.nodes()) if n not in graph.rod_nodes()]
+    return ops.AddRod(free[0], 2.4)
+
+
+@functools.lru_cache(maxsize=1)
+def _rodless_seed():
+    start = [s for s in _seeds(1, 4) if _rods(s.geometry) == 0][:1]
+    assert start
+    return tuple(start)
+
+
+def ridge_run(model, **kwargs):
+    start = list(_rodless_seed())
+    return search_topology(domain=DOMAIN, seeds=start, evaluate_cost=model.cost, evaluate_electrical=model.electrical, seed=3,
+                           max_solver_calls=40, propose_operator=add_next_rod, neighbors_per_step=2, patience=1, finalists=1, **kwargs)
+
+
+def test_the_search_can_cross_a_costlier_ridge_to_a_cheaper_design_without_spending_the_solver_on_it():
+    model = Ridge()
+    result = ridge_run(model, uphill_moves=3)
+    assert result["best"]["cost"] == 700.0
+    assert result["counts"]["uphill_moves_taken"] == 3 and result["counts"]["incumbents_found_after_uphill_moves"] >= 1
+    # The three intermediate designs (1100, 1200, 1300) were never sent to the solver: they cannot beat the incumbent.
+    assert {cost for _, cost in model.calls} <= {1000.0, 700.0}
+    assert result["counts"]["skipped_cost_dominated"] >= 3          # the ridge states, and the dearer neighbours of the end state
+
+
+def test_without_uphill_moves_the_search_stops_at_the_local_minimum():
+    flat = ridge_run(Ridge(), uphill_moves=0)
+    assert flat["best"]["cost"] == 1000.0 and flat["counts"].get("uphill_moves_taken", 0) == 0
+    short = ridge_run(Ridge(), uphill_moves=2)                 # two steps are not enough for a three-step ridge
+    assert short["best"]["cost"] == 1000.0 and short["counts"]["uphill_moves_taken"] == 2
+
+
+def test_the_cost_tolerance_limits_how_much_costlier_an_intermediate_state_may_be():
+    assert ridge_run(Ridge(), uphill_moves=3, uphill_tolerance=0.05)["best"]["cost"] == 1000.0     # +10% per step is too much
+    assert ridge_run(Ridge(), uphill_moves=3, uphill_tolerance=0.12)["best"]["cost"] == 700.0
+
+
+def test_exploration_keeps_the_search_deterministic():
+    assert ridge_run(Ridge(), uphill_moves=3) == ridge_run(Ridge(), uphill_moves=3)

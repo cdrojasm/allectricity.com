@@ -43,6 +43,9 @@ def run_topology_optimizer(
     constraints: OperatorConstraints = OperatorConstraints(),
     neighbors_per_step: int = 6,
     patience: int = 4,
+    uphill_moves: int = 2,
+    uphill_tolerance: float = 0.15,
+    propose_operator: Any = None,
     max_steps_per_start: int = 30,
     finalists: int = 3,
 ) -> dict[str, Any]:
@@ -64,7 +67,8 @@ def run_topology_optimizer(
     result = search_topology(
         domain=domain, seeds=starts, evaluate_cost=evaluate_cost, evaluate_electrical=evaluate_electrical, seed=seed,
         max_solver_calls=max_solver_calls, constraints=constraints, neighbors_per_step=neighbors_per_step, patience=patience,
-        max_steps_per_start=max_steps_per_start, finalists=finalists)
+        uphill_moves=uphill_moves, uphill_tolerance=uphill_tolerance,
+        **({"propose_operator": propose_operator} if propose_operator is not None else {}), max_steps_per_start=max_steps_per_start, finalists=finalists)
     result["seeds"] = [{"family": s.family, "candidate_sha256": s.graph_hash} for s in starts]
     result["cost_currency"] = rate_card["currency"]
     return result

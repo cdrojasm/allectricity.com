@@ -13,6 +13,15 @@ decides whether the solver is worth calling:
   L3  finalists only: the cheapest confirmed designs are re-examined with the adaptive search, and a
       violation there demotes them.
 
+Two decisions are kept apart. "Can it improve the best cost known now?" is the cost rule above: it only
+decides whether the solver is worth calling, and it stays. "Is it worth exploring from?" is separate: a
+design that costs more, violates, or was never evaluated can still be an intermediate state, because
+reaching a 5 M design may mean passing through a 7.5 M one (add a conductor so that three others can go).
+When no neighbour improves, a start may therefore take up to `uphill_moves` non-improving moves to
+neighbours within `uphill_tolerance` of the current cost, preferring the closest to improving and then
+the most novel, and never revisiting a state. Solver calls are still spent only on candidates that could
+become the incumbent. An unevaluated state inherits the electrical excess of the last evaluated one.
+
 The two archives are kept apart on purpose: `l1_candidates` are only screened, `confirmed` passed
 L2+. Nothing here is certified. A pass means no violation was found by sampled searches, so results
 carry `certified: False`. Search ordering is lexicographic on (violation excess, cost), which lets the
@@ -27,6 +36,7 @@ from math import isfinite
 from typing import Any, Callable
 
 from src.domain.spat import geometry_graph as gg
+from src.domain.spat.geometry_seeds import cells
 from src.domain.spat.geometry_operators import OperatorConstraints, OperatorRejected, apply_operator, random_operator
 
 # Relative cost of one solver call per level, from the benchmark medians (L1 = 1): L2+ about 6.5, L3 about 6.9.
@@ -64,6 +74,9 @@ def search_topology(
     constraints: OperatorConstraints = OperatorConstraints(),
     neighbors_per_step: int = 6,
     patience: int = 4,
+    uphill_moves: int = 2,
+    uphill_tolerance: float = 0.15,
+    propose_operator: Callable[[gg.GeometryGraph, random.Random], Any] = random_operator,
     max_steps_per_start: int = 30,
     finalists: int = 3,
     finalist_level: str = "L3",
@@ -72,7 +85,12 @@ def search_topology(
 
     A step samples `neighbors_per_step` distinct new neighbours and moves to the best improving one. When
     none improves it samples another batch, up to `patience` batches, before calling the start a local
-    optimum: in a sparse design few random moves help. Operator attempts are cheap (they never reach the
+    optimum: in a sparse design few random moves help. With `uphill_moves` > 0 a start that finds nothing better
+    moves to a non-improving neighbour instead (see the module notes); 0 gives the strictly descending search.
+    A move to a neighbour of equal cost and excess is sideways: it does not use up the allowance and is
+    bounded by `max_steps_per_start` and the visited set. `propose_operator(graph, rng)` supplies the moves
+    (random operators by default), which is where a destroy-and-repair scheme plugs in.
+    Operator attempts are cheap (they never reach the
     solver), so up to 12 are drawn per neighbour wanted.
     """
     if isinstance(seed, bool) or not isinstance(seed, int):
@@ -87,7 +105,7 @@ def search_topology(
     operator_rejections: Counter[str] = Counter()
     incumbent: dict[str, Any] | None = None
     exhausted = False
-
+    uphill_in_path = 0      # non-improving moves taken so far on the current start's path
     searching = True      # while searching, the finalists' calls stay reserved
     start_cap: int | None = None   # absolute call count a single start may not pass
 
@@ -140,7 +158,8 @@ def search_topology(
             record.update(reason=first.get("reason", "geometry_rejected"), detail=first.get("detail"))
             return record
         if first["status"] == "VIOLATED":
-            record.update(reason="violated_at_L1", ratio=first.get("ratio"), score=(max(0.0, (first.get("ratio") or 1.0) - 1.0), record["cost"]))
+            record.update(reason="violated_at_L1", ratio=first.get("ratio"), excess=max(0.0, (first.get("ratio") or 1.0) - 1.0),
+                          score=(max(0.0, (first.get("ratio") or 1.0) - 1.0), record["cost"]))
             counts["pruned_at_L1"] += 1
             return record
         record["l1"] = first
@@ -154,45 +173,85 @@ def search_topology(
             record.update(reason=second.get("reason", "evaluation_error"), detail=second.get("detail"))
             return record
         if second["status"] == "VIOLATED":
-            record.update(reason="violated_at_L2+", ratio=second.get("ratio"),
+            record.update(reason="violated_at_L2+", ratio=second.get("ratio"), excess=max(0.0, (second.get("ratio") or 1.0) - 1.0),
                           score=(max(0.0, (second.get("ratio") or 1.0) - 1.0), record["cost"]))
             counts["rejected_at_L2plus"] += 1
             return record
-        record.update(status="confirmed", ratio=second.get("ratio"), score=(0.0, record["cost"]), reason=None)
+        record.update(status="confirmed", ratio=second.get("ratio"), excess=0.0, score=(0.0, record["cost"]), reason=None)
         counts["confirmed"] += 1
         if incumbent is None or record["cost"] < incumbent["cost"]:
             incumbent = record
+            if uphill_in_path:
+                counts["incumbents_found_after_uphill_moves"] += 1
         return record
 
-    def descend(current: dict[str, Any]) -> None:
+    def descend(start_record: dict[str, Any]) -> None:
+        nonlocal uphill_in_path
+        if start_record.get("cost") is None:
+            return
+        current = start_record
+        current_key = (start_record.get("excess") or 0.0, start_record["cost"])
+        visited = {current["candidate_sha256"]}
+        seen_cells = [cells(graphs[current["candidate_sha256"]])]
+        uphill_used = uphill_in_path = 0
         for _ in range(max_steps_per_start):
-            if exhausted or current["score"] is None:
+            if exhausted:
                 return
-            best = None
+            pool: list[tuple[tuple[float, float], dict[str, Any]]] = []
             tried = attempts = widened = 0
             limit = neighbors_per_step
             while attempts < 12 * limit and not exhausted:
                 if tried >= limit:
-                    if best is not None or widened + 1 >= patience:
+                    if any(key < current_key for key, _ in pool) or widened + 1 >= patience:
                         break
                     widened += 1
                     limit += neighbors_per_step     # nothing improved yet: look at another batch of neighbours
                 attempts += 1
                 try:
-                    applied = apply_operator(graphs[current["candidate_sha256"]], random_operator(graphs[current["candidate_sha256"]], rng),
-                                             constraints, domain)
+                    source = graphs[current["candidate_sha256"]]
+                    applied = apply_operator(source, propose_operator(source, rng), constraints, domain)
                 except OperatorRejected as rejected:
                     operator_rejections[rejected.kind] += 1
                     continue
-                if gg.canonical_hash(applied.graph) not in cache:
+                digest = gg.canonical_hash(applied.graph)
+                if digest not in cache:
                     tried += 1                      # only distinct, new neighbours use up the step's allowance
                 neighbor = screen(applied.graph)
-                if neighbor["score"] is not None and neighbor["score"] < current["score"] \
-                        and (best is None or neighbor["score"] < best["score"]):
-                    best = neighbor
-            if best is None:
+                if digest in visited or neighbor.get("cost") is None or neighbor.get("reason") in (
+                        "geometry_rejected", "evaluation_error", "cost_error"):
+                    continue
+                # The solver decided "can it become the incumbent?"; this decides "is it worth continuing from?".
+                key = (neighbor["excess"] if neighbor.get("excess") is not None else current_key[0], neighbor["cost"])
+                if all(digest != other["candidate_sha256"] for _, other in pool):
+                    pool.append((key, neighbor))
+            improving = min((entry for entry in pool if entry[0] < current_key), key=lambda e: (e[0], e[1]["candidate_sha256"]), default=None)
+            if improving is not None:
+                chosen, moved_uphill = improving, False
+            elif uphill_used < uphill_moves:
+                reachable = [e for e in pool if e[1]["cost"] <= current["cost"] * (1.0 + uphill_tolerance)]
+                if not reachable:
+                    return
+
+                def novelty(entry):
+                    mine = cells(graphs[entry[1]["candidate_sha256"]])
+                    return min(1 - len(mine & other) / len(mine | other) for other in seen_cells)
+
+                chosen = min(reachable, key=lambda e: (e[0][0], e[0][1], -novelty(e), e[1]["candidate_sha256"]))
+                moved_uphill = True
+            else:
                 return
-            current = best
+            previous_key = current_key
+            current_key, current = chosen
+            visited.add(current["candidate_sha256"])
+            seen_cells.append(cells(graphs[current["candidate_sha256"]]))
+            if moved_uphill and current_key > previous_key:
+                uphill_used += 1
+                uphill_in_path += 1
+                counts["uphill_moves_taken"] += 1
+            elif moved_uphill:
+                counts["sideways_moves_taken"] += 1     # equal cost and excess: neither better nor worse
+            else:
+                uphill_used = 0
 
     # Phase 1: evaluate every seed once, so the incumbent and the feasible starting points are known.
     starts = []
