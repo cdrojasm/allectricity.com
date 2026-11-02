@@ -975,7 +975,13 @@ class PotentialSession:
     can use a session as the client. A request for the prepared system only evaluates the new
     points; any other system is solved afresh through the owning client. The returned trace is the
     preparation's: its `request_sha256` identifies the system, not each point query.
+
+    A session owns a live engine process and its pipes, so it is never shared: it can be used only by
+    the thread and process that opened it, it cannot be pickled or copied into a checkpoint, and
+    `open_sessions()` counts the ones still open so a caller can check none leaked.
     """
+
+    _open: set[int] = set()
 
     def __init__(self, client: PotentialEngineClient, kwargs: dict[str, Any]):
         self._client = client
@@ -984,6 +990,7 @@ class PotentialSession:
             points=[], **{k: v for k, v in kwargs.items() if k != "project_id"})
         self._injections = kwargs["injections_a"]
         self._process: subprocess.Popen | None = None
+        self._owner = (os.getpid(), threading.get_ident())
         self.preparations = 1
         self.evaluations = 0
         started = time.monotonic()
@@ -994,6 +1001,7 @@ class PotentialSession:
             )
         except OSError as exc:
             raise PotentialEngineError(f"could not start C++ potential engine: {exc}") from exc
+        PotentialSession._open.add(id(self))
         stdout = self._exchange(payload)
         self.prepared = client._finish(stdout, self._soil, self._segments, self._connections, self._origins,
                                        self._injections, protocol, payload, started)
@@ -1005,6 +1013,17 @@ class PotentialSession:
         self.close()
         return False
 
+    def __reduce__(self):
+        raise TypeError("an engine session owns a live process and cannot be pickled, copied or checkpointed")
+
+    @staticmethod
+    def open_sessions() -> int:
+        return len(PotentialSession._open)
+
+    def _check_owner(self) -> None:
+        if self._owner != (os.getpid(), threading.get_ident()):
+            raise PotentialEngineError("an engine session can only be used by the thread and process that opened it")
+
     def __del__(self):
         try:
             self.close()
@@ -1013,6 +1032,7 @@ class PotentialSession:
 
     def _exchange(self, text: str) -> str:
         """Send one message and read the response up to its END line, with the client's time limit."""
+        self._check_owner()
         process = self._process
         if process is None or process.poll() is not None:
             raise PotentialEngineError("C++ engine session is closed")
@@ -1044,6 +1064,7 @@ class PotentialSession:
 
     def evaluate(self, points: list[PotentialPoint]) -> dict[str, float]:
         """Potentials at surface points, without re-assembling or re-solving the system."""
+        self._check_owner()
         validate_request(self._soil, self._segments, self._injections, points, self._origins, self._connections)
         values: dict[str, float] = {}
         if not points:
@@ -1083,8 +1104,12 @@ class PotentialSession:
 
     def close(self) -> None:
         process, self._process = getattr(self, "_process", None), None
+        PotentialSession._open.discard(id(self))
         if process is None:
             return
+        if getattr(self, "_owner", None) != (os.getpid(), threading.get_ident()):
+            if getattr(self, "_owner", (None,))[0] != os.getpid():
+                return          # a forked child must not write into the parent's engine pipes
         try:
             if process.poll() is None:
                 process.stdin.write("CLOSE\n")

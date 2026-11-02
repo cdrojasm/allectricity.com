@@ -60,3 +60,48 @@ def test_closed_session_refuses_queries(client):
     session.close()
     with pytest.raises(PotentialEngineError):
         session.evaluate(POINTS)
+
+
+# ---- sessions are never shared and never leak -------------------------------------------------------------
+
+import copy  # noqa: E402
+import pickle  # noqa: E402
+import threading  # noqa: E402
+
+from src.infrastructure.calculations.potential_engine_client import PotentialSession  # noqa: E402
+
+
+def test_a_session_cannot_be_pickled_copied_or_used_from_another_thread(client):
+    with client.session(segments=_grid(), injections_a={"grid": 1000.0}, soil=100.0) as session:
+        for clone in (pickle.dumps, copy.copy, copy.deepcopy):
+            with pytest.raises(TypeError, match="cannot be pickled"):
+                clone(session)
+        outcome = {}
+
+        def intruder():
+            try:
+                session.evaluate(POINTS[:2])
+                outcome["result"] = "used"
+            except PotentialEngineError as error:
+                outcome["result"] = str(error)
+        thread = threading.Thread(target=intruder)
+        thread.start()
+        thread.join()
+        assert "only be used by the thread and process that opened it" in outcome["result"]
+        assert session.evaluate(POINTS[:2])                        # the owner is unaffected
+
+
+def test_no_engine_session_is_left_open_after_any_evaluation_level_or_a_failure(client, monkeypatch):
+    from src.infrastructure.calculations import artifact_potential, solver_evaluation
+    geometry = {"length_m": 20, "width_m": 20, "conductor_spacing_m": 5.0, "burial_depth_m": 0.5, "rods_count": 0, "rod_length_m": 2.4}
+    before = PotentialSession.open_sessions()
+    for level in ("L1", "L2", "L2+", "L3"):
+        solver_evaluation.evaluate(geometry=geometry, soil=100.0, injection_a=1000.0, points=[], client=client, level=level)
+        assert PotentialSession.open_sessions() == before, level
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("mid-evaluation failure")
+    monkeypatch.setattr(artifact_potential, "_solve", boom)
+    with pytest.raises(RuntimeError):
+        solver_evaluation.evaluate(geometry=geometry, soil=100.0, injection_a=1000.0, points=[], client=client, level="L2+")
+    assert PotentialSession.open_sessions() == before
