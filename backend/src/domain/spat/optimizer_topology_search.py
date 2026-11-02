@@ -101,6 +101,7 @@ def search_topology(
     max_steps_per_start: int = 30,
     finalists: int = 3,
     finalist_level: str = "L3",
+    finalist_reserve: int | None = None,
     evaluations: dict[str, Any] | None = None,
     on_checkpoint: Callable[[dict[str, Any]], None] | None = None,
     problem_sha256: str = "",
@@ -128,6 +129,9 @@ def search_topology(
         raise ValueError("seed must be an integer")
     if isinstance(max_solver_calls, bool) or not isinstance(max_solver_calls, int) or max_solver_calls < 1:
         raise ValueError("max_solver_calls must be a positive integer")
+    # Calls held back for the finest check. It is more than `finalists` because the check can demote a design
+    # and the next one then needs its own call: with exactly `finalists` calls, three demotions left nothing.
+    reserve = (finalists + 2) if finalist_reserve is None else finalist_reserve
     log = evaluations if evaluations is not None else {}
     if log.setdefault("__problem__", problem_sha256) != problem_sha256:
         raise ValueError("the evaluation log belongs to a different problem; it cannot be resumed here")
@@ -147,14 +151,14 @@ def search_topology(
     start_cap: int | None = None   # absolute call count a single start may not pass
 
     def remaining() -> int:
-        left = max_solver_calls - (finalists if searching else 0) - sum(calls.values())
+        left = max_solver_calls - (reserve if searching else 0) - sum(calls.values())
         return left if start_cap is None else min(left, start_cap - sum(calls.values()))
 
     def electrical(level: str, geometry: dict[str, Any], digest: str) -> dict[str, Any] | None:
         """One charged solver call (or its replay from the log), or None when the budget cannot cover it."""
         nonlocal exhausted, replayed, spent
         if remaining() < 1:
-            if start_cap is None or max_solver_calls - (finalists if searching else 0) - sum(calls.values()) < 1:
+            if start_cap is None or max_solver_calls - (reserve if searching else 0) - sum(calls.values()) < 1:
                 exhausted = True
             return None
         key = f"{digest}:{level}"
@@ -344,11 +348,11 @@ def search_topology(
     # Phase 2: descend from feasible seeds first (cheapest first), then repair the violating ones. Each start gets
     # an equal share of what is left, and a share it does not use passes on to the next.
     starts.sort(key=lambda r: (r["score"][0] > 0, r["score"], r["candidate_sha256"]))
-    repair_reserve = int(repair_share * (max_solver_calls - finalists))     # kept back for phase 3
+    repair_reserve = int(repair_share * (max_solver_calls - reserve))     # kept back for phase 3
     for index, record in enumerate(starts):
         if exhausted:
             break
-        left = max_solver_calls - finalists - repair_reserve - sum(calls.values())
+        left = max_solver_calls - reserve - repair_reserve - sum(calls.values())
         if left < 1:
             break
         start_cap = sum(calls.values()) + max(1, -(-left // (len(starts) - index)))
@@ -365,7 +369,7 @@ def search_topology(
         if not waiting:
             break
         pick = min(waiting, key=lambda r: (r["excess"], r["cost"], r["candidate_sha256"]))
-        left = max_solver_calls - finalists - sum(calls.values())
+        left = max_solver_calls - reserve - sum(calls.values())
         if left < 1:
             break
         start_cap = sum(calls.values()) + max(1, -(-left // min(len(waiting), 3)))
@@ -422,7 +426,7 @@ def search_topology(
         "schema_version": "spat.optimizer-topology-search/1.0",
         "algorithm": "operator_local_search_with_fidelity_controller",
         "seed": seed, "starts": len(seeds),
-        "max_solver_calls": max_solver_calls, "reserved_for_finalists": finalists, "solver_calls": dict(calls), "solver_calls_total": sum(calls.values()),
+        "max_solver_calls": max_solver_calls, "reserved_for_finalists": reserve, "solver_calls": dict(calls), "solver_calls_total": sum(calls.values()),
         "baseline_solver_calls_if_every_candidate_used_L2plus": counts["considered"],
         # Same comparison in time units (one L1 call = 1), since the levels do not cost the same.
         "solver_time_units": round(sum(LEVEL_WEIGHTS.get(level, 1.0) * n for level, n in calls.items()), 1),

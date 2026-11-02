@@ -101,7 +101,7 @@ def test_the_solver_budget_is_never_exceeded_and_finalists_keep_a_reserve():
         model = Model()
         result = run(model, calls=budget, finalists=2)
         assert len(model.calls) <= budget and result["solver_calls_total"] <= budget
-        assert result["reserved_for_finalists"] == 2
+        assert result["reserved_for_finalists"] == 4        # finalists + 2, so a demoted design can be replaced
     tiny = run(Model(), calls=3, finalists=2)
     assert tiny["solver_calls_total"] <= 3 and tiny["certified"] is False
 
@@ -368,3 +368,38 @@ def test_each_strategy_maps_to_the_options_that_define_it():
 
 
 from src.domain.spat.operator_selection import ARMS as ARMS_ALL  # noqa: E402
+
+
+# ---- the finest check can demote designs, and the search must have calls left to replace them ---------------
+
+class DemoteSome(Model):
+    """Passes L1 and L2+ like Model, but the finest level rejects a chosen set of designs."""
+
+    def __init__(self, hashes):
+        super().__init__()
+        self.hashes = set(hashes)
+
+    def electrical(self, level, geometry):
+        outcome = super().electrical(level, geometry)
+        if level == "L3" and gg.canonical_hash(gg.from_geometry(geometry)) in self.hashes:
+            return {"status": "VIOLATED", "ratio": 1.5}
+        return outcome
+
+
+def test_when_the_finest_check_demotes_the_cheapest_designs_the_next_confirmed_one_is_examined():
+    reference = run(Model(), calls=60, finalists=2, min_elite_distance=0.0)
+    cheapest = [r["candidate_sha256"] for r in reference["confirmed"]]
+    assert len(cheapest) >= 4
+    doomed = cheapest[:3]
+    result = run(DemoteSome(doomed), calls=60, finalists=2, min_elite_distance=0.0)
+    assert result["counts"]["demoted_at_finalist_level"] == 3
+    assert result["best"] is not None and result["best"]["candidate_sha256"] == cheapest[3]
+    assert result["solver_calls"].get("L3", 0) == 4 and result["solver_calls_total"] <= 60
+
+
+def test_a_reserve_of_exactly_the_finalists_cannot_replace_a_demoted_design():
+    reference = run(Model(), calls=60, finalists=2, finalist_reserve=2, min_elite_distance=0.0)
+    doomed = [r["candidate_sha256"] for r in reference["confirmed"]][:2]
+    stuck = run(DemoteSome(doomed), calls=60, finalists=2, finalist_reserve=2, min_elite_distance=0.0)
+    assert stuck["best"] is None                                     # the old behaviour: two calls, two demotions, nothing left
+    assert run(Model(), calls=60, finalists=2)["reserved_for_finalists"] == 4          # default: finalists + 2
