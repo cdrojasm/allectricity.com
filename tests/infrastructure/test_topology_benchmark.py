@@ -57,3 +57,23 @@ def test_every_strategy_runs_on_a_real_scenario_within_the_same_cap():
     assert {r["strategy"] for r in rows} == set(STRATEGIES)
     assert rows[0]["uphill_moves"] == 0                                    # strict descent never goes uphill
     assert all(r["lns"]["used"] == 0 for r in rows if r["strategy"] != "alns")
+
+
+def test_the_refined_strategy_is_also_compared_with_plain_alns_on_the_same_scenario_and_seed():
+    names = ("descent", "alns", "alns_refined")
+    rows = []
+    for seed in range(6):
+        rows += [row("s", seed, "descent", 100.0), row("s", seed, "alns", 90.0), row("s", seed, "alns_refined", 90.0 if seed < 2 else 85.0)]
+    result = bench.analyse(rows, names)["overall"]
+    assert result["alns_refined"]["versus_alns"]["better"] == 4 and result["alns_refined"]["versus_alns"]["equal"] == 2
+    assert "versus_alns" not in result["alns"] and result["alns_refined"]["versus_descent"]["better"] == 6
+    text = bench.markdown(bench.analyse(rows, names), {"scenarios": 1, "seeds": 6, "strategies": list(names), "budget": 100})
+    assert "alns_refined" in text and "vs alns" in text
+
+
+def test_the_refined_strategy_spends_no_more_than_plain_alns():
+    from src.application.use_cases.optimizer_topology_run import STRATEGIES, strategy_options
+    from src.domain.spat.geometry_operators import OperatorConstraints
+    assert "alns_refined" in STRATEGIES and "alns_refined" in bench.STRATEGIES
+    options = strategy_options("alns_refined", bench._SQUARE, OperatorConstraints())
+    assert options["refine_share"] > 0 and "refine_share" not in strategy_options("alns", bench._SQUARE, OperatorConstraints())

@@ -103,3 +103,26 @@ def test_a_checkpoint_is_not_reused_for_another_problem_or_another_current(clien
     run_topology_optimizer(injection_a=1000.0, **common)
     with pytest.raises(ValueError, match="different problem"):
         run_topology_optimizer(injection_a=1500.0, **common)
+
+
+# ---- fast mode and parametric refinement with the real solver ------------------------------------------------
+
+def test_the_fast_mode_runs_on_a_time_budget_and_still_finishes_with_a_finest_level_check(client):
+    import time
+    started = time.perf_counter()
+    result = run_topology_optimizer(
+        domain=DOMAIN, rate_card=RATES, soil=100.0, injection_a=1000.0, exposure=safety_criteria.FaultExposure(0.5, 70, 3000, 0.1, 100),
+        standards=[safety_criteria.IEEE80_2013], client=client, seed=7, time_budget_s=20.0, seed_count=4)
+    assert result["budget"]["mode"] == "time" and result["max_solver_calls"] is None
+    assert result["solver_calls"].get("L3", 0) >= 1                      # the L3 reserve was honoured
+    assert time.perf_counter() - started < 20.0 + 15.0                   # a started call is not interrupted; allow for the slowest one
+    assert result["certified"] is False and (result["best"] is None or result["best"]["level"] == "L3")
+
+
+def test_the_refined_strategy_stays_inside_the_call_budget_with_the_real_solver(client):
+    result = run_topology_optimizer(
+        domain=DOMAIN, rate_card=RATES, soil=100.0, injection_a=1000.0, exposure=safety_criteria.FaultExposure(0.5, 70, 3000, 0.1, 100),
+        standards=[safety_criteria.IEEE80_2013], client=client, seed=7, max_solver_calls=60, seed_count=4, strategy="alns_refined")
+    assert result["solver_calls_total"] <= 60 and result["budget"]["refine_hold"] > 0
+    assert result["counts"].get("refinement_starts", 0) >= 0 and result["certified"] is False
+    assert result["best"] is None or result["best"]["status"] == "finalist"

@@ -68,11 +68,11 @@ local-down:
 # can hold an engine process of its own). The tests are CPU-bound, so more workers than cores would not be faster.
 # `worksteal` lets an idle worker take tests from a busy one, and tests/conftest.py starts the slowest first. Measured on
 # 15 cores: 30 or 45 workers were no faster (127 s, 155 s) than 15 (91 s with worksteal); serially it takes about 400 s.
-# Override with TEST_WORKERS=N; TEST_WORKERS=0 runs serially. Each database test uses its own schema, so they are safe.
+# TEST_ARGS='tests/domain/test_topology_search.py -k time' narrows the run. Override with TEST_WORKERS=N; TEST_WORKERS=0 runs serially. Each database test uses its own schema, so they are safe.
 TEST_WORKERS ?= $(shell docker info --format '{{.NCPU}} {{.MemTotal}}' 2>/dev/null | awk '{c=$$1; m=int($$2/1073741824); if (m<c) c=m; if (c<1) c=1; print c}')
 test:
 	$(COMPOSE) --profile test build tests
-	$(COMPOSE) --profile test run --rm tests python -m pytest -q -p no:cacheprovider -n $(TEST_WORKERS) --dist worksteal
+	$(COMPOSE) --profile test run --rm tests python -m pytest -q -p no:cacheprovider -n $(TEST_WORKERS) --dist worksteal $(TEST_ARGS)
 
 lint:
 	$(COMPOSE) --profile test build tests

@@ -50,3 +50,20 @@ def classify(*, violated: bool, evaluable: bool, certificate: Certificate | None
     if not (certificate.guarantee.strip() and certificate.justification.strip()):
         raise ValueError("a certificate must state its guarantee and justification")
     return FeasibilityStatus.CERTIFIED if evaluable else FeasibilityStatus.UNKNOWN
+
+
+def admits(*, level: str, status: str | None, feasible: bool | None) -> bool:
+    """The one reading of an electrical verdict that every search uses to let a design through its gate.
+
+    VIOLATED never passes. At L1 the values are lower bounds and `Feasible` is None by design, so a design
+    with no violation found passes to be escalated. At every finer level a pass needs `Feasible is True`:
+    UNKNOWN with `Feasible` None means the design could not be assessed (a standard without an evaluable
+    criterion, a mandatory criterion missing), and an unassessed design is never promoted. The parametric
+    search (OP-06) and the topological search both call this, so they cannot read the same evaluation
+    differently.
+    """
+    if status == FeasibilityStatus.VIOLATED.value or feasible is False:
+        return False
+    if level == "L1":
+        return True
+    return feasible is True

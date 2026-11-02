@@ -3,7 +3,9 @@
 Usage: make optimizer-benchmark [OPT_BENCH_OUT=/tmp/optimizer-benchmark.json]
                                 [ARGS='--seeds 8 --budget 150 --workers 8']
 
-Strategies (see `optimizer_topology_run.strategy_options`): descent, uphill, opportunistic, adaptive, alns.
+Strategies (see `optimizer_topology_run.strategy_options`): descent, uphill, opportunistic, adaptive, alns, alns_refined.
+alns_refined is alns with part of the same budget spent tuning the rod lengths of the elite topologies (OPT-014); it is
+also compared directly with alns, paired by scenario and seed.
 Every strategy gets the same scenario, the same starting seeds and the same cap on solver calls, so a
 difference in cost is a difference in search. Reported per scenario and overall:
   feasibility and best cost, regret against the best design any strategy found for that (scenario, seed),
@@ -28,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "backend"))
 
-STRATEGIES = ("descent", "uphill", "opportunistic", "adaptive", "alns")
+STRATEGIES = ("descent", "uphill", "opportunistic", "adaptive", "alns", "alns_refined")
 RATES = {"currency": "COP", "assumptions": {"trench_width_m": 0.4},
          "rates": {"material.conductor.unspecified": "18000", "material.rod.unspecified": "25000", "excavation.trench": "60000",
                    "installation.conductor": "7000", "installation.rod": "40000", "installation.connection": "15000"}}
@@ -75,6 +77,8 @@ def run_one(job: dict) -> dict:
             "time_units": result["solver_time_units"], "considered": result["counts"]["considered"],
             "confirmed": result["counts"].get("confirmed", 0), "demoted": result["counts"].get("demoted_at_finalist_level", 0),
             "uphill_moves": result["counts"].get("uphill_moves_taken", 0), "repair_starts": result["counts"].get("repair_starts", 0),
+            "refinement_starts": result["counts"].get("refinement_starts", 0), "refined_confirmed": result["counts"].get("confirmed_from_refinement", 0),
+            "refinement_won": result["counts"].get("incumbent_improved_by_refinement", 0),
             "planning_failures": result["operator_rejections"].get("planning", 0), "lns": lns, "atomic": atomic,
             "seconds": round(time.perf_counter() - started, 2), "budget_exhausted": result["budget_exhausted"]}
 
@@ -103,6 +107,27 @@ def analyse(rows: list[dict], strategies: tuple[str, ...]) -> dict:
         best_known[key] = min(costs) if costs else None
     by = {(r["scenario"], r["seed"], r["strategy"]): r for r in rows}
 
+    def paired(subset_keys: list[tuple], base: str, strategy: str) -> dict:
+        """`strategy` against `base` on the same scenario and seed: better / equal / worse and the mean cost change."""
+        diffs, better, worse, equal = [], 0, 0, 0
+        for k in subset_keys:
+            a, b = by.get((*k, base)), by.get((*k, strategy))
+            if not a or not b:
+                continue
+            if a["best_cost"] is None and b["best_cost"] is None:
+                equal += 1
+            elif a["best_cost"] is None:
+                better += 1                              # found a feasible design where the base found none
+            elif b["best_cost"] is None:
+                worse += 1
+            else:
+                change = (b["best_cost"] - a["best_cost"]) / a["best_cost"]
+                diffs.append(change)
+                better, worse, equal = better + (change < -1e-6), worse + (change > 1e-6), equal + (abs(change) <= 1e-6)
+        return {"better": better, "equal": equal, "worse": worse, "sign_test_p": round(_sign_test(better, worse), 4),
+                "mean_cost_change": statistics.mean(diffs) if diffs else None,
+                "bootstrap95": _bootstrap(diffs) if len(diffs) > 1 else None}
+
     def summarise(subset_keys: list[tuple]) -> dict:
         table = {}
         for strategy in strategies:
@@ -118,24 +143,9 @@ def analyse(rows: list[dict], strategies: tuple[str, ...]) -> dict:
                      "demoted_finalists": sum(r["demoted"] for r in runs),
                      "uphill_moves": sum(r["uphill_moves"] for r in runs), "repair_starts": sum(r["repair_starts"] for r in runs)}
             if strategy != "descent":
-                diffs, better, worse, equal = [], 0, 0, 0
-                for k in subset_keys:
-                    a, b = by.get((*k, "descent")), by.get((*k, strategy))
-                    if not a or not b:
-                        continue
-                    if a["best_cost"] is None and b["best_cost"] is None:
-                        equal += 1
-                    elif a["best_cost"] is None:
-                        better += 1                              # found a feasible design where descent found none
-                    elif b["best_cost"] is None:
-                        worse += 1
-                    else:
-                        change = (b["best_cost"] - a["best_cost"]) / a["best_cost"]
-                        diffs.append(change)
-                        better, worse, equal = better + (change < -1e-6), worse + (change > 1e-6), equal + (abs(change) <= 1e-6)
-                entry["versus_descent"] = {"better": better, "equal": equal, "worse": worse, "sign_test_p": round(_sign_test(better, worse), 4),
-                                           "mean_cost_change": statistics.mean(diffs) if diffs else None,
-                                           "bootstrap95": _bootstrap(diffs) if len(diffs) > 1 else None}
+                entry["versus_descent"] = paired(subset_keys, "descent", strategy)
+            if strategy == "alns_refined" and "alns" in strategies:
+                entry["versus_alns"] = paired(subset_keys, "alns", strategy)
             table[strategy] = entry
         ranks = {s: [] for s in strategies}
         for k in subset_keys:
@@ -151,7 +161,7 @@ def analyse(rows: list[dict], strategies: tuple[str, ...]) -> dict:
         out["scenarios"][scenario] = summarise([k for k in keys if k[0] == scenario])
     out["overall"] = summarise(keys)
     moves = {s: {"lns": {"used": 0, "incumbent": 0, "improving": 0, "novel": 0}, "atomic": {"used": 0, "incumbent": 0, "improving": 0, "novel": 0}, "planning_failures": 0}
-             for s in ("adaptive", "alns")}
+             for s in ("adaptive", "alns", "alns_refined")}
     for r in rows:
         if r["strategy"] in moves:
             for kind in ("lns", "atomic"):
@@ -170,15 +180,18 @@ def markdown(result: dict, meta: dict) -> str:
              f"a cap of {meta['budget']} solver calls each. Same scenario, same starting seeds and same cap for every strategy.", ""]
 
     def table(title, data):
-        lines.extend([f"## {title}", "", "| strategy | feasible | mean cost (M) | mean regret | found the best | rank | calls | time units | vs descent (better/equal/worse, p) | mean change [95%] |",
-                      "|---|---|---|---|---|---|---|---|---|---|"])
+        lines.extend([f"## {title}", "", "| strategy | feasible | mean cost (M) | mean regret | found the best | rank | calls | time units | vs descent (better/equal/worse, p) | mean change [95%] | vs alns (better/equal/worse, p) | mean change [95%] |",
+                      "|---|---|---|---|---|---|---|---|---|---|---|---|"])
         for strategy, e in data.items():
-            v = e.get("versus_descent")
-            versus = "—" if not v else f"{v['better']}/{v['equal']}/{v['worse']}, p={v['sign_test_p']}"
-            change = "—" if not v or v["mean_cost_change"] is None else (
-                f"{100 * v['mean_cost_change']:+.1f}%" + ("" if not v["bootstrap95"] else f" [{100 * v['bootstrap95'][0]:+.1f}, {100 * v['bootstrap95'][1]:+.1f}]"))
+            def describe(v):
+                versus = "—" if not v else f"{v['better']}/{v['equal']}/{v['worse']}, p={v['sign_test_p']}"
+                change = "—" if not v or v["mean_cost_change"] is None else (
+                    f"{100 * v['mean_cost_change']:+.1f}%" + ("" if not v["bootstrap95"] else f" [{100 * v['bootstrap95'][0]:+.1f}, {100 * v['bootstrap95'][1]:+.1f}]"))
+                return versus, change
+            versus, change = describe(e.get("versus_descent"))
+            versus_alns, change_alns = describe(e.get("versus_alns"))
             lines.append(f"| {strategy} | {e['feasible']}/{e['runs']} | {fmt(e['mean_cost'], 1e6)} | {fmt(e['mean_regret'] and 100 * e['mean_regret'], 1, 1)}% | "
-                         f"{e['found_best']} | {fmt(e['mean_rank'], 1, 2)} | {fmt(e['mean_solver_calls'], 1, 0)} | {fmt(e['mean_time_units'], 1, 0)} | {versus} | {change} |")
+                         f"{e['found_best']} | {fmt(e['mean_rank'], 1, 2)} | {fmt(e['mean_solver_calls'], 1, 0)} | {fmt(e['mean_time_units'], 1, 0)} | {versus} | {change} | {versus_alns} | {change_alns} |")
         lines.append("")
     table("Overall", result["overall"])
     for scenario, data in result["scenarios"].items():

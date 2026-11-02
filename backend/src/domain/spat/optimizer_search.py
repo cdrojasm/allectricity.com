@@ -15,6 +15,8 @@ import random
 from math import isfinite
 from typing import Any, Callable
 
+from src.domain.spat.feasibility import admits
+
 
 @dataclass(frozen=True)
 class SearchOption:
@@ -153,6 +155,7 @@ def search_discrete_local(
     max_evaluations: int,
     restarts: int = 5,
     bounds: dict[str, dict[str, float]] | None = None,
+    start: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Run deterministic best-improvement local search on discrete domains.
 
@@ -164,6 +167,9 @@ def search_discrete_local(
 
     Neighbor moves change one variable by one position in its sorted domain. Each
     restart begins at a seeded random combination and follows strict cost improvements.
+    With ``start`` (a value for every optimized variable) the first restart begins at the
+    domain option nearest to it instead, which makes the search a local refinement of a
+    design already known; later restarts remain random.
     """
     if not isinstance(base_parameters, dict):
         raise ValueError("base_parameters must be an object")
@@ -173,6 +179,12 @@ def search_discrete_local(
         if isinstance(value, bool) or not isinstance(value, int) or value < (1 if name == "max_evaluations" else 0):
             raise ValueError(f"{name} must be a {'positive' if name == 'max_evaluations' else 'nonnegative'} integer")
     variables = _normalize_domains(domains, bounds)
+    start_indices: dict[str, int] | None = None
+    if start is not None:
+        if set(start) != set(variables):
+            raise ValueError("start must give a value for every optimized variable")
+        start_indices = {path: min(range(len(options)), key=lambda i: (abs(float(options[i].value) - float(start[path])), i))
+                         for path, options in variables.items()}
     rng = random.Random(seed)
     cache: dict[str, dict[str, Any]] = {}
     diagnostics: list[dict[str, Any]] = []
@@ -222,7 +234,8 @@ def search_discrete_local(
             cache[candidate_hash] = record
             diagnostics.append({key: value for key, value in record.items() if key != "parameters"})
             return record, False
-        if not isinstance(safety, dict) or safety.get("Feasible") is not True:
+        if not isinstance(safety, dict) or not admits(
+                level="L2", status=safety.get("FeasibilityStatus"), feasible=safety.get("Feasible")):
             record.update(reason="safety_not_feasible", safety=safety)
             cache[candidate_hash] = record
             diagnostics.append({key: value for key, value in record.items() if key != "parameters"})
@@ -266,7 +279,10 @@ def search_discrete_local(
     restart_summaries = []
     attempts = max(1, restarts)
     for restart in range(attempts):
-        indices = {path: rng.randrange(len(options)) for path, options in variables.items()}
+        if restart == 0 and start_indices is not None:
+            indices = dict(start_indices)
+        else:
+            indices = {path: rng.randrange(len(options)) for path, options in variables.items()}
         current, _ = evaluate(indices)
         if exhausted:
             break

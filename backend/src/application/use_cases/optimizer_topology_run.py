@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from src.domain.spat import geometry_seeds
+from src.domain.spat.feasibility import admits
 from src.domain.spat.geometry_cost import evaluate_geometry_cost
 from src.domain.spat.geometry_operators import OperatorConstraints
 from src.domain.spat.operator_selection import AdaptiveOperatorSelector
@@ -24,7 +25,8 @@ from src.infrastructure.calculations import optimizer_evaluation, safety_criteri
 from src.infrastructure.calculations.potential_engine_client import _file_sha256, as_soil, soil_record
 
 
-STRATEGIES = ("descent", "uphill", "opportunistic", "adaptive", "alns")
+STRATEGIES = ("descent", "uphill", "opportunistic", "adaptive", "alns", "alns_refined")
+REFINE_SHARE = 0.25     # of the budget left after the finalists' reserve; what the refined strategy holds back for the parametric step
 
 
 def strategy_options(strategy: str, domain: dict[str, Any], constraints: OperatorConstraints,
@@ -36,6 +38,8 @@ def strategy_options(strategy: str, domain: dict[str, Any], constraints: Operato
     opportunistic  adds the repair pool, on budget the descents leave unused, with additive moves while violating
     adaptive       opportunistic, but moves are drawn by adaptive weights over the atomic operators
     alns           adaptive weights over the atomic operators and the destroy-and-repair large-neighbourhood moves
+    alns_refined   alns, with a quarter of the budget held back to tune the rod lengths of the elite topologies (OPT-014);
+                   it spends the same total budget as alns, so the two compare on equal footing
     """
     if strategy not in STRATEGIES:
         raise ValueError(f"strategy must be one of {', '.join(STRATEGIES)}")
@@ -45,7 +49,8 @@ def strategy_options(strategy: str, domain: dict[str, Any], constraints: Operato
         return {"propose_repair": None, "max_repair_starts": 0}
     if strategy == "opportunistic":
         return {}
-    return {"operator_selector": AdaptiveOperatorSelector(domain, constraints, use_lns=(strategy == "alns"), scores=selector_scores)}
+    options = {"operator_selector": AdaptiveOperatorSelector(domain, constraints, use_lns=strategy in ("alns", "alns_refined"), scores=selector_scores)}
+    return {**options, "refine_share": REFINE_SHARE} if strategy == "alns_refined" else options
 
 
 def utilization_ratio(result: dict[str, Any]) -> float | None:
@@ -55,6 +60,19 @@ def utilization_ratio(result: dict[str, Any]) -> float | None:
               for c in standard.get("criteria", [])
               if c.get("status") != "no_evaluable" and c.get("tolerable_v")]
     return max(ratios) if ratios else None
+
+
+def electrical_verdict(level: str, result: dict[str, Any]) -> dict[str, Any]:
+    """The topological search's reading of one `evaluate_design` result, through the gate the parametric search uses.
+
+    A violation stays a violation. A design with no violation found passes only where `feasibility.admits` lets it:
+    at L1 to be escalated, at finer levels when `Feasible` is True. Otherwise it could not be assessed (a standard
+    with no evaluable criterion, a mandatory criterion missing) and is rejected, never promoted on silence.
+    """
+    verdict = {"status": result["FeasibilityStatus"], "ratio": utilization_ratio(result), "feasible": result["Feasible"]}
+    if verdict["status"] != "VIOLATED" and not admits(level=level, status=verdict["status"], feasible=verdict["feasible"]):
+        return {**verdict, "status": "REJECTED", "reason": "not_assessable", "detail": "no criterion could be assessed"}
+    return verdict
 
 
 def problem_fingerprint(**parts: Any) -> str:
@@ -85,7 +103,9 @@ def run_topology_optimizer(
     standards: list[str],
     client: Any,
     seed: int,
-    max_solver_calls: int,
+    max_solver_calls: int | None = None,
+    time_budget_s: float | None = None,
+    finalist_time_share: float = 0.2,
     initial_geometry: dict[str, Any] | None = None,
     seed_count: int = 4,
     settings: dict[str, Any] | None = None,
@@ -104,7 +124,8 @@ def run_topology_optimizer(
     checkpoint_path: str | os.PathLike[str] | None = None,
     checkpoint_every: int = 1,
 ) -> dict[str, Any]:
-    """Run the search. With `checkpoint_path`, every new solver verdict is saved and a later call with the same
+    """Run the search on a budget of solver calls (`max_solver_calls`, repeatable) or of seconds (`time_budget_s`,
+    the fast mode: part of it is held for the L3 check of the finalists, see `search_topology`). With `checkpoint_path`, every new solver verdict is saved and a later call with the same
     problem resumes from the file: nothing already evaluated is evaluated again."""
     # A seed can pass the geometry rules and still be refused by the solver (a piece shorter than five radii once it
     # is discretised). Ask for a few extra and keep the first `seed_count` the solver accepts, so every strategy
@@ -114,7 +135,8 @@ def run_topology_optimizer(
     problem = problem_fingerprint(
         domain=domain, rate_card=rate_card, soil=soil_record(as_soil(soil)), injection_a=injection_a, exposure=asdict(exposure),
         standards=standards, settings=settings, seed=seed, seeds=[s.graph_hash for s in starts], constraints=asdict(constraints),
-        search=[neighbors_per_step, patience, uphill_moves, uphill_tolerance, max_steps_per_start, finalists, repair_share, strategy, max_repair_starts, selector_scores],
+        search=[neighbors_per_step, patience, uphill_moves, uphill_tolerance, max_steps_per_start, finalists, repair_share, strategy, max_repair_starts, selector_scores]
+        + ([time_budget_s, finalist_time_share] if time_budget_s is not None else []),
         engine=[getattr(client, "quadrature_tolerance", None), _file_sha256(getattr(client, "executable", "")) if getattr(client, "executable", None) else None])
     evaluations = load_checkpoint(checkpoint_path) if checkpoint_path else {}
     pending = {"n": 0}
@@ -124,7 +146,7 @@ def run_topology_optimizer(
         if checkpoint_path and pending["n"] % max(1, checkpoint_every) == 0:
             save_checkpoint(checkpoint_path, log)
 
-    context = optimizer_evaluation.EvaluationContext(max_evaluations=max_solver_calls)
+    context = optimizer_evaluation.EvaluationContext(max_evaluations=max_solver_calls)     # None (time mode): the search keeps the time
 
     def evaluate_cost(geometry: dict[str, Any]) -> dict[str, Any]:
         return evaluate_geometry_cost(geometry, rate_card)
@@ -136,7 +158,7 @@ def run_topology_optimizer(
                 client=client, exposure=exposure, standards=standards, settings=settings, context=context, level=level)
         except OptimizerGeometryRejected as rejected:
             return {"status": "REJECTED", "reason": "geometry_rejected", "detail": str(rejected), "charged": False}
-        return {"status": result["FeasibilityStatus"], "ratio": utilization_ratio(result), "feasible": result["Feasible"]}
+        return electrical_verdict(level, result)
 
     options = {"uphill_moves": uphill_moves, **strategy_options(strategy, domain, constraints, selector_scores)}   # the strategy decides
     if propose_operator is not None:
@@ -145,7 +167,7 @@ def run_topology_optimizer(
         options["max_repair_starts"] = max_repair_starts
     result = search_topology(
         domain=domain, seeds=starts, evaluate_cost=evaluate_cost, evaluate_electrical=evaluate_electrical, seed=seed,
-        max_solver_calls=max_solver_calls, constraints=constraints, neighbors_per_step=neighbors_per_step, patience=patience,
+        max_solver_calls=max_solver_calls, time_budget_s=time_budget_s, finalist_time_share=finalist_time_share, constraints=constraints, neighbors_per_step=neighbors_per_step, patience=patience,
         uphill_tolerance=uphill_tolerance, max_steps_per_start=max_steps_per_start, finalists=finalists,
         evaluations=evaluations, on_checkpoint=on_checkpoint, problem_sha256=problem, repair_share=repair_share, **options)
     if checkpoint_path:

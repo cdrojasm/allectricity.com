@@ -51,11 +51,12 @@ search repair an infeasible seed before it tries to make it cheaper.
 from __future__ import annotations
 
 import random
+import time
 from collections import Counter
 from math import isfinite
 from typing import Any, Callable
 
-from src.domain.spat import geometry_graph as gg
+from src.domain.spat import geometry_graph as gg, parametric_refinement
 from src.domain.spat.geometry_seeds import cells
 from src.domain.spat.geometry_operators import (
     OperatorConstraints, OperatorRejected, apply_operator, random_operator, random_repair_operator)
@@ -91,7 +92,7 @@ def search_topology(
     evaluate_cost: EvaluateCost,
     evaluate_electrical: EvaluateElectrical,
     seed: int,
-    max_solver_calls: int,
+    max_solver_calls: int | None = None,
     constraints: OperatorConstraints = OperatorConstraints(),
     neighbors_per_step: int = 6,
     patience: int = 4,
@@ -112,6 +113,12 @@ def search_topology(
     repair_share: float = 0.0,
     propose_repair: Callable[[gg.GeometryGraph, random.Random], Any] | None = random_repair_operator,
     operator_selector: Any = None,
+    time_budget_s: float | None = None,
+    finalist_time_share: float = 0.2,
+    clock: Callable[[], float] = time.monotonic,
+    refine_share: float = 0.0,
+    refine_elites: int = 3,
+    refine_evaluations: int = 24,
 ) -> dict[str, Any]:
     """Descend from each seed.
 
@@ -124,11 +131,35 @@ def search_topology(
     (random operators by default), which is where a destroy-and-repair scheme plugs in.
     Operator attempts are cheap (they never reach the
     solver), so up to 12 are drawn per neighbour wanted.
+
+    Budget. Exactly one of two: `max_solver_calls` (the default mode, deterministic) or `time_budget_s`
+    (fast mode: wall-clock seconds on `clock`). Both split it the same way, only the unit changes. The finalists'
+    share is held back until the search ends: in call mode `finalists + 2` calls; in time mode the larger of
+    `finalist_time_share` of the budget and that many L3 calls at the L3 time seen so far (or estimated from
+    the other levels by `LEVEL_WEIGHTS` before any L3 call exists), never more than half. A call that has
+    started is never interrupted, so a time budget can be overrun by at most one call. Time decisions depend on
+    the clock, so only call mode is repeatable run to run; a resumed time-mode run replays the log for free.
+
+    Refinement. With `refine_share` > 0 that share of the budget (after the finalists' reserve) is held back
+    for a parametric step: the `refine_elites` cheapest, distinct confirmed topologies each get their rod
+    lengths tuned by the OP-06 local search (`parametric_refinement`), through the same fidelity controller
+    and the same budget, and what it confirms competes for the finalist seats. Unused share passes on.
     """
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise ValueError("seed must be an integer")
-    if isinstance(max_solver_calls, bool) or not isinstance(max_solver_calls, int) or max_solver_calls < 1:
+    time_mode = time_budget_s is not None
+    if time_mode == (max_solver_calls is not None):
+        raise ValueError("give exactly one budget: max_solver_calls or time_budget_s")
+    if time_mode:
+        if isinstance(time_budget_s, bool) or not isinstance(time_budget_s, (int, float)) or not isfinite(time_budget_s) or time_budget_s <= 0:
+            raise ValueError("time_budget_s must be a positive number of seconds")
+        if not 0 <= finalist_time_share < 1:
+            raise ValueError("finalist_time_share must be in [0, 1)")
+    elif isinstance(max_solver_calls, bool) or not isinstance(max_solver_calls, int) or max_solver_calls < 1:
         raise ValueError("max_solver_calls must be a positive integer")
+    if not 0 <= refine_share < 1:
+        raise ValueError("refine_share must be in [0, 1)")
+    total: float = float(time_budget_s) if time_mode else max_solver_calls     # the budget, in calls or in seconds
     # Calls held back for the finest check. It is more than `finalists` because the check can demote a design
     # and the next one then needs its own call: with exactly `finalists` calls, three demotions left nothing.
     reserve = (finalists + 2) if finalist_reserve is None else finalist_reserve
@@ -147,18 +178,54 @@ def search_topology(
     incumbent: dict[str, Any] | None = None
     exhausted = False
     uphill_in_path = 0      # non-improving moves taken so far on the current start's path
-    searching = True      # while searching, the finalists' calls stay reserved
-    start_cap: int | None = None   # absolute call count a single start may not pass
+    phase = "search"      # search -> refine -> final; each phase leaves the later ones their share
+    start_cap: float | None = None   # absolute amount of budget used that a single start may not pass
+    started = clock()
+    durations: dict[str, list[float]] = {}
 
-    def remaining() -> int:
-        left = max_solver_calls - (reserve if searching else 0) - sum(calls.values())
-        return left if start_cap is None else min(left, start_cap - sum(calls.values()))
+    def used() -> float:
+        return clock() - started if time_mode else sum(calls.values())
+
+    def estimate(level: str) -> float:
+        """Seconds one call of `level` takes: its own mean, else scaled from another level seen so far, else 0."""
+        if durations.get(level):
+            return sum(durations[level]) / len(durations[level])
+        for other, seen in durations.items():
+            if seen:
+                return sum(seen) / len(seen) * LEVEL_WEIGHTS.get(level, 1.0) / LEVEL_WEIGHTS.get(other, 1.0)
+        return 0.0
+
+    def finalists_hold() -> float:
+        """Budget kept for the finest check."""
+        if not time_mode:
+            return reserve
+        return min(0.5 * total, max(finalist_time_share * total, reserve * estimate(finalist_level)))
+
+    finalists_hold_at_start = finalists_hold()
+    refine_hold = 0.0     # fixed when the search starts
+    if refine_share > 0:
+        refine_hold = refine_share * (total - finalists_hold())
+        if not time_mode:
+            refine_hold = int(refine_hold)
+
+    def held() -> float:
+        return finalists_hold() + refine_hold if phase == "search" else finalists_hold() if phase == "refine" else 0
+
+    def need(level: str) -> float:
+        return max(estimate(level), 1e-9) if time_mode else 1
+
+    def share(left: float, parts: int) -> float:
+        return left / parts if time_mode else max(1, -(-int(left) // parts))
+
+    def remaining(level: str = "L1") -> float:
+        left = total - held() - used()
+        return left if start_cap is None else min(left, start_cap - used())
 
     def electrical(level: str, geometry: dict[str, Any], digest: str) -> dict[str, Any] | None:
         """One charged solver call (or its replay from the log), or None when the budget cannot cover it."""
         nonlocal exhausted, replayed, spent
-        if remaining() < 1:
-            if start_cap is None or max_solver_calls - (reserve if searching else 0) - sum(calls.values()) < 1:
+        if remaining(level) < need(level):
+            if start_cap is None or total - held() - used() < need(level):
                 exhausted = True
             return None
         key = f"{digest}:{level}"
@@ -166,8 +233,10 @@ def search_topology(
             outcome = log[key]
             replayed += 1                     # decided exactly as before, without touching the solver
         else:
+            began = clock()
             try:
                 outcome = evaluate_electrical(level, geometry)
+                durations.setdefault(level, []).append(clock() - began)
             except Exception as exc:  # callback boundary: keep the failure as a trace record, and retry it on resume
                 calls[level] += 1
                 return {"status": "REJECTED", "reason": "evaluation_error", "detail": str(exc), "ratio": None}
@@ -348,14 +417,15 @@ def search_topology(
     # Phase 2: descend from feasible seeds first (cheapest first), then repair the violating ones. Each start gets
     # an equal share of what is left, and a share it does not use passes on to the next.
     starts.sort(key=lambda r: (r["score"][0] > 0, r["score"], r["candidate_sha256"]))
-    repair_reserve = int(repair_share * (max_solver_calls - reserve))     # kept back for phase 3
+    repair_reserve = repair_share * (total - finalists_hold())     # kept back for phase 3
+    repair_reserve = repair_reserve if time_mode else int(repair_reserve)
     for index, record in enumerate(starts):
         if exhausted:
             break
-        left = max_solver_calls - reserve - repair_reserve - sum(calls.values())
-        if left < 1:
+        left = total - finalists_hold() - refine_hold - repair_reserve - used()
+        if left < need("L1"):
             break
-        start_cap = sum(calls.values()) + max(1, -(-left // (len(starts) - index)))
+        start_cap = used() + share(left, len(starts) - index)
         descended.add(record["candidate_sha256"])
         descend(record)
         start_cap = None
@@ -369,10 +439,10 @@ def search_topology(
         if not waiting:
             break
         pick = min(waiting, key=lambda r: (r["excess"], r["cost"], r["candidate_sha256"]))
-        left = max_solver_calls - reserve - sum(calls.values())
-        if left < 1:
+        left = total - finalists_hold() - refine_hold - used()
+        if left < need("L1"):
             break
-        start_cap = sum(calls.values()) + max(1, -(-left // min(len(waiting), 3)))
+        start_cap = used() + share(left, min(len(waiting), 3))
         descended.add(pick["candidate_sha256"])
         counts["repair_starts"] += 1
         confirmed_before = counts["confirmed"]
@@ -380,9 +450,39 @@ def search_topology(
         counts["confirmed_from_repair_starts"] += counts["confirmed"] - confirmed_before
         start_cap = None
 
-    # Finalists: the cheapest confirmed designs are re-examined; a violation demotes them.
     search_exhausted = exhausted
-    searching = False
+    phase = "refine"
+    exhausted = False
+    refinements: list[dict[str, Any]] = []
+    if refine_share > 0 and refine_elites > 0:
+        elites: list[dict[str, Any]] = []
+        for record in sorted((r for r in cache.values() if r["status"] == "confirmed"), key=lambda r: (r["cost"], r["candidate_sha256"])):
+            mine = cells(graphs[record["candidate_sha256"]])
+            if len(elites) < refine_elites and all(1 - len(mine & cells(graphs[e["candidate_sha256"]])) / len(mine | cells(graphs[e["candidate_sha256"]]))
+                                                   >= min_elite_distance for e in elites):
+                elites.append(record)
+        for index, elite in enumerate(elites):
+            left = total - finalists_hold() - used()
+            if left < need("L1") or exhausted:
+                break
+            start_cap = used() + share(left, len(elites) - index)
+            best_before = incumbent["cost"] if incumbent else None
+            confirmed_before = counts["confirmed"]
+            outcome = parametric_refinement.refine_rods(
+                graphs[elite["candidate_sha256"]], screen=screen, constraints=constraints, domain=domain,
+                seed=seed + index, max_evaluations=refine_evaluations)
+            counts["refinement_starts"] += 1
+            counts["confirmed_from_refinement"] += counts["confirmed"] - confirmed_before
+            refinements.append({"from": elite["candidate_sha256"], "cost_before": elite["cost"], "evaluations": outcome["evaluations"],
+                                "improved": bool(outcome.get("improved")),
+                                "cost_after": outcome["best"]["cost"] if outcome.get("best") else None})
+            if incumbent is not None and (best_before is None or incumbent["cost"] < best_before - 1e-9):
+                counts["incumbent_improved_by_refinement"] += 1
+            start_cap = None
+    search_exhausted = search_exhausted or exhausted
+
+    # Finalists: the cheapest confirmed designs are re-examined; a violation demotes them.
+    phase = "final"
     exhausted = False
     finalist_records: list[dict[str, Any]] = []
     confirmed_by_cost = sorted((r for r in cache.values() if r["status"] == "confirmed"), key=lambda r: (r["cost"], r["candidate_sha256"]))
@@ -426,7 +526,13 @@ def search_topology(
         "schema_version": "spat.optimizer-topology-search/1.0",
         "algorithm": "operator_local_search_with_fidelity_controller",
         "seed": seed, "starts": len(seeds),
-        "max_solver_calls": max_solver_calls, "reserved_for_finalists": reserve, "solver_calls": dict(calls), "solver_calls_total": sum(calls.values()),
+        "max_solver_calls": max_solver_calls, "reserved_for_finalists": reserve,
+        "budget": {"mode": "time" if time_mode else "calls", "total": total, "unit": "s" if time_mode else "calls",
+                   "used": round(used(), 3) if time_mode else used(), "finalists_hold_at_start_of_search": round(finalists_hold_at_start, 3),
+                   "refine_hold": round(refine_hold, 3) if time_mode else refine_hold,
+                   # wall-clock figures exist only in fast mode, so a call-mode result stays identical run to run
+                   **({"mean_seconds_per_call": {level: round(sum(v) / len(v), 4) for level, v in durations.items() if v}} if time_mode else {})},
+        "refinements": refinements, "solver_calls": dict(calls), "solver_calls_total": sum(calls.values()),
         "baseline_solver_calls_if_every_candidate_used_L2plus": counts["considered"],
         # Same comparison in time units (one L1 call = 1), since the levels do not cost the same.
         "solver_time_units": round(sum(LEVEL_WEIGHTS.get(level, 1.0) * n for level, n in calls.items()), 1),

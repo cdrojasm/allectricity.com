@@ -403,3 +403,141 @@ def test_a_reserve_of_exactly_the_finalists_cannot_replace_a_demoted_design():
     stuck = run(DemoteSome(doomed), calls=60, finalists=2, finalist_reserve=2, min_elite_distance=0.0)
     assert stuck["best"] is None                                     # the old behaviour: two calls, two demotions, nothing left
     assert run(Model(), calls=60, finalists=2)["reserved_for_finalists"] == 4          # default: finalists + 2
+
+
+# ---- OPT-005: one reading of feasibility for the parametric and the topological search -----------------------
+
+from src.application.use_cases.optimizer_topology_run import electrical_verdict  # noqa: E402
+from src.domain.spat.feasibility import admits  # noqa: E402
+from src.domain.spat.optimizer_search import search_discrete_local  # noqa: E402
+
+# (level, FeasibilityStatus, Feasible) -> may it pass the gate?
+GATE = {("L1", "UNKNOWN", None): True, ("L1", "VIOLATED", False): False,
+        ("L2+", "UNKNOWN", True): True, ("L2+", "UNKNOWN", None): False, ("L2+", "VIOLATED", False): False,
+        ("L3", "UNKNOWN", True): True, ("L3", "UNKNOWN", None): False, ("L3", "VIOLATED", False): False,
+        ("L2", "UNKNOWN", True): True, ("L2", "UNKNOWN", None): False}
+
+
+@pytest.mark.parametrize("case,expected", GATE.items())
+def test_both_searches_read_every_feasibility_state_the_same_way(case, expected):
+    level, status, feasible = case
+    assert admits(level=level, status=status, feasible=feasible) is expected
+    # topological reading of an evaluate_design-shaped result
+    verdict = electrical_verdict(level, {"FeasibilityStatus": status, "Feasible": feasible, "SafetyEvaluations": []})
+    assert (verdict["status"] not in ("VIOLATED", "REJECTED")) is expected
+    assert (verdict["status"] == "VIOLATED") is (status == "VIOLATED")
+    # parametric reading of the same result: it searches at L2
+    if level == "L2":
+        found = search_discrete_local(
+            base_parameters={"x": 1}, domains={"x": [1, 2]}, build_candidate=lambda p: {"ok": True},
+            evaluate_safety=lambda b, p: {"FeasibilityStatus": status, "Feasible": feasible},
+            evaluate_cost=lambda b, s, p: 1.0, seed=1, max_evaluations=4, restarts=1)
+        assert (found["best"] is not None) is expected
+
+
+def test_an_unassessed_design_is_rejected_at_the_confirming_level_not_promoted():
+    verdict = electrical_verdict("L2+", {"FeasibilityStatus": "UNKNOWN", "Feasible": None, "SafetyEvaluations": []})
+    assert verdict["status"] == "REJECTED" and verdict["reason"] == "not_assessable"
+    assert electrical_verdict("L1", {"FeasibilityStatus": "UNKNOWN", "Feasible": None, "SafetyEvaluations": []})["status"] == "UNKNOWN"
+
+
+# ---- fast mode: a time budget with an L3 reserve ---------------------------------------------------------------
+
+class Clocked(Model):
+    """Model whose calls take time on a fake clock: L1 1 s, L2+ 6.5 s, L3 6.9 s."""
+    SECONDS = {"L1": 1.0, "L2+": 6.5, "L3": 6.9}
+
+    def __init__(self):
+        super().__init__()
+        self.now = 0.0
+
+    def clock(self):
+        return self.now
+
+    def electrical(self, level, geometry):
+        outcome = super().electrical(level, geometry)
+        self.now += self.SECONDS[level]
+        return outcome
+
+
+def test_the_fast_mode_stops_on_time_and_keeps_the_finalists_their_l3_reserve():
+    model = Clocked()
+    result = run(model, calls=None, time_budget_s=120.0, clock=model.clock)
+    assert result["budget"]["mode"] == "time" and result["max_solver_calls"] is None
+    assert model.now <= 120.0 + Clocked.SECONDS["L3"]                    # a started call is not interrupted
+    assert result["solver_calls"].get("L3", 0) >= 1 and result["best"] is not None   # the search left room for the finest check
+    assert result["budget"]["finalists_hold_at_start_of_search"] >= 0.2 * 120.0
+    searching_end = max(i for i, (level, _) in enumerate(model.calls) if level != "L3")
+    assert all(level == "L3" for level, _ in model.calls[searching_end + 1:])
+    model2 = Clocked()
+    assert run(model2, calls=None, time_budget_s=120.0, clock=model2.clock)["best"] == result["best"]    # the fake clock is deterministic
+
+
+def test_the_time_reserve_follows_the_observed_l3_cost():
+    model = Clocked()
+    model.SECONDS = {"L1": 1.0, "L2+": 6.5, "L3": 30.0}                   # L3 turns out far dearer than the weights say
+    result = run(model, calls=None, time_budget_s=200.0, clock=model.clock, finalists=2)
+    assert result["solver_calls"].get("L3", 0) >= 1
+
+
+def test_exactly_one_budget_is_accepted_and_the_call_mode_is_unchanged():
+    model = Model()
+    for kwargs in ({"calls": None}, {"calls": 10, "time_budget_s": 5.0}, {"calls": None, "time_budget_s": 0}):
+        with pytest.raises(ValueError):
+            run(model, **kwargs)
+    reference = run(Model(), calls=80)
+    assert reference["budget"] == {**reference["budget"], "mode": "calls", "total": 80} and reference["refinements"] == []
+
+
+# ---- OPT-014: the parametric search tunes the rods of the elite topologies ---------------------------------------
+
+from src.domain.spat import parametric_refinement  # noqa: E402
+from src.domain.spat.geometry_operators import OperatorConstraints as _Constraints  # noqa: E402
+
+
+def _graph_with_rods(lengths):
+    base = gg.from_geometry(_seeds(1, 4)[0].geometry)
+    nodes = sorted(base.nodes())[:len(lengths)]
+    return gg.GeometryGraph(base.site, base.segments, frozenset((n, float(length), "unspecified") for n, length in zip(nodes, lengths)))
+
+
+class RodScreen:
+    """A confirmed design needs 8 m of rod in total; the cost is per metre of rod. Counts what it is asked."""
+
+    def __init__(self):
+        self.asked = []
+
+    def __call__(self, graph):
+        total = sum(length for _, length, _ in graph.rods)
+        self.asked.append(total)
+        ok = total >= 8.0
+        return {"candidate_sha256": gg.canonical_hash(graph), "status": "confirmed" if ok else "rejected",
+                "reason": None if ok else "violated_at_L2+", "cost": total * 1000.0}
+
+
+def test_rod_refinement_walks_a_feasible_design_down_to_the_cheapest_rods_that_still_pass():
+    graph = _graph_with_rods([6.0, 6.0, 6.0])
+    screen = RodScreen()
+    outcome = parametric_refinement.refine_rods(graph, screen=screen, constraints=_Constraints(), domain=DOMAIN, max_evaluations=60)
+    assert outcome["improved"] is True
+    refined = sum(length for _, length, _ in outcome["refined_graph"].rods)
+    assert 8.0 <= refined < 18.0 and outcome["best"]["cost"] == pytest.approx(refined * 1000.0)
+    assert min(screen.asked) < 8.0                                 # it did probe the violating side
+    rodless = gg.GeometryGraph(graph.site, graph.segments, frozenset())
+    assert parametric_refinement.refine_rods(rodless, screen=screen, domain=DOMAIN)["reason"] == "no_rods"
+
+
+def test_refinement_reuses_the_op06_search_and_its_gate():
+    graph = _graph_with_rods([3.0, 3.0])
+    outcome = parametric_refinement.refine_rods(graph, screen=lambda g: {"status": "rejected", "reason": "violated_at_L1", "cost": 1.0},
+                                                constraints=_Constraints(), domain=DOMAIN, max_evaluations=10)
+    assert outcome["best"] is None and outcome["improved"] is False       # nothing confirmed, so nothing is claimed
+
+
+def test_the_refining_search_stays_inside_the_same_budget_and_reports_what_it_did():
+    plain = run(Model(), calls=80)
+    refined = run(Model(), calls=80, refine_share=0.25)
+    assert refined["solver_calls_total"] <= 80 and plain["solver_calls_total"] <= 80
+    assert refined["certified"] is False and refined["reserved_for_finalists"] == plain["reserved_for_finalists"]
+    assert refined["budget"]["refine_hold"] == int(0.25 * (80 - refined["reserved_for_finalists"]))
+    assert plain["refinements"] == [] and "refinement_starts" not in plain["counts"]
