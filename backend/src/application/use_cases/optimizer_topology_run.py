@@ -27,7 +27,8 @@ from src.infrastructure.calculations.potential_engine_client import _file_sha256
 STRATEGIES = ("descent", "uphill", "opportunistic", "adaptive", "alns")
 
 
-def strategy_options(strategy: str, domain: dict[str, Any], constraints: OperatorConstraints) -> dict[str, Any]:
+def strategy_options(strategy: str, domain: dict[str, Any], constraints: OperatorConstraints,
+                     selector_scores: dict[str, float] | None = None) -> dict[str, Any]:
     """Search options for each strategy, so they can be compared on the same budget.
 
     descent        strict descent: only improving moves, no repair pool descents
@@ -44,7 +45,7 @@ def strategy_options(strategy: str, domain: dict[str, Any], constraints: Operato
         return {"propose_repair": None, "max_repair_starts": 0}
     if strategy == "opportunistic":
         return {}
-    return {"operator_selector": AdaptiveOperatorSelector(domain, constraints, use_lns=(strategy == "alns"))}
+    return {"operator_selector": AdaptiveOperatorSelector(domain, constraints, use_lns=(strategy == "alns"), scores=selector_scores)}
 
 
 def utilization_ratio(result: dict[str, Any]) -> float | None:
@@ -99,6 +100,7 @@ def run_topology_optimizer(
     repair_share: float = 0.0,
     strategy: str = "opportunistic",
     max_repair_starts: int | None = None,
+    selector_scores: dict[str, float] | None = None,
     checkpoint_path: str | os.PathLike[str] | None = None,
     checkpoint_every: int = 1,
 ) -> dict[str, Any]:
@@ -112,7 +114,7 @@ def run_topology_optimizer(
     problem = problem_fingerprint(
         domain=domain, rate_card=rate_card, soil=soil_record(as_soil(soil)), injection_a=injection_a, exposure=asdict(exposure),
         standards=standards, settings=settings, seed=seed, seeds=[s.graph_hash for s in starts], constraints=asdict(constraints),
-        search=[neighbors_per_step, patience, uphill_moves, uphill_tolerance, max_steps_per_start, finalists, repair_share, strategy, max_repair_starts],
+        search=[neighbors_per_step, patience, uphill_moves, uphill_tolerance, max_steps_per_start, finalists, repair_share, strategy, max_repair_starts, selector_scores],
         engine=[getattr(client, "quadrature_tolerance", None), _file_sha256(getattr(client, "executable", "")) if getattr(client, "executable", None) else None])
     evaluations = load_checkpoint(checkpoint_path) if checkpoint_path else {}
     pending = {"n": 0}
@@ -136,7 +138,7 @@ def run_topology_optimizer(
             return {"status": "REJECTED", "reason": "geometry_rejected", "detail": str(rejected), "charged": False}
         return {"status": result["FeasibilityStatus"], "ratio": utilization_ratio(result), "feasible": result["Feasible"]}
 
-    options = {"uphill_moves": uphill_moves, **strategy_options(strategy, domain, constraints)}   # the strategy decides
+    options = {"uphill_moves": uphill_moves, **strategy_options(strategy, domain, constraints, selector_scores)}   # the strategy decides
     if propose_operator is not None:
         options["propose_operator"] = propose_operator
     if max_repair_starts is not None:

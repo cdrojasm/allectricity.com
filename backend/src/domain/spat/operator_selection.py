@@ -32,9 +32,11 @@ ARMS = tuple(f"atomic:{k}" for k in KINDS) + LNS_ARMS
 
 class AdaptiveOperatorSelector:
     def __init__(self, domain: dict, constraints: OperatorConstraints = OperatorConstraints(), *,
-                 reaction: float = 0.3, segment: int = 20, floor: float = 0.05, use_lns: bool = True):
+                 reaction: float = 0.3, segment: int = 20, floor: float = 0.05, use_lns: bool = True,
+                 plan_attempts: int = 3, scores: dict[str, float] | None = None):
         self.domain, self.constraints = domain, constraints
-        self.reaction, self.segment, self.floor = reaction, segment, floor
+        self.reaction, self.segment, self.floor, self.plan_attempts = reaction, segment, floor, plan_attempts
+        self.scores = {**SCORES, **(scores or {})}
         self.arms = ARMS if use_lns else tuple(a for a in ARMS if not a.startswith("lns:"))
         self.region = make_region(domain)
         prior = dict(zip((f"atomic:{k}" for k in KINDS), REPAIR_WEIGHTS))
@@ -57,12 +59,17 @@ class AdaptiveOperatorSelector:
                 break
         if arm.startswith("lns:"):
             destroy, repair = arm[4:].split("+")
-            return arm, plan(graph, rng, destroy, repair, self.region, self.constraints)
+            # A plan often fails for want of a fitting region or limb: draw again before giving up on the arm.
+            for _ in range(self.plan_attempts):
+                move = plan(graph, rng, destroy, repair, self.region, self.constraints)
+                if move is not None:
+                    return arm, move
+            return arm, None
         return arm, random_operator(graph, rng, kind=arm[7:])
 
     def report(self, arm: str, outcome: str, repairing: bool) -> None:
         context = "repair" if repairing else "improve"
-        self._score[context][arm] += SCORES[outcome]
+        self._score[context][arm] += self.scores[outcome]
         self._uses[context][arm] += 1
         self.history[(context, arm, outcome)] += 1
         self._since[context] += 1
