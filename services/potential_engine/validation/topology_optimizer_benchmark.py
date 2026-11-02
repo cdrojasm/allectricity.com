@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import math
 import random
 import statistics
@@ -191,7 +192,7 @@ def main() -> None:
     parser.add_argument("--seeds", type=int, default=6)
     parser.add_argument("--first-seed", type=int, default=2026)
     parser.add_argument("--budget", type=int, default=150)
-    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1), help="worker processes (default: every core but one)")
     parser.add_argument("--scenarios", default=",".join(SCENARIOS))
     parser.add_argument("--strategies", default=",".join(STRATEGIES))
     parser.add_argument("--json", default="/tmp/optimizer-benchmark.json")

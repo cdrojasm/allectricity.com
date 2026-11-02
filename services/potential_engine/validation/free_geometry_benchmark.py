@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import platform
 import random
 import statistics
@@ -265,7 +266,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--seeds", default="2026")
     parser.add_argument("--per-family", type=int, default=20)
-    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1), help="worker processes (default: every core but one)")
     parser.add_argument("--fine-sample", type=int, default=0, help="designs given a fine-raster reference (half worst-disagreement, half random)")
     parser.add_argument("--json", default="/tmp/free-geometry-benchmark.json")
     parser.add_argument("--markdown", default=None)
