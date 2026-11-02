@@ -31,6 +31,7 @@ COPY services/potential_engine/validation/reference_cases.json ./services/potent
 COPY services/potential_engine/validation/axisymmetric_fv.py ./services/potential_engine/validation/axisymmetric_fv.py
 COPY services/potential_engine/validation/free_geometry_generator.py ./services/potential_engine/validation/free_geometry_generator.py
 COPY services/potential_engine/validation/free_geometry_benchmark.py ./services/potential_engine/validation/free_geometry_benchmark.py
+COPY services/potential_engine/validation/topology_optimizer_benchmark.py ./services/potential_engine/validation/topology_optimizer_benchmark.py
 COPY pytest.ini ./pytest.ini
 COPY docs/documentos_prueba ./docs/documentos_prueba
 COPY evaluation ./evaluation

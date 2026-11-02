@@ -6,6 +6,10 @@ BENCH_OUT ?= /tmp/free-geometry-benchmark.json
 free-geometry-benchmark: potential-engine
 	python3 services/potential_engine/validation/free_geometry_benchmark.py --json "$(BENCH_OUT)" $(ARGS)
 
+OPT_BENCH_OUT ?= /tmp/optimizer-benchmark.json
+optimizer-benchmark: potential-engine
+	python3 services/potential_engine/validation/topology_optimizer_benchmark.py --json "$(OPT_BENCH_OUT)" $(ARGS)
+
 .PHONY: help
 help:
 	@printf '%s\n' \
@@ -14,6 +18,7 @@ help:
 	  '  potential-engine Build the C++ grounding-potential engine' \
 	  '  potential-engine-profile Profile solver phases (ARGS=..., PROFILE_OUT=...)' \
 	  '  free-geometry-benchmark Compare L1, L2 and L2+ on seeded drawn geometries (ARGS=..., BENCH_OUT=...)' \
+	  '  optimizer-benchmark Compare optimizer strategies on equal budgets (ARGS=..., OPT_BENCH_OUT=...)' \
 	  '  frontend-up    Build static files and start Nginx' \
 	  '  frontend-down  Stop the Nginx container' \
 	  '  local-build    Build local Docker services' \
@@ -32,7 +37,7 @@ help:
 
 .PHONY: local-up local-down local-build test lint
 
-.PHONY: frontend-build frontend-up frontend-down potential-engine potential-engine-profile free-geometry-benchmark
+.PHONY: frontend-build frontend-up frontend-down potential-engine potential-engine-profile free-geometry-benchmark optimizer-benchmark
 potential-engine:
 	mkdir -p services/potential_engine/build
 	g++ -std=c++17 -O3 -Wall -Wextra -Wpedantic services/potential_engine/src/main.cpp -o services/potential_engine/build/spat-potential-engine
