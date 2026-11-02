@@ -180,3 +180,133 @@ def test_the_cost_tolerance_limits_how_much_costlier_an_intermediate_state_may_b
 
 def test_exploration_keeps_the_search_deterministic():
     assert ridge_run(Ridge(), uphill_moves=3) == ridge_run(Ridge(), uphill_moves=3)
+
+
+# ---- trust, diversity, repair and resumption ---------------------------------------------------------------
+
+import copy  # noqa: E402
+import json  # noqa: E402
+
+
+class Recorder(Model):
+    """Model that also remembers every verdict it gave, by design hash."""
+
+    def __init__(self, strictness=None):
+        super().__init__(strictness)
+        self.seen = {}                                        # hash -> (ratio, cost)
+        self.keys = []                                        # "hash:level" of every real call
+
+    def electrical(self, level, geometry):
+        outcome = super().electrical(level, geometry)
+        digest = gg.canonical_hash(gg.from_geometry(geometry))
+        self.keys.append(f"{digest}:{level}")
+        self.seen[digest] = (outcome["ratio"], self.cost(geometry))
+        return outcome
+
+
+def test_an_L1_pass_alone_never_confirms_a_design_and_unevaluated_ones_are_never_promoted():
+    log = {}
+    result = run(Model({"L1": 1.0, "L2+": 9.0, "L3": 9.0}), evaluations=log)      # L1 always passes, L2+ always rejects
+    assert result["confirmed"] == [] and result["best"] is None and result["finalists"] == []
+    assert result["certified"] is False and result["counts"].get("confirmed", 0) == 0
+
+
+def test_every_confirmed_design_has_both_verdicts_and_every_finalist_has_the_finest_one():
+    log = {}
+    result = run(Model(), evaluations=log, calls=60)
+    assert result["confirmed"] and result["finalists"]
+    for record in result["confirmed"]:
+        assert f"{record['candidate_sha256']}:L1" in log and f"{record['candidate_sha256']}:L2+" in log
+        assert log[f"{record['candidate_sha256']}:L2+"]["status"] == "UNKNOWN"
+    for record in result["finalists"]:
+        assert f"{record['candidate_sha256']}:L3" in log
+    assert result["best"] is None or result["best"]["candidate_sha256"] in {f["candidate_sha256"] for f in result["finalists"] if f["status"] == "finalist"}
+    # nothing that was skipped for cost or never screened can appear as a confirmed design
+    assert all(r["status"] == "confirmed" for r in result["confirmed"])
+
+
+def test_repairable_violations_are_kept_in_a_pool_and_never_reported_as_feasible():
+    model = Recorder()
+    result = run(model, calls=60)
+    pool = result["repair_pool"]
+    assert pool and all(r["excess"] > 0 and r["status"] != "confirmed" for r in pool)
+    assert all(r["excess"] <= 1.0 for r in pool)
+    confirmed = {r["candidate_sha256"] for r in result["confirmed"]}
+    assert not confirmed & {r["candidate_sha256"] for r in pool}
+    # the closest-to-compliant violator that was cheaper than the answer is still in the pool
+    cheaper = [(ratio - 1.0, digest) for digest, (ratio, cost) in model.seen.items() if ratio > 1.0 and cost < result["best"]["cost"]]
+    if cheaper:
+        assert min(cheaper)[1] in {r["candidate_sha256"] for r in pool}
+
+
+def test_spare_budget_starts_repair_descents_from_the_pool():
+    result = run(Model(), calls=60, repair_share=0.3, max_steps_per_start=6)
+    assert result["counts"]["repair_starts"] > 0
+    assert result["solver_calls_total"] <= 100
+
+
+def test_finalists_are_chosen_for_diversity_and_not_only_for_cost():
+    crowded = run(Model(), calls=60, min_elite_distance=0.0, max_steps_per_start=8)
+    spread = run(Model(), calls=60, min_elite_distance=0.5, max_steps_per_start=8)
+    assert crowded["counts"].get("finalists_skipped_similar", 0) == 0
+    assert spread["counts"]["finalists_skipped_similar"] > 0
+
+
+class Interrupted(Exception):
+    pass
+
+
+def _interrupt_after(count, model, **kwargs):
+    log, saved = {}, {}
+
+    def checkpoint(current):
+        saved["log"] = json.loads(json.dumps(current))             # what a file would hold: plain data
+        if len([k for k in current if k != "__problem__"]) >= count:
+            raise Interrupted
+    with pytest.raises(Interrupted):
+        run(model, evaluations=log, on_checkpoint=checkpoint, problem_sha256="p", **kwargs)
+    return saved["log"]
+
+
+STABLE = ("best", "finalists", "confirmed", "solver_calls", "counts", "operator_rejections", "repair_pool", "l1_candidates")
+
+
+@functools.lru_cache(maxsize=1)
+def _reference():
+    return run(Model(), calls=60, evaluations={}, problem_sha256="p")
+
+
+@pytest.mark.parametrize("count", [2, 20])
+def test_an_interrupted_search_resumes_to_the_same_result_without_repeating_any_evaluation(count):
+    reference = _reference()
+    saved = _interrupt_after(count, Model(), calls=60)
+    assert json.dumps(saved)                                       # a checkpoint is plain data: no engine session in it
+    spy = Recorder()
+    resumed = run(spy, calls=60, evaluations=copy.deepcopy(saved), problem_sha256="p")
+    for key in STABLE:
+        assert resumed[key] == reference[key], key
+    assert not set(spy.keys) & set(saved), "an evaluation already in the checkpoint was evaluated again"
+    verdicts = len([k for k in saved if k != "__problem__"])
+    assert resumed["evaluations_replayed"] >= verdicts and resumed["solver_calls_spent_this_run"] == reference["solver_calls_spent_this_run"] - verdicts
+
+
+def test_a_checkpoint_from_a_different_problem_is_refused():
+    saved = _interrupt_after(5, Model(), calls=60)
+    with pytest.raises(ValueError, match="different problem"):
+        run(Model(), calls=60, evaluations=saved, problem_sha256="another problem")
+
+
+def test_a_failed_evaluation_is_not_checkpointed_so_a_resume_retries_it():
+    class Flaky(Model):
+        def __init__(self):
+            super().__init__()
+            self.failed = False
+
+        def electrical(self, level, geometry):
+            if not self.failed:
+                self.failed = True
+                raise RuntimeError("engine crashed")
+            return super().electrical(level, geometry)
+    log = {}
+    run(Flaky(), calls=40, evaluations=log, problem_sha256="p")
+    assert all(v.get("reason") != "evaluation_error" for k, v in log.items() if k != "__problem__")

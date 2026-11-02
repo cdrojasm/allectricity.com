@@ -53,3 +53,53 @@ def test_utilization_ratio_reads_the_worst_evaluable_criterion():
                                                   {"status": "no_cumple", "actual_v": 400.0, "tolerable_v": 200.0},
                                                   {"status": "no_evaluable", "actual_v": 1.0, "tolerable_v": 0}]}]}
     assert utilization_ratio(result) == 2.0 and utilization_ratio({"SafetyEvaluations": []}) is None
+
+
+# ---- interruption and resumption with the real solver ------------------------------------------------------
+
+import json  # noqa: E402
+
+from src.application.use_cases import optimizer_topology_run as topology_run  # noqa: E402
+from src.infrastructure.calculations.potential_engine_client import PotentialSession  # noqa: E402
+
+
+def test_an_interrupted_run_resumes_from_its_file_without_repeating_a_solver_call(client, tmp_path, monkeypatch):
+    path = tmp_path / "checkpoint.json"
+    reference = run(client, calls=60)
+
+    class Interrupted(Exception):
+        pass
+    real_save, saves = topology_run.save_checkpoint, {"n": 0}
+
+    def flaky_save(target, log):
+        real_save(target, log)
+        saves["n"] += 1
+        if saves["n"] == 12:
+            raise Interrupted
+    monkeypatch.setattr(topology_run, "save_checkpoint", flaky_save)
+    with pytest.raises(Interrupted):
+        run_topology_optimizer(domain=DOMAIN, rate_card=RATES, soil=100.0, injection_a=1000.0,
+                               exposure=safety_criteria.FaultExposure(0.5, 70, 3000, 0.1, 100), standards=[safety_criteria.IEEE80_2013],
+                               client=client, seed=7, max_solver_calls=60, seed_count=4, checkpoint_path=path)
+    monkeypatch.setattr(topology_run, "save_checkpoint", real_save)
+    saved = json.loads(path.read_text())                           # plain verdicts: no session, no process handle
+    verdicts = len([k for k in saved if k != "__problem__"])
+    assert verdicts >= 12 and PotentialSession.open_sessions() == 0
+
+    resumed = run_topology_optimizer(domain=DOMAIN, rate_card=RATES, soil=100.0, injection_a=1000.0,
+                                     exposure=safety_criteria.FaultExposure(0.5, 70, 3000, 0.1, 100), standards=[safety_criteria.IEEE80_2013],
+                                     client=client, seed=7, max_solver_calls=60, seed_count=4, checkpoint_path=path)
+    assert resumed["best"]["candidate_sha256"] == reference["best"]["candidate_sha256"]
+    assert resumed["solver_calls"] == reference["solver_calls"]
+    assert resumed["evaluations_replayed"] >= verdicts
+    assert resumed["solver_calls_spent_this_run"] == reference["solver_calls_total"] - verdicts
+    assert PotentialSession.open_sessions() == 0
+
+
+def test_a_checkpoint_is_not_reused_for_another_problem_or_another_current(client, tmp_path):
+    path = tmp_path / "checkpoint.json"
+    common = dict(domain=DOMAIN, rate_card=RATES, soil=100.0, exposure=safety_criteria.FaultExposure(0.5, 70, 3000, 0.1, 100),
+                  standards=[safety_criteria.IEEE80_2013], client=client, seed=7, max_solver_calls=20, seed_count=2, checkpoint_path=path)
+    run_topology_optimizer(injection_a=1000.0, **common)
+    with pytest.raises(ValueError, match="different problem"):
+        run_topology_optimizer(injection_a=1500.0, **common)
