@@ -64,14 +64,18 @@ def _overlaps(graph: gg.GeometryGraph, a: gg.Point, b: gg.Point) -> bool:
 
 @dataclass(frozen=True)
 class AddSegment:
-    """A new run a-b; at least one end must be an existing node so the network stays one piece."""
+    """A new run a-b; at least one end must be an existing node so the network stays one piece.
+
+    `free` waives that rule for the steps of a compound move, whose final result is what gets checked.
+    """
     a: gg.Point
     b: gg.Point
     material: str = gg.DEFAULT_MATERIAL
+    free: bool = False
 
     def apply(self, graph):
         nodes = graph.nodes()
-        if self.a not in nodes and self.b not in nodes:
+        if not self.free and self.a not in nodes and self.b not in nodes:
             raise OperatorRejected("missing", "a new segment must start at an existing node")
         if self.a == self.b or _overlaps(graph, self.a, self.b):
             raise OperatorRejected("missing", "that run overlaps a conductor that already exists, or has no length")
@@ -283,13 +287,15 @@ def random_repair_operator(graph: gg.GeometryGraph, rng: random.Random) -> Opera
     return random_operator(graph, rng, REPAIR_WEIGHTS)
 
 
-def random_operator(graph: gg.GeometryGraph, rng: random.Random, weights: tuple[float, ...] | None = None) -> Operator:
+def random_operator(graph: gg.GeometryGraph, rng: random.Random, weights: tuple[float, ...] | None = None,
+                    kind: str | None = None) -> Operator:
     """One plausible operator for the graph; it may still be rejected by `apply_operator`.
 
-    With no weights every kind is equally likely (and the random stream is what it always was).
+    With no weights every kind is equally likely (and the random stream is what it always was). `kind` forces one.
     """
     nodes, segments = sorted(graph.nodes()), sorted(graph.segments)
-    kind = rng.choice(KINDS) if weights is None else rng.choices(KINDS, weights=weights)[0]
+    if kind is None:
+        kind = rng.choice(KINDS) if weights is None else rng.choices(KINDS, weights=weights)[0]
     if kind == "add":
         a = rng.choice(nodes)
         return AddSegment(a, gg.point(a[0] + rng.choice((-6, -4, -3, 3, 4, 6)), a[1] + rng.choice((-6, -4, -3, 0, 3, 4, 6))))

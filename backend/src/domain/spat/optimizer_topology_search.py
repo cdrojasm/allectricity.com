@@ -110,6 +110,7 @@ def search_topology(
     max_repair_starts: int = 6,
     repair_share: float = 0.0,
     propose_repair: Callable[[gg.GeometryGraph, random.Random], Any] | None = random_repair_operator,
+    operator_selector: Any = None,
 ) -> dict[str, Any]:
     """Descend from each seed.
 
@@ -269,15 +270,34 @@ def search_topology(
                 attempts += 1
                 try:
                     source = graphs[current["candidate_sha256"]]
-                    proposer = propose_repair if propose_repair is not None and current_key[0] > 0 else propose_operator
-                    applied = apply_operator(source, proposer(source, rng), constraints, domain)
+                    repairing = current_key[0] > 0
+                    if operator_selector is not None:
+                        arm, operator = operator_selector.propose(source, rng, repairing)
+                        if operator is None:
+                            operator_rejections["planning"] += 1
+                            operator_selector.report(arm, "invalid", repairing)
+                            continue
+                    else:
+                        arm, proposer = None, (propose_repair if propose_repair is not None and repairing else propose_operator)
+                        operator = proposer(source, rng)
+                    applied = apply_operator(source, operator, constraints, domain)
                 except OperatorRejected as rejected:
                     operator_rejections[rejected.kind] += 1
+                    if operator_selector is not None:
+                        operator_selector.report(arm, "invalid", repairing)
                     continue
                 digest = gg.canonical_hash(applied.graph)
-                if digest not in cache:
+                is_new = digest not in cache
+                if is_new:
                     tried += 1                      # only distinct, new neighbours use up the step's allowance
                 neighbor = screen(applied.graph)
+                if operator_selector is not None:
+                    key_after = (neighbor["excess"] if neighbor.get("excess") is not None else current_key[0], neighbor.get("cost"))
+                    valid = neighbor.get("cost") is not None and neighbor.get("reason") not in ("geometry_rejected", "evaluation_error", "cost_error")
+                    outcome = ("duplicate" if not is_new else "invalid" if not valid
+                               else "incumbent" if incumbent is neighbor
+                               else "improving" if key_after < current_key else "novel")
+                    operator_selector.report(arm, outcome, repairing)
                 if digest in visited or neighbor.get("cost") is None or neighbor.get("reason") in (
                         "geometry_rejected", "evaluation_error", "cost_error"):
                     continue
@@ -411,6 +431,7 @@ def search_topology(
         "counts": dict(counts), "operator_rejections": dict(operator_rejections),
         "best": best, "best_geometry": gg.to_geometry(graphs[best["candidate_sha256"]], domain) if best else None,
         "finalists": finalist_records,
+        "operator_stats": operator_selector.stats() if operator_selector is not None else None,
         "repair_pool": sorted((public(r) for r in repair_pool.values()), key=lambda r: (r["excess"], r["cost"], r["candidate_sha256"])),
         "evaluations_replayed": replayed, "solver_calls_spent_this_run": spent, "problem_sha256": problem_sha256,
         "confirmed": sorted((public(r) for r in cache.values() if r["status"] == "confirmed"), key=lambda r: (r["cost"], r["candidate_sha256"])),

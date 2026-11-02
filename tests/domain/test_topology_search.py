@@ -310,3 +310,61 @@ def test_a_failed_evaluation_is_not_checkpointed_so_a_resume_retries_it():
     log = {}
     run(Flaky(), calls=40, evaluations=log, problem_sha256="p")
     assert all(v.get("reason") != "evaluation_error" for k, v in log.items() if k != "__problem__")
+
+
+# ---- adaptive selection inside the search ---------------------------------------------------------------
+
+def selector_run(model, **kwargs):
+    selector = AdaptiveOperatorSelector(DOMAIN)
+    return run(model, operator_selector=selector, **kwargs)
+
+
+def test_the_adaptive_search_reports_what_each_operator_earned_and_stays_within_budget():
+    result = selector_run(Model(), calls=60)
+    stats = result["operator_stats"]
+    assert result["solver_calls_total"] <= 60 and result["certified"] is False
+    assert set(stats) == {"weights", "outcomes"} and stats["outcomes"]
+    used = {arm for arms in stats["outcomes"].values() for arm in arms}
+    assert any(a.startswith("lns:") for a in used) and any(a.startswith("atomic:") for a in used)
+    assert run(Model(), calls=60)["operator_stats"] is None             # not asked for, not reported
+
+
+def test_the_adaptive_search_is_deterministic_and_resumes_to_the_same_result():
+    reference = selector_run(Model(), calls=60, evaluations={}, problem_sha256="a")
+    assert reference == selector_run(Model(), calls=60, evaluations={}, problem_sha256="a") | {}
+    saved = _interrupt_after_with(AdaptiveOperatorSelector(DOMAIN), 8)
+    spy = Recorder()
+    resumed = run(spy, calls=60, evaluations=copy.deepcopy(saved), problem_sha256="a", operator_selector=AdaptiveOperatorSelector(DOMAIN))
+    for key in STABLE + ("operator_stats",):
+        assert resumed[key] == reference[key], key
+    assert not set(spy.keys) & set(saved)
+
+
+def _interrupt_after_with(selector, count):
+    saved = {}
+
+    def checkpoint(current):
+        saved["log"] = json.loads(json.dumps(current))
+        if len([k for k in current if k != "__problem__"]) >= count:
+            raise Interrupted
+    with pytest.raises(Interrupted):
+        run(Model(), calls=60, evaluations={}, on_checkpoint=checkpoint, problem_sha256="a", operator_selector=selector)
+    return saved["log"]
+
+
+from src.application.use_cases.optimizer_topology_run import STRATEGIES, strategy_options  # noqa: E402
+from src.domain.spat.geometry_operators import OperatorConstraints  # noqa: E402
+from src.domain.spat.operator_selection import AdaptiveOperatorSelector  # noqa: E402
+
+
+def test_each_strategy_maps_to_the_options_that_define_it():
+    opts = {s: strategy_options(s, DOMAIN, OperatorConstraints()) for s in STRATEGIES}
+    assert opts["descent"] == {"uphill_moves": 0, "propose_repair": None, "max_repair_starts": 0}
+    assert opts["uphill"] == {"propose_repair": None, "max_repair_starts": 0} and opts["opportunistic"] == {}
+    assert opts["adaptive"]["operator_selector"].arms == tuple(a for a in ARMS_ALL if not a.startswith("lns:"))
+    assert any(a.startswith("lns:") for a in opts["alns"]["operator_selector"].arms)
+    with pytest.raises(ValueError):
+        strategy_options("annealing", DOMAIN, OperatorConstraints())
+
+
+from src.domain.spat.operator_selection import ARMS as ARMS_ALL  # noqa: E402

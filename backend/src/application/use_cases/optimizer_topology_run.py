@@ -17,10 +17,34 @@ from typing import Any
 from src.domain.spat import geometry_seeds
 from src.domain.spat.geometry_cost import evaluate_geometry_cost
 from src.domain.spat.geometry_operators import OperatorConstraints
+from src.domain.spat.operator_selection import AdaptiveOperatorSelector
 from src.domain.spat.optimizer_constraints import OptimizerGeometryRejected
 from src.domain.spat.optimizer_topology_search import search_topology
-from src.infrastructure.calculations import optimizer_evaluation, safety_criteria
+from src.infrastructure.calculations import optimizer_evaluation, safety_criteria, solver_evaluation
 from src.infrastructure.calculations.potential_engine_client import _file_sha256, as_soil, soil_record
+
+
+STRATEGIES = ("descent", "uphill", "opportunistic", "adaptive", "alns")
+
+
+def strategy_options(strategy: str, domain: dict[str, Any], constraints: OperatorConstraints) -> dict[str, Any]:
+    """Search options for each strategy, so they can be compared on the same budget.
+
+    descent        strict descent: only improving moves, no repair pool descents
+    uphill         adds moves through costlier or unevaluated states
+    opportunistic  adds the repair pool, on budget the descents leave unused, with additive moves while violating
+    adaptive       opportunistic, but moves are drawn by adaptive weights over the atomic operators
+    alns           adaptive weights over the atomic operators and the destroy-and-repair large-neighbourhood moves
+    """
+    if strategy not in STRATEGIES:
+        raise ValueError(f"strategy must be one of {', '.join(STRATEGIES)}")
+    if strategy == "descent":
+        return {"uphill_moves": 0, "propose_repair": None, "max_repair_starts": 0}
+    if strategy == "uphill":
+        return {"propose_repair": None, "max_repair_starts": 0}
+    if strategy == "opportunistic":
+        return {}
+    return {"operator_selector": AdaptiveOperatorSelector(domain, constraints, use_lns=(strategy == "alns"))}
 
 
 def utilization_ratio(result: dict[str, Any]) -> float | None:
@@ -73,16 +97,22 @@ def run_topology_optimizer(
     max_steps_per_start: int = 30,
     finalists: int = 3,
     repair_share: float = 0.0,
+    strategy: str = "opportunistic",
+    max_repair_starts: int | None = None,
     checkpoint_path: str | os.PathLike[str] | None = None,
     checkpoint_every: int = 1,
 ) -> dict[str, Any]:
     """Run the search. With `checkpoint_path`, every new solver verdict is saved and a later call with the same
     problem resumes from the file: nothing already evaluated is evaluated again."""
-    starts = geometry_seeds.generate_seeds(domain, seed=seed, count=seed_count, initial=initial_geometry)
+    # A seed can pass the geometry rules and still be refused by the solver (a piece shorter than five radii once it
+    # is discretised). Ask for a few extra and keep the first `seed_count` the solver accepts, so every strategy
+    # starts from the same valid seeds.
+    candidates = geometry_seeds.generate_seeds(domain, seed=seed, count=seed_count + 3, initial=initial_geometry)
+    starts = [s for s in candidates if not solver_evaluation.discretization_violations(s.geometry, soil, settings)][:seed_count]
     problem = problem_fingerprint(
         domain=domain, rate_card=rate_card, soil=soil_record(as_soil(soil)), injection_a=injection_a, exposure=asdict(exposure),
         standards=standards, settings=settings, seed=seed, seeds=[s.graph_hash for s in starts], constraints=asdict(constraints),
-        search=[neighbors_per_step, patience, uphill_moves, uphill_tolerance, max_steps_per_start, finalists, repair_share],
+        search=[neighbors_per_step, patience, uphill_moves, uphill_tolerance, max_steps_per_start, finalists, repair_share, strategy, max_repair_starts],
         engine=[getattr(client, "quadrature_tolerance", None), _file_sha256(getattr(client, "executable", "")) if getattr(client, "executable", None) else None])
     evaluations = load_checkpoint(checkpoint_path) if checkpoint_path else {}
     pending = {"n": 0}
@@ -106,14 +136,19 @@ def run_topology_optimizer(
             return {"status": "REJECTED", "reason": "geometry_rejected", "detail": str(rejected), "charged": False}
         return {"status": result["FeasibilityStatus"], "ratio": utilization_ratio(result), "feasible": result["Feasible"]}
 
+    options = {"uphill_moves": uphill_moves, **strategy_options(strategy, domain, constraints)}   # the strategy decides
+    if propose_operator is not None:
+        options["propose_operator"] = propose_operator
+    if max_repair_starts is not None:
+        options["max_repair_starts"] = max_repair_starts
     result = search_topology(
         domain=domain, seeds=starts, evaluate_cost=evaluate_cost, evaluate_electrical=evaluate_electrical, seed=seed,
         max_solver_calls=max_solver_calls, constraints=constraints, neighbors_per_step=neighbors_per_step, patience=patience,
-        uphill_moves=uphill_moves, uphill_tolerance=uphill_tolerance,
-        **({"propose_operator": propose_operator} if propose_operator is not None else {}), max_steps_per_start=max_steps_per_start, finalists=finalists,
-        evaluations=evaluations, on_checkpoint=on_checkpoint, problem_sha256=problem, repair_share=repair_share)
+        uphill_tolerance=uphill_tolerance, max_steps_per_start=max_steps_per_start, finalists=finalists,
+        evaluations=evaluations, on_checkpoint=on_checkpoint, problem_sha256=problem, repair_share=repair_share, **options)
     if checkpoint_path:
         save_checkpoint(checkpoint_path, evaluations)
     result["seeds"] = [{"family": s.family, "candidate_sha256": s.graph_hash} for s in starts]
+    result["seeds_dropped_by_solver_check"] = len(candidates) - len(starts) if len(candidates) > seed_count else 0
     result["cost_currency"] = rate_card["currency"]
     return result
