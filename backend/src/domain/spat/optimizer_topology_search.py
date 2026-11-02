@@ -119,6 +119,9 @@ def search_topology(
     refine_share: float = 0.0,
     refine_elites: int = 3,
     refine_evaluations: int = 24,
+    refine_leftover: bool = False,
+    checkpoint_fraction: float | None = None,
+    stall_window: float = 0.25,
 ) -> dict[str, Any]:
     """Descend from each seed.
 
@@ -144,6 +147,14 @@ def search_topology(
     for a parametric step: the `refine_elites` cheapest, distinct confirmed topologies each get their rod
     lengths tuned by the OP-06 local search (`parametric_refinement`), through the same fidelity controller
     and the same budget, and what it confirms competes for the finalist seats. Unused share passes on.
+    Two other policies share the same refinement step (OPT-014B). `refine_leftover` holds nothing back: the search
+    has absolute priority and refinement only gets what it leaves when it ends by itself (no start left, no
+    repairable design), never when the budget ran out. `checkpoint_fraction` (say 0.8) stops the search once
+    that fraction of the budget is spent and then applies a fixed rule: if the incumbent improved during the last
+    `stall_window` of the calls spent, exploration is still paying and the rest goes to more descents from the
+    elite designs; otherwise the rest goes to refinement. The rule reads only what has happened so far.
+    In every policy the finalists are chosen and checked at the finest level afterwards, so a refined design
+    never replaces a validated one without that check.
     """
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise ValueError("seed must be an integer")
@@ -159,6 +170,8 @@ def search_topology(
         raise ValueError("max_solver_calls must be a positive integer")
     if not 0 <= refine_share < 1:
         raise ValueError("refine_share must be in [0, 1)")
+    if checkpoint_fraction is not None and (not 0 < checkpoint_fraction < 1 or refine_share > 0):
+        raise ValueError("checkpoint_fraction must be in (0, 1) and is not combined with refine_share")
     total: float = float(time_budget_s) if time_mode else max_solver_calls     # the budget, in calls or in seconds
     # Calls held back for the finest check. It is more than `finalists` because the check can demote a design
     # and the next one then needs its own call: with exactly `finalists` calls, three demotions left nothing.
@@ -179,6 +192,7 @@ def search_topology(
     exhausted = False
     uphill_in_path = 0      # non-improving moves taken so far on the current start's path
     phase = "search"      # search -> refine -> final; each phase leaves the later ones their share
+    improvements: list[float] = []     # budget used at each new incumbent, for the checkpoint rule
     start_cap: float | None = None   # absolute amount of budget used that a single start may not pass
     started = clock()
     durations: dict[str, list[float]] = {}
@@ -203,7 +217,11 @@ def search_topology(
 
     finalists_hold_at_start = finalists_hold()
     refine_hold = 0.0     # fixed when the search starts
-    if refine_share > 0:
+    if checkpoint_fraction is not None:
+        refine_hold = max(0.0, total * (1 - checkpoint_fraction) - finalists_hold())
+        if not time_mode:
+            refine_hold = int(refine_hold)
+    elif refine_share > 0:
         refine_hold = refine_share * (total - finalists_hold())
         if not time_mode:
             refine_hold = int(refine_hold)
@@ -315,6 +333,7 @@ def search_topology(
         counts["confirmed"] += 1
         if incumbent is None or record["cost"] < incumbent["cost"]:
             incumbent = record
+            improvements.append(used())
             if uphill_in_path:
                 counts["incumbents_found_after_uphill_moves"] += 1
         return record
@@ -454,7 +473,13 @@ def search_topology(
     phase = "refine"
     exhausted = False
     refinements: list[dict[str, Any]] = []
-    if refine_share > 0 and refine_elites > 0:
+    explore = False
+    if checkpoint_fraction is not None:
+        stopped_at = used()
+        explore = any(at > stopped_at * (1 - stall_window) for at in improvements)
+        counts["checkpoint_explored" if explore else "checkpoint_refined"] += 1
+    if (refine_share > 0 or refine_leftover or checkpoint_fraction is not None) and refine_elites > 0 \
+            and not (refine_leftover and search_exhausted):
         elites: list[dict[str, Any]] = []
         for record in sorted((r for r in cache.values() if r["status"] == "confirmed"), key=lambda r: (r["cost"], r["candidate_sha256"])):
             mine = cells(graphs[record["candidate_sha256"]])
@@ -468,6 +493,14 @@ def search_topology(
             start_cap = used() + share(left, len(elites) - index)
             best_before = incumbent["cost"] if incumbent else None
             confirmed_before = counts["confirmed"]
+            if explore:         # exploration is still paying: more descents from the elites instead of rod tuning
+                descended.add(elite["candidate_sha256"])
+                descend(elite)
+                counts["descents_from_elites"] += 1
+                if incumbent is not None and (best_before is None or incumbent["cost"] < best_before - 1e-9):
+                    counts["incumbent_improved_by_exploration"] += 1
+                start_cap = None
+                continue
             outcome = parametric_refinement.refine_rods(
                 graphs[elite["candidate_sha256"]], screen=screen, constraints=constraints, domain=domain,
                 seed=seed + index, max_evaluations=refine_evaluations)

@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "backend"))
 
-STRATEGIES = ("descent", "uphill", "opportunistic", "adaptive", "alns", "alns_refined")
+STRATEGIES = ("descent", "uphill", "opportunistic", "adaptive", "alns", "alns_refined", "alns_opportunistic", "alns_checkpoint")
 RATES = {"currency": "COP", "assumptions": {"trench_width_m": 0.4},
          "rates": {"material.conductor.unspecified": "18000", "material.rod.unspecified": "25000", "excavation.trench": "60000",
                    "installation.conductor": "7000", "installation.rod": "40000", "installation.connection": "15000"}}
@@ -79,6 +79,8 @@ def run_one(job: dict) -> dict:
             "uphill_moves": result["counts"].get("uphill_moves_taken", 0), "repair_starts": result["counts"].get("repair_starts", 0),
             "refinement_starts": result["counts"].get("refinement_starts", 0), "refined_confirmed": result["counts"].get("confirmed_from_refinement", 0),
             "refinement_won": result["counts"].get("incumbent_improved_by_refinement", 0),
+            "explored_won": result["counts"].get("incumbent_improved_by_exploration", 0), "checkpoint_explored": result["counts"].get("checkpoint_explored", 0),
+            "checkpoint_refined": result["counts"].get("checkpoint_refined", 0),
             "planning_failures": result["operator_rejections"].get("planning", 0), "lns": lns, "atomic": atomic,
             "seconds": round(time.perf_counter() - started, 2), "budget_exhausted": result["budget_exhausted"]}
 
@@ -141,10 +143,12 @@ def analyse(rows: list[dict], strategies: tuple[str, ...]) -> dict:
                      "mean_solver_calls": statistics.mean(r["solver_calls"] for r in runs) if runs else None,
                      "mean_time_units": statistics.mean(r["time_units"] for r in runs) if runs else None,
                      "demoted_finalists": sum(r["demoted"] for r in runs),
+                     "refinement_starts": sum(r.get("refinement_starts", 0) for r in runs), "refinement_won": sum(r.get("refinement_won", 0) for r in runs),
+                     "explored_won": sum(r.get("explored_won", 0) for r in runs), "mean_seconds": statistics.mean(r["seconds"] for r in runs) if runs else None,
                      "uphill_moves": sum(r["uphill_moves"] for r in runs), "repair_starts": sum(r["repair_starts"] for r in runs)}
             if strategy != "descent":
                 entry["versus_descent"] = paired(subset_keys, "descent", strategy)
-            if strategy == "alns_refined" and "alns" in strategies:
+            if strategy.startswith("alns_") and "alns" in strategies:
                 entry["versus_alns"] = paired(subset_keys, "alns", strategy)
             table[strategy] = entry
         ranks = {s: [] for s in strategies}
@@ -161,7 +165,7 @@ def analyse(rows: list[dict], strategies: tuple[str, ...]) -> dict:
         out["scenarios"][scenario] = summarise([k for k in keys if k[0] == scenario])
     out["overall"] = summarise(keys)
     moves = {s: {"lns": {"used": 0, "incumbent": 0, "improving": 0, "novel": 0}, "atomic": {"used": 0, "incumbent": 0, "improving": 0, "novel": 0}, "planning_failures": 0}
-             for s in ("adaptive", "alns", "alns_refined")}
+             for s in ("adaptive", "alns", "alns_refined", "alns_opportunistic", "alns_checkpoint")}
     for r in rows:
         if r["strategy"] in moves:
             for kind in ("lns", "atomic"):

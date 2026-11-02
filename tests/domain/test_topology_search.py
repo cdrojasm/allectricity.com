@@ -541,3 +541,60 @@ def test_the_refining_search_stays_inside_the_same_budget_and_reports_what_it_di
     assert refined["certified"] is False and refined["reserved_for_finalists"] == plain["reserved_for_finalists"]
     assert refined["budget"]["refine_hold"] == int(0.25 * (80 - refined["reserved_for_finalists"]))
     assert plain["refinements"] == [] and "refinement_starts" not in plain["counts"]
+
+
+# ---- OPT-014B: refinement policies that compete with exploration for the same budget ---------------------------------
+
+def test_the_opportunistic_policy_holds_nothing_back_and_never_refines_on_an_exhausted_budget():
+    tight = run(Model(), calls=40, refine_leftover=True)
+    assert tight["budget"]["refine_hold"] == 0 and tight["solver_calls_total"] <= 40
+    if tight["budget_exhausted"]:
+        assert tight["refinements"] == []                                  # the search used its budget: refinement gets none of it
+    assert run(Model(), calls=40, refine_leftover=True) == tight           # deterministic
+
+
+def test_the_checkpoint_rule_reads_only_what_has_happened_and_either_explores_or_refines():
+    results = [run(Model(), calls=calls, checkpoint_fraction=0.8) for calls in (40, 80, 150)]
+    for result in results:
+        decided = result["counts"].get("checkpoint_explored", 0) + result["counts"].get("checkpoint_refined", 0)
+        assert decided == 1 and result["solver_calls_total"] <= result["max_solver_calls"] and result["certified"] is False
+        assert result["budget"]["refine_hold"] > 0
+    assert run(Model(), calls=80, checkpoint_fraction=0.8) == results[1]
+    with pytest.raises(ValueError):
+        run(Model(), checkpoint_fraction=0.8, refine_share=0.2)
+    with pytest.raises(ValueError):
+        run(Model(), checkpoint_fraction=1.0)
+
+
+def test_every_policy_keeps_the_finest_check_and_the_same_total_budget():
+    from src.application.use_cases.optimizer_topology_run import strategy_options
+    from src.domain.spat.geometry_operators import OperatorConstraints
+    assert strategy_options("alns_opportunistic", DOMAIN, OperatorConstraints())["refine_leftover"] is True
+    assert strategy_options("alns_checkpoint", DOMAIN, OperatorConstraints())["checkpoint_fraction"] == 0.8
+    for extra in ({"refine_share": 0.25}, {"refine_leftover": True}, {"checkpoint_fraction": 0.8}):
+        result = run(Model(), calls=80, **extra)
+        assert result["solver_calls_total"] <= 80 and all(f["level"] == "L3" for f in result["finalists"])
+
+
+def test_pure_alns_is_the_default_and_no_experimental_policy_changes_another_one():
+    import inspect
+    from src.application.use_cases import optimizer_topology_run as topology_run
+    assert inspect.signature(topology_run.run_topology_optimizer).parameters["strategy"].default == "alns"
+    assert topology_run.DEFAULT_STRATEGY == "alns" and set(topology_run.EXPERIMENTAL_STRATEGIES) <= set(topology_run.STRATEGIES)
+    off = topology_run.strategy_options("alns", DOMAIN, OperatorConstraints())
+    assert not {"refine_share", "refine_leftover", "checkpoint_fraction"} & set(off)
+    # With every refinement switch off the search is the one it always was, whatever the other policies do in between.
+    reference = run(Model(), calls=80)
+    run(Model(), calls=80, refine_share=0.25)
+    run(Model(), calls=80, refine_leftover=True)
+    run(Model(), calls=80, checkpoint_fraction=0.8)
+    assert run(Model(), calls=80) == reference
+    assert run(Model(), calls=80, refine_share=0.0, refine_leftover=False, checkpoint_fraction=None) == reference
+    assert reference["refinements"] == [] and reference["budget"]["refine_hold"] == 0
+
+
+def test_the_experimental_policies_account_for_every_call_in_the_one_budget():
+    for extra in ({"refine_share": 0.25}, {"refine_leftover": True}, {"checkpoint_fraction": 0.8}):
+        model = Model()
+        result = run(model, calls=60, **extra)
+        assert len(model.calls) == result["solver_calls_total"] <= 60

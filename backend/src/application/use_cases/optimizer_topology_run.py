@@ -25,7 +25,11 @@ from src.infrastructure.calculations import optimizer_evaluation, safety_criteri
 from src.infrastructure.calculations.potential_engine_client import _file_sha256, as_soil, soil_record
 
 
-STRATEGIES = ("descent", "uphill", "opportunistic", "adaptive", "alns", "alns_refined")
+STRATEGIES = ("descent", "uphill", "opportunistic", "adaptive", "alns", "alns_refined", "alns_opportunistic", "alns_checkpoint")
+DEFAULT_STRATEGY = "alns"     # the official policy: pure ALNS, no parametric refinement
+# alns_refined, alns_opportunistic and alns_checkpoint are experimental (OPT-014/014B): kept for reproducible benchmarks,
+# not recommended and not part of the product flow. See docs/EXPERIMENTO_OPT014_REFINAMIENTO.md.
+EXPERIMENTAL_STRATEGIES = ("alns_refined", "alns_opportunistic", "alns_checkpoint")
 REFINE_SHARE = 0.25     # of the budget left after the finalists' reserve; what the refined strategy holds back for the parametric step
 
 
@@ -38,6 +42,8 @@ def strategy_options(strategy: str, domain: dict[str, Any], constraints: Operato
     opportunistic  adds the repair pool, on budget the descents leave unused, with additive moves while violating
     adaptive       opportunistic, but moves are drawn by adaptive weights over the atomic operators
     alns           adaptive weights over the atomic operators and the destroy-and-repair large-neighbourhood moves
+    alns_opportunistic  alns, then rod tuning of the elites only on budget the search leaves unused (OPT-014B, policy C)
+    alns_checkpoint     alns until 80% of the budget, then a fixed rule picks more exploration or rod tuning (policy D)
     alns_refined   alns, with a quarter of the budget held back to tune the rod lengths of the elite topologies (OPT-014);
                    it spends the same total budget as alns, so the two compare on equal footing
     """
@@ -49,8 +55,10 @@ def strategy_options(strategy: str, domain: dict[str, Any], constraints: Operato
         return {"propose_repair": None, "max_repair_starts": 0}
     if strategy == "opportunistic":
         return {}
-    options = {"operator_selector": AdaptiveOperatorSelector(domain, constraints, use_lns=strategy in ("alns", "alns_refined"), scores=selector_scores)}
-    return {**options, "refine_share": REFINE_SHARE} if strategy == "alns_refined" else options
+    options = {"operator_selector": AdaptiveOperatorSelector(domain, constraints, use_lns=strategy.startswith("alns"), scores=selector_scores)}
+    extra = {"alns_refined": {"refine_share": REFINE_SHARE}, "alns_opportunistic": {"refine_leftover": True},
+             "alns_checkpoint": {"checkpoint_fraction": 0.8}}.get(strategy, {})
+    return {**options, **extra}
 
 
 def utilization_ratio(result: dict[str, Any]) -> float | None:
@@ -118,7 +126,7 @@ def run_topology_optimizer(
     max_steps_per_start: int = 30,
     finalists: int = 3,
     repair_share: float = 0.0,
-    strategy: str = "opportunistic",
+    strategy: str = DEFAULT_STRATEGY,
     max_repair_starts: int | None = None,
     selector_scores: dict[str, float] | None = None,
     checkpoint_path: str | os.PathLike[str] | None = None,
