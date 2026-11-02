@@ -273,10 +273,23 @@ def apply_operator(graph: gg.GeometryGraph, operator: Operator, constraints: Ope
     return Applied(result, operator.inverse(graph))
 
 
-def random_operator(graph: gg.GeometryGraph, rng: random.Random) -> Operator:
-    """One plausible operator for the graph; it may still be rejected by `apply_operator`."""
+KINDS = ("add", "remove", "split", "connect", "reconnect", "add_rod", "move_rod", "remove_rod")
+# More copper and more rods lower the touch and step voltages, so a design that violates is repaired by adding.
+REPAIR_WEIGHTS = (4.0, 0.25, 1.0, 4.0, 1.0, 4.0, 1.0, 0.25)
+
+
+def random_repair_operator(graph: gg.GeometryGraph, rng: random.Random) -> Operator:
+    """Like `random_operator`, biased toward adding conductors and rods, for a design that violates."""
+    return random_operator(graph, rng, REPAIR_WEIGHTS)
+
+
+def random_operator(graph: gg.GeometryGraph, rng: random.Random, weights: tuple[float, ...] | None = None) -> Operator:
+    """One plausible operator for the graph; it may still be rejected by `apply_operator`.
+
+    With no weights every kind is equally likely (and the random stream is what it always was).
+    """
     nodes, segments = sorted(graph.nodes()), sorted(graph.segments)
-    kind = rng.choice(("add", "remove", "split", "connect", "reconnect", "add_rod", "move_rod", "remove_rod"))
+    kind = rng.choice(KINDS) if weights is None else rng.choices(KINDS, weights=weights)[0]
     if kind == "add":
         a = rng.choice(nodes)
         return AddSegment(a, gg.point(a[0] + rng.choice((-6, -4, -3, 3, 4, 6)), a[1] + rng.choice((-6, -4, -3, 0, 3, 4, 6))))

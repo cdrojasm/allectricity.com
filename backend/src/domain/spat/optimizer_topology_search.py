@@ -22,6 +22,26 @@ neighbours within `uphill_tolerance` of the current cost, preferring the closest
 the most novel, and never revisiting a state. Solver calls are still spent only on candidates that could
 become the incumbent. An unevaluated state inherits the electrical excess of the last evaluated one.
 
+Three more guarantees. Nothing is promoted on a guess: a design is `confirmed` only after L1 and L2+ both
+returned an electrical verdict, a finalist only after the finest level did, and a design that was skipped,
+unscreened or only costed is never reported as safe. Promising topologies are not lost to a violation:
+violating designs that are cheaper than the incumbent and close to compliant (small excess) go into a
+repair pool that outlives the descent that found them, and spare budget starts descents from them, so a
+cheap design that needs one more conductor still gets its chance. Finalists are chosen for diversity, not
+just cost, so the elite set does not collapse onto one topology.
+
+`repair_share` sets how much of the budget is held back for those repair descents. It defaults to 0, so repair
+only runs on budget the descents leave unused: in the six-seed comparison at 150 calls, holding back 20% or
+35% helped two seeds and hurt four, worse on average, because a repair descent rarely succeeds and the
+descents lose the budget it takes. While the current design violates, moves are biased toward adding
+conductors and rods.
+
+Interruption: every solver verdict is stored in the `evaluations` log the caller passes in, keyed by design
+and level, and `on_checkpoint(log)` is called after each new one. The search is deterministic, so running
+it again with the saved log replays every earlier decision for free: no valid evaluation is repeated and
+the run ends exactly where an uninterrupted one would. Only plain verdicts are logged, never an engine
+session, and a verdict that failed with an error is not logged, so a resume retries it.
+
 The two archives are kept apart on purpose: `l1_candidates` are only screened, `confirmed` passed
 L2+. Nothing here is certified. A pass means no violation was found by sampled searches, so results
 carry `certified: False`. Search ordering is lexicographic on (violation excess, cost), which lets the
@@ -37,7 +57,8 @@ from typing import Any, Callable
 
 from src.domain.spat import geometry_graph as gg
 from src.domain.spat.geometry_seeds import cells
-from src.domain.spat.geometry_operators import OperatorConstraints, OperatorRejected, apply_operator, random_operator
+from src.domain.spat.geometry_operators import (
+    OperatorConstraints, OperatorRejected, apply_operator, random_operator, random_repair_operator)
 
 # Relative cost of one solver call per level, from the benchmark medians (L1 = 1): L2+ about 6.5, L3 about 6.9.
 LEVEL_WEIGHTS = {"L1": 1.0, "L2+": 6.5, "L3": 6.9}
@@ -80,6 +101,15 @@ def search_topology(
     max_steps_per_start: int = 30,
     finalists: int = 3,
     finalist_level: str = "L3",
+    evaluations: dict[str, Any] | None = None,
+    on_checkpoint: Callable[[dict[str, Any]], None] | None = None,
+    problem_sha256: str = "",
+    min_elite_distance: float = 0.2,
+    repair_pool_size: int = 8,
+    repair_excess_limit: float = 1.0,
+    max_repair_starts: int = 6,
+    repair_share: float = 0.0,
+    propose_repair: Callable[[gg.GeometryGraph, random.Random], Any] | None = random_repair_operator,
 ) -> dict[str, Any]:
     """Descend from each seed.
 
@@ -97,8 +127,14 @@ def search_topology(
         raise ValueError("seed must be an integer")
     if isinstance(max_solver_calls, bool) or not isinstance(max_solver_calls, int) or max_solver_calls < 1:
         raise ValueError("max_solver_calls must be a positive integer")
+    log = evaluations if evaluations is not None else {}
+    if log.setdefault("__problem__", problem_sha256) != problem_sha256:
+        raise ValueError("the evaluation log belongs to a different problem; it cannot be resumed here")
+    replayed = spent = 0
     rng = random.Random(seed)
     cache: dict[str, dict[str, Any]] = {}
+    repair_pool: dict[str, dict[str, Any]] = {}
+    descended: set[str] = set()
     graphs: dict[str, gg.GeometryGraph] = {}
     calls: Counter[str] = Counter()
     counts: Counter[str] = Counter()
@@ -113,21 +149,43 @@ def search_topology(
         left = max_solver_calls - (finalists if searching else 0) - sum(calls.values())
         return left if start_cap is None else min(left, start_cap - sum(calls.values()))
 
-    def electrical(level: str, geometry: dict[str, Any]) -> dict[str, Any] | None:
-        """One charged solver call, or None when the budget cannot cover it."""
-        nonlocal exhausted
+    def electrical(level: str, geometry: dict[str, Any], digest: str) -> dict[str, Any] | None:
+        """One charged solver call (or its replay from the log), or None when the budget cannot cover it."""
+        nonlocal exhausted, replayed, spent
         if remaining() < 1:
             if start_cap is None or max_solver_calls - (finalists if searching else 0) - sum(calls.values()) < 1:
                 exhausted = True
             return None
-        try:
-            outcome = evaluate_electrical(level, geometry)
-        except Exception as exc:  # callback boundary: keep the failure as a trace record
-            calls[level] += 1
-            return {"status": "REJECTED", "reason": "evaluation_error", "detail": str(exc), "ratio": None}
+        key = f"{digest}:{level}"
+        if key in log:
+            outcome = log[key]
+            replayed += 1                     # decided exactly as before, without touching the solver
+        else:
+            try:
+                outcome = evaluate_electrical(level, geometry)
+            except Exception as exc:  # callback boundary: keep the failure as a trace record, and retry it on resume
+                calls[level] += 1
+                return {"status": "REJECTED", "reason": "evaluation_error", "detail": str(exc), "ratio": None}
+            if outcome.get("charged", True):
+                spent += 1
+            log[key] = outcome
+            if on_checkpoint is not None:
+                on_checkpoint(log)
         if outcome.get("charged", True):
             calls[level] += 1
         return outcome
+
+    def remember_repairable(record: dict[str, Any]) -> None:
+        """Keep a violating design that is close to compliant and cheaper than the best known: it may be repairable."""
+        excess = record.get("excess")
+        if excess is None or excess > repair_excess_limit:
+            return
+        if incumbent is not None and record["cost"] >= incumbent["cost"]:
+            return
+        repair_pool[record["candidate_sha256"]] = record
+        if len(repair_pool) > repair_pool_size:
+            worst = max(repair_pool.values(), key=lambda r: (r["excess"], r["cost"], r["candidate_sha256"]))
+            del repair_pool[worst["candidate_sha256"]]
 
     def screen(graph: gg.GeometryGraph) -> dict[str, Any]:
         nonlocal incumbent
@@ -148,7 +206,7 @@ def search_topology(
             record.update(status="skipped", reason="cost_dominated")
             counts["skipped_cost_dominated"] += 1
             return record
-        first = electrical("L1", geometry)
+        first = electrical("L1", geometry, digest)
         if first is None:
             cache.pop(digest, None)        # not evaluated for lack of budget: a later start may still try it
             counts["considered"] -= 1
@@ -161,9 +219,10 @@ def search_topology(
             record.update(reason="violated_at_L1", ratio=first.get("ratio"), excess=max(0.0, (first.get("ratio") or 1.0) - 1.0),
                           score=(max(0.0, (first.get("ratio") or 1.0) - 1.0), record["cost"]))
             counts["pruned_at_L1"] += 1
+            remember_repairable(record)
             return record
         record["l1"] = first
-        second = electrical("L2+", geometry)
+        second = electrical("L2+", geometry, digest)
         if second is None:
             cache.pop(digest, None)
             counts["considered"] -= 1
@@ -176,6 +235,7 @@ def search_topology(
             record.update(reason="violated_at_L2+", ratio=second.get("ratio"), excess=max(0.0, (second.get("ratio") or 1.0) - 1.0),
                           score=(max(0.0, (second.get("ratio") or 1.0) - 1.0), record["cost"]))
             counts["rejected_at_L2plus"] += 1
+            remember_repairable(record)
             return record
         record.update(status="confirmed", ratio=second.get("ratio"), excess=0.0, score=(0.0, record["cost"]), reason=None)
         counts["confirmed"] += 1
@@ -209,7 +269,8 @@ def search_topology(
                 attempts += 1
                 try:
                     source = graphs[current["candidate_sha256"]]
-                    applied = apply_operator(source, propose_operator(source, rng), constraints, domain)
+                    proposer = propose_repair if propose_repair is not None and current_key[0] > 0 else propose_operator
+                    applied = apply_operator(source, proposer(source, rng), constraints, domain)
                 except OperatorRejected as rejected:
                     operator_rejections[rejected.kind] += 1
                     continue
@@ -263,12 +324,36 @@ def search_topology(
     # Phase 2: descend from feasible seeds first (cheapest first), then repair the violating ones. Each start gets
     # an equal share of what is left, and a share it does not use passes on to the next.
     starts.sort(key=lambda r: (r["score"][0] > 0, r["score"], r["candidate_sha256"]))
+    repair_reserve = int(repair_share * (max_solver_calls - finalists))     # kept back for phase 3
     for index, record in enumerate(starts):
         if exhausted:
             break
-        left = max_solver_calls - finalists - sum(calls.values())
+        left = max_solver_calls - finalists - repair_reserve - sum(calls.values())
+        if left < 1:
+            break
         start_cap = sum(calls.values()) + max(1, -(-left // (len(starts) - index)))
+        descended.add(record["candidate_sha256"])
         descend(record)
+        start_cap = None
+
+    # Phase 3: spare budget goes to repairing the cheap, nearly compliant violators found along the way.
+    for _ in range(max_repair_starts):
+        if exhausted:
+            break
+        waiting = [r for r in repair_pool.values() if r["candidate_sha256"] not in descended
+                   and (incumbent is None or r["cost"] < incumbent["cost"])]
+        if not waiting:
+            break
+        pick = min(waiting, key=lambda r: (r["excess"], r["cost"], r["candidate_sha256"]))
+        left = max_solver_calls - finalists - sum(calls.values())
+        if left < 1:
+            break
+        start_cap = sum(calls.values()) + max(1, -(-left // min(len(waiting), 3)))
+        descended.add(pick["candidate_sha256"])
+        counts["repair_starts"] += 1
+        confirmed_before = counts["confirmed"]
+        descend(pick)
+        counts["confirmed_from_repair_starts"] += counts["confirmed"] - confirmed_before
         start_cap = None
 
     # Finalists: the cheapest confirmed designs are re-examined; a violation demotes them.
@@ -276,17 +361,39 @@ def search_topology(
     searching = False
     exhausted = False
     finalist_records: list[dict[str, Any]] = []
-    for record in sorted((r for r in cache.values() if r["status"] == "confirmed"), key=lambda r: (r["cost"], r["candidate_sha256"])):
-        if len([f for f in finalist_records if f["status"] == "finalist"]) >= finalists:
-            break
-        outcome = electrical(finalist_level, gg.to_geometry(graphs[record["candidate_sha256"]], domain))
+    confirmed_by_cost = sorted((r for r in cache.values() if r["status"] == "confirmed"), key=lambda r: (r["cost"], r["candidate_sha256"]))
+    survivor_cells: list[set] = []
+    similar: list[dict[str, Any]] = []
+
+    def finalist_check(record: dict[str, Any]) -> bool:
+        """Examine one confirmed design at the finest level; False when the budget is gone."""
+        outcome = electrical(finalist_level, gg.to_geometry(graphs[record["candidate_sha256"]], domain), record["candidate_sha256"])
         if outcome is None:
-            break
+            return False
         verdict = "demoted" if outcome["status"] in ("VIOLATED", "REJECTED") else "finalist"
         finalist_records.append({"candidate_sha256": record["candidate_sha256"], "cost": record["cost"], "status": verdict,
                                  "level": finalist_level, "ratio": outcome.get("ratio")})
         if verdict == "demoted":
             counts["demoted_at_finalist_level"] += 1
+        else:
+            survivor_cells.append(cells(graphs[record["candidate_sha256"]]))
+        return True
+
+    for record in confirmed_by_cost:                        # first pass: cheap AND different from the survivors so far
+        if len(survivor_cells) >= finalists:
+            break
+        mine = cells(graphs[record["candidate_sha256"]])
+        if any(1 - len(mine & other) / len(mine | other) < min_elite_distance for other in survivor_cells):
+            similar.append(record)
+            counts["finalists_skipped_similar"] += 1
+            continue
+        if not finalist_check(record):
+            break
+    for record in similar:                                  # second pass: fill any seats the diversity rule left empty
+        if len(survivor_cells) >= finalists:
+            break
+        if not finalist_check(record):
+            break
 
     survivors = [f for f in finalist_records if f["status"] == "finalist"]
     best = min(survivors, key=lambda f: (f["cost"], f["candidate_sha256"]), default=None)
@@ -304,6 +411,8 @@ def search_topology(
         "counts": dict(counts), "operator_rejections": dict(operator_rejections),
         "best": best, "best_geometry": gg.to_geometry(graphs[best["candidate_sha256"]], domain) if best else None,
         "finalists": finalist_records,
+        "repair_pool": sorted((public(r) for r in repair_pool.values()), key=lambda r: (r["excess"], r["cost"], r["candidate_sha256"])),
+        "evaluations_replayed": replayed, "solver_calls_spent_this_run": spent, "problem_sha256": problem_sha256,
         "confirmed": sorted((public(r) for r in cache.values() if r["status"] == "confirmed"), key=lambda r: (r["cost"], r["candidate_sha256"])),
         "l1_candidates": sorted((public(r) for r in cache.values() if r.get("l1") is not None), key=lambda r: (r["cost"], r["candidate_sha256"])),
         "certified": False,
