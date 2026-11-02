@@ -13,6 +13,7 @@ do not matter. `canonical_hash` covers the normalized network and the normalized
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import math
@@ -163,12 +164,15 @@ def _merge_collinear(segments: frozenset, keep: set[Point]) -> frozenset:
             return frozenset(current)
 
 
+@functools.lru_cache(maxsize=16384)
 def normalize(graph: GeometryGraph) -> GeometryGraph:
+    """Memoized: graphs are immutable, and searches normalize and hash the same graph many times."""
     rod_nodes = graph.rod_nodes()
     noded = _cut(graph.segments, rod_nodes)
     return GeometryGraph(graph.site, _merge_collinear(noded, rod_nodes), graph.rods)
 
 
+@functools.lru_cache(maxsize=16384)
 def noded(graph: GeometryGraph) -> GeometryGraph:
     """Cut at crossings and junctions but keep every node: the working form operators act on."""
     return GeometryGraph(graph.site, _cut(graph.segments, graph.rod_nodes()), graph.rods)
@@ -215,6 +219,7 @@ def canonical_form(graph: GeometryGraph) -> dict:
             "rods": [[node[0], node[1], length, m] for node, length, m in sorted(n.rods)]}
 
 
+@functools.lru_cache(maxsize=16384)
 def canonical_hash(graph: GeometryGraph) -> str:
     """Same for every drawing of the same network on the same site."""
     return hashlib.sha256(_json(canonical_form(graph)).encode()).hexdigest()
