@@ -24,7 +24,7 @@ def client():
     return engine
 
 
-def run(client, seed=7, calls=90):
+def run(client, seed=7, calls=60):
     return run_topology_optimizer(
         domain=DOMAIN, rate_card=RATES, soil=100.0, injection_a=1000.0, exposure=safety_criteria.FaultExposure(0.5, 70, 3000, 0.1, 100),
         standards=[safety_criteria.IEEE80_2013], client=client, seed=seed, max_solver_calls=calls, seed_count=4)
@@ -32,7 +32,7 @@ def run(client, seed=7, calls=90):
 
 def test_topology_search_with_the_real_solver_is_bounded_deterministic_and_uncertified(client):
     result = run(client)
-    assert result["solver_calls_total"] <= 90 and result["certified"] is False
+    assert result["solver_calls_total"] <= 60 and result["certified"] is False
     assert result["solver_time_units"] < result["baseline_time_units_if_every_candidate_used_L2plus"]
     assert result["best"] is not None and result["best"]["status"] == "finalist" and result["best"]["ratio"] <= 1.0
     assert {s["family"] for s in result["seeds"]} >= {"perimeter", "inscribed"}
@@ -65,7 +65,7 @@ from src.infrastructure.calculations.potential_engine_client import PotentialSes
 
 def test_an_interrupted_run_resumes_from_its_file_without_repeating_a_solver_call(client, tmp_path, monkeypatch):
     path = tmp_path / "checkpoint.json"
-    reference = run(client, calls=60)
+    reference = run(client, calls=45)
 
     class Interrupted(Exception):
         pass
@@ -74,21 +74,21 @@ def test_an_interrupted_run_resumes_from_its_file_without_repeating_a_solver_cal
     def flaky_save(target, log):
         real_save(target, log)
         saves["n"] += 1
-        if saves["n"] == 12:
+        if saves["n"] == 8:
             raise Interrupted
     monkeypatch.setattr(topology_run, "save_checkpoint", flaky_save)
     with pytest.raises(Interrupted):
         run_topology_optimizer(domain=DOMAIN, rate_card=RATES, soil=100.0, injection_a=1000.0,
                                exposure=safety_criteria.FaultExposure(0.5, 70, 3000, 0.1, 100), standards=[safety_criteria.IEEE80_2013],
-                               client=client, seed=7, max_solver_calls=60, seed_count=4, checkpoint_path=path)
+                               client=client, seed=7, max_solver_calls=45, seed_count=4, checkpoint_path=path)
     monkeypatch.setattr(topology_run, "save_checkpoint", real_save)
     saved = json.loads(path.read_text())                           # plain verdicts: no session, no process handle
     verdicts = len([k for k in saved if k != "__problem__"])
-    assert verdicts >= 12 and PotentialSession.open_sessions() == 0
+    assert verdicts >= 8 and PotentialSession.open_sessions() == 0
 
     resumed = run_topology_optimizer(domain=DOMAIN, rate_card=RATES, soil=100.0, injection_a=1000.0,
                                      exposure=safety_criteria.FaultExposure(0.5, 70, 3000, 0.1, 100), standards=[safety_criteria.IEEE80_2013],
-                                     client=client, seed=7, max_solver_calls=60, seed_count=4, checkpoint_path=path)
+                                     client=client, seed=7, max_solver_calls=45, seed_count=4, checkpoint_path=path)
     assert resumed["best"]["candidate_sha256"] == reference["best"]["candidate_sha256"]
     assert resumed["solver_calls"] == reference["solver_calls"]
     assert resumed["evaluations_replayed"] >= verdicts

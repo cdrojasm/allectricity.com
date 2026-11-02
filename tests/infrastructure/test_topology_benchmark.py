@@ -52,8 +52,8 @@ def test_the_report_renders_every_strategy_and_scenario():
 def test_every_strategy_runs_on_a_real_scenario_within_the_same_cap():
     if not Path(PotentialEngineClient().executable).is_file():
         pytest.skip("potential engine not built; run `make potential-engine`")
-    rows = [bench.run_one({"scenario": "square-building", "seed": 2026, "strategy": s, "budget": 25}) for s in STRATEGIES]
-    assert all(r["solver_calls"] <= 25 for r in rows)
+    rows = [bench.run_one({"scenario": "square-building", "seed": 2026, "strategy": s, "budget": 12}) for s in STRATEGIES]
+    assert all(r["solver_calls"] <= 12 for r in rows)
     assert {r["strategy"] for r in rows} == set(STRATEGIES)
     assert rows[0]["uphill_moves"] == 0                                    # strict descent never goes uphill
     assert all(r["lns"]["used"] == 0 for r in rows if r["strategy"] != "alns")

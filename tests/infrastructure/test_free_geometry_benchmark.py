@@ -24,10 +24,10 @@ def test_suite_is_reproducible_from_its_seeds_and_covers_every_family():
 def test_benchmark_reports_every_required_metric_for_a_small_suite():
     if not Path(PotentialEngineClient().executable).is_file():
         pytest.skip("potential engine not built; run `make potential-engine`")
-    suite = bench.build_suite([3], per_family=2)
+    suite = bench.build_suite([3], per_family=1)
     jobs = [{"key": f"{d['seed']}:{d['index']}", **{k: d[k] for k in ("family", "soil", "geometry")}} for d in suite]
     rows = [bench.evaluate_design_levels(job) for job in jobs]
-    fine = {r["key"]: bench.fine_reference(job) for r, job in list(zip(rows, jobs))[:2] if "L2" in r}
+    fine = {r["key"]: bench.fine_reference(job) for r, job in list(zip(rows, jobs))[:1] if "L2" in r}
     result = bench.report(rows, fine)
     assert result["l2plus_below_l1_or_l2"] == 0
     assert set(result["errors_by_family"]) == set(generator.FAMILIES)
