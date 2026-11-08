@@ -30,6 +30,9 @@ help:
 	  '  migrate        Run database migrations' \
 	  '  create-admin   Create the local admin user' \
 	  '  smoke-auth     Run the authentication smoke check' \
+	  '  smoke-ui-seed  Create one local test user per profile (dev only) in app/.env.smoke-ui' \
+	  '  smoke-ui       Browser smoke test through the GUI, one user per profile (SMOKE_* env vars)' \
+	  '  smoke-ui-sweep Delete leftover zz-smoke-* projects through the GUI' \
 	  '  smoke-local    Verify frontend, health per component and templates (temporary viewer)' \
 	  '  templates      Regenerate the soil-resistivity templates seeded into MinIO' \
 	  '  sync-prompts   Publish new Langfuse prompt versions with the staging label' \
@@ -105,3 +108,15 @@ smoke-local:
 templates:
 	$(COMPOSE) run --rm --no-deps -v "$(CURDIR):/workspace" -w /workspace --entrypoint python document-worker scripts/generate_measurement_templates.py
 	$(COMPOSE) up -d --force-recreate minio-init
+
+# GUI smoke test: logs in as each profile from SMOKE_<ROLE>_EMAIL/_PASSWORD and drives the real UI.
+# Against a non-local URL it also needs SMOKE_CONFIRM_REMOTE=yes. ARGS narrows the run (e.g. ARGS='-g "ciclo"').
+.PHONY: smoke-ui-seed smoke-ui smoke-ui-sweep
+smoke-ui-seed:
+	node app/smoke-ui/seed-local-users.mjs
+
+smoke-ui:
+	cd app && npx playwright test -c smoke-ui/playwright.smoke.config.js --grep-invert @sweep $(ARGS)
+
+smoke-ui-sweep:
+	cd app && npx playwright test -c smoke-ui/playwright.smoke.config.js --grep @sweep $(ARGS)

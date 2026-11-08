@@ -11,3 +11,5 @@ services/potential_engine/build/
 dist/
 test-results/
 playwright-report/
+
+app/.env.smoke-ui
