@@ -532,7 +532,7 @@ class ArtifactWorkspace:
         try:
             normalized = GroundingArtifactRequest.model_validate(self.draft).model_dump(mode="json")
             if normalized.get("schema_version") == "1.0":
-                for key in ("buildings", "networks", "electrodes"):
+                for key in ("buildings", "networks", "electrodes", "connections"):
                     normalized.pop(key, None)
             else:
                 normalized.pop("geometry", None)
