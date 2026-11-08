@@ -281,6 +281,17 @@ def area_grid(geometry: dict, spacing_x_m: float, spacing_y_m: float, areas: lis
                    for x, spans in sorted(along_y.items()) for a, b in _merge_spans(spans)]
     for polygon, x_min, x_max, y_min, y_max in pieces:
         for a, b in zip(polygon, polygon[1:] + polygon[:1]):
+            # An axis-parallel edge that sticks out of the bounds is clipped to them, not dropped.
+            if abs(a[1] - b[1]) <= TOLERANCE_M and y_min - TOLERANCE_M <= a[1] <= y_max + TOLERANCE_M:
+                low, high = max(min(a[0], b[0]), x_min), min(max(a[0], b[0]), x_max)
+                if high - low > TOLERANCE_M:
+                    conductors.append({"start": {"x": low, "y": a[1]}, "end": {"x": high, "y": a[1]}})
+                continue
+            if abs(a[0] - b[0]) <= TOLERANCE_M and x_min - TOLERANCE_M <= a[0] <= x_max + TOLERANCE_M:
+                low, high = max(min(a[1], b[1]), y_min), min(max(a[1], b[1]), y_max)
+                if high - low > TOLERANCE_M:
+                    conductors.append({"start": {"x": a[0], "y": low}, "end": {"x": a[0], "y": high}})
+                continue
             if (x_min - TOLERANCE_M <= a[0] <= x_max + TOLERANCE_M and
                     y_min - TOLERANCE_M <= a[1] <= y_max + TOLERANCE_M and
                     x_min - TOLERANCE_M <= b[0] <= x_max + TOLERANCE_M and
