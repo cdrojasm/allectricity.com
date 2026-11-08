@@ -1,6 +1,8 @@
 """Fidelity controller and topological search, against a made-up electrical model (no solver)."""
 
 import functools
+import threading
+import time
 
 import pytest
 from src.domain.spat import geometry_graph as gg, geometry_seeds as seeds
@@ -54,6 +56,41 @@ def test_search_improves_on_the_best_feasible_seed_and_never_claims_certificatio
     assert result["best"]["cost"] <= min(feasible_seeds)
     assert result["best"]["ratio"] <= 1.0 + 1e-9
     assert result == run(Model())                 # deterministic for a seed
+
+
+def test_parallel_finalist_checks_overlap_but_keep_the_sequential_result_and_budget():
+    class ConcurrentModel(Model):
+        def __init__(self):
+            super().__init__()
+            self.lock = threading.Lock()
+            self.active = 0
+            self.max_active = 0
+
+        def electrical(self, level, geometry):
+            if level == "L3":
+                with self.lock:
+                    self.active += 1
+                    self.max_active = max(self.max_active, self.active)
+                time.sleep(0.02)
+                try:
+                    return super().electrical(level, geometry)
+                finally:
+                    with self.lock:
+                        self.active -= 1
+            return super().electrical(level, geometry)
+
+    sequential = run(Model(), calls=60, parallel_workers=1)
+    concurrent_model = ConcurrentModel()
+    parallel = run(concurrent_model, calls=60, parallel_workers=3)
+    for key in STABLE:
+        assert parallel[key] == sequential[key], key
+    assert concurrent_model.max_active > 1
+    assert parallel["solver_calls_total"] <= 60
+
+
+def test_parallel_finalist_mode_rejects_invalid_worker_counts():
+    with pytest.raises(ValueError, match="parallel_workers"):
+        run(Model(), parallel_workers=0)
 
 
 def test_the_fidelity_controller_escalates_only_what_passes_and_skips_what_cannot_win():

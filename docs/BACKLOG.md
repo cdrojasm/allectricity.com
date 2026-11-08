@@ -87,3 +87,24 @@ La física es común (calentamiento adiabático durante la falla). Según la nor
 ## Pendientes importantes postergados
 
 - **Firma independiente de la validación numérica:** coordinar una revisión con un ingeniero competente de los casos, tolerancias, transcripciones de IEEE 80 y limitaciones documentadas. Es importante antes de presentar resultados como base de una decisión de ingeniería, pero se posterga porque no es fácilmente realizable ahora. Mientras siga pendiente, los resultados son exploratorios y no se debe declarar cumplimiento ni emitir diseños aprobados.
+
+## Continuación del optimizador topológico (2026-11-02)
+
+Este bloque registra el estado de la lista de tareas `OPT-NNN` compartida para continuarla en otra sesión. Sus IDs son distintos de `OP-NN`, que pertenecen al [backlog de optimización de diseño](BACKLOG_OPTIMIZADOR.md).
+
+| Id | Estado al 2026-11-02 | Avance y siguiente paso |
+|---|---|---|
+| OPT-012 | ✅ Implementado | Archivo élite JSON persistente, ligado al hash del contexto; valida el hash canónico, guarda solo finalistas L3 admitidos y reutiliza candidatos como semillas únicamente si coincide el contexto. Pruebas de integridad y de carga en una corrida. Código: `backend/src/application/use_cases/optimizer_topology_run.py`. |
+| OPT-013 | ◐ Parcial | Checkpoints y presupuestos existentes se mantienen. Se habilitó `parallel_workers` para validaciones L3 de finalistas cuando el presupuesto es por llamadas; ALNS y el presupuesto por tiempo siguen secuenciales. Mantener ese límite explícito o ampliar el paralelismo con pruebas de determinismo y presupuesto. Diseño: `docs/OPTIMIZER_PARALLELISM.md`. |
+| OPT-014 | ✅ Evaluado; no activar | El refinamiento paramétrico sigue experimental y no es la política oficial: su benchmark encontró mayor costo que ALNS puro. Ver `docs/EXPERIMENTO_OPT014_REFINAMIENTO.md`. |
+| OPT-015 | ⏸ En espera por dependencia | No se implementaron sensibilidades adjuntas. La puerta de entrada depende de aprobar OPT-016/IPOPT y de demostrar que la búsqueda actual no cumple objetivos. Se añadió una utilidad diagnóstica genérica por diferencias finitas (`backend/src/domain/spat/optimizer_sensitivity.py`), aún sin integración al flujo de optimización. |
+| OPT-016 | ⏸ En espera por criterio del proyecto | No integrar SQP/IPOPT mientras el experimento mantenga ALNS como política oficial y no se justifique la puerta de entrada descrita en `docs/BACKLOG_OPTIMIZADOR.md`. Reconsiderar tras datos nuevos de OPT-006/009 o una necesidad de variables continuas. |
+| OPT-017 | ✅ Benchmark integral ejecutado | 192 corridas: 4 escenarios × 6 semillas × 8 estrategias, presupuesto 150 y 15 workers. Datos: `services/potential_engine/validation/benchmark-topology-optimizer-full-macos-arm64.json`; resumen y límites de interpretación: `docs/OPTIMIZER_BENCHMARK_OPT017.md`. ALNS conserva el menor costo medio; la muestra no demuestra por sí sola generalización a otros sitios. |
+| OPT-018 | ⏭ Excluido de esta tanda | No implementar; se dejó fuera de alcance por instrucción del usuario. |
+
+### Verificación pendiente para retomar
+
+- `make lint`: pasó.
+- Pruebas focalizadas de optimización: 70 pasaron con 15 workers. La prueba del benchmark también pasó (8 tests).
+- Suite completa con 15 workers (2026-11-08): 713 pasaron, 2 se omitieron, 0 fallaron. Los siete fallos previos se resolvieron: dos defectos reales (`area_grid` descartaba el borde del polígono al limitar con `bounds`; el agente no quitaba `connections` al normalizar artefactos 1.0 y nunca podía calcular) y cuatro expectativas actualizadas (solver 3.6.0, áreas como polígonos, cuatro campos nuevos del contrato de cálculo).
+- Revisar si corresponde ampliar el paralelismo de OPT-013. Mantener OPT-015/016 en espera salvo que se satisfaga su criterio de entrada.

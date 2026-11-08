@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
 from math import isfinite
 from typing import Any, Callable
@@ -115,6 +116,7 @@ def search_topology(
     operator_selector: Any = None,
     time_budget_s: float | None = None,
     finalist_time_share: float = 0.2,
+    parallel_workers: int = 1,
     clock: Callable[[], float] = time.monotonic,
     refine_share: float = 0.0,
     refine_elites: int = 3,
@@ -158,6 +160,8 @@ def search_topology(
     """
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise ValueError("seed must be an integer")
+    if isinstance(parallel_workers, bool) or not isinstance(parallel_workers, int) or parallel_workers < 1:
+        raise ValueError("parallel_workers must be a positive integer")
     time_mode = time_budget_s is not None
     if time_mode == (max_solver_calls is not None):
         raise ValueError("give exactly one budget: max_solver_calls or time_budget_s")
@@ -266,6 +270,63 @@ def search_topology(
         if outcome.get("charged", True):
             calls[level] += 1
         return outcome
+
+    def electrical_parallel(requests: list[tuple[str, dict[str, Any], str]]) -> list[dict[str, Any] | None]:
+        """Run independent finalist checks concurrently, then commit verdicts/checkpoints in stable order.
+
+        This is deliberately limited to the final L3 phase: it has no adaptive operator updates, and its
+        call budget is reserved before workers start. ALNS proposal/evaluation order remains unchanged.
+        """
+        nonlocal replayed, spent, exhausted
+        if parallel_workers == 1 or time_mode or len(requests) < 2:
+            return [electrical(level, geometry, digest) for level, geometry, digest in requests]
+        available = max(0, int(total - used()))
+        selected = requests[:available]
+        if len(selected) < len(requests):
+            exhausted = True
+        outcomes: list[dict[str, Any] | None] = [None] * len(selected)
+        missing: list[tuple[int, str, dict[str, Any], str]] = []
+        for index, (level, geometry, digest) in enumerate(selected):
+            key = f"{digest}:{level}"
+            if key in log:
+                outcomes[index] = log[key]
+                replayed += 1
+            else:
+                missing.append((index, level, geometry, digest))
+        def invoke(item):
+            index, level, geometry, digest = item
+            began = clock()
+            try:
+                outcome = evaluate_electrical(level, geometry)
+                return index, outcome, clock() - began, None
+            except Exception as exc:
+                return index, None, clock() - began, exc
+        with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+            completed = list(executor.map(invoke, missing))
+        errors = []
+        for index, outcome, elapsed, error in completed:
+            if error is not None:
+                errors.append((index, error))
+                outcomes[index] = {"status": "REJECTED", "reason": "evaluation_error", "detail": str(error), "ratio": None}
+                calls[selected[index][0]] += 1
+                continue
+            outcomes[index] = outcome
+            level, _, digest = selected[index]
+            durations.setdefault(level, []).append(elapsed)
+            if outcome.get("charged", True):
+                spent += 1
+            log[f"{digest}:{level}"] = outcome
+        for level, _, digest in selected:
+            outcome = log.get(f"{digest}:{level}")
+            if outcome is None:
+                continue
+            if outcome.get("charged", True):
+                calls[level] += 1
+        if on_checkpoint is not None and completed:
+            on_checkpoint(log)
+        if errors:
+            exhausted = True
+        return outcomes + [None] * (len(requests) - len(selected))
 
     def remember_repairable(record: dict[str, Any]) -> None:
         """Keep a violating design that is close to compliant and cheaper than the best known: it may be repairable."""
@@ -522,35 +583,63 @@ def search_topology(
     survivor_cells: list[set] = []
     similar: list[dict[str, Any]] = []
 
-    def finalist_check(record: dict[str, Any]) -> bool:
-        """Examine one confirmed design at the finest level; False when the budget is gone."""
-        outcome = electrical(finalist_level, gg.to_geometry(graphs[record["candidate_sha256"]], domain), record["candidate_sha256"])
-        if outcome is None:
-            return False
+    def finalize_record(record: dict[str, Any], outcome: dict[str, Any]) -> None:
+        digest = record["candidate_sha256"]
+        candidate_cells = cells(graphs[digest])
+        if outcome["status"] not in ("VIOLATED", "REJECTED") and any(
+                1 - len(candidate_cells & other) / len(candidate_cells | other) < min_elite_distance
+                for other in survivor_cells):
+            if all(item["candidate_sha256"] != digest for item in similar):
+                similar.append(record)
+                counts["finalists_skipped_similar"] += 1
+            return
         verdict = "demoted" if outcome["status"] in ("VIOLATED", "REJECTED") else "finalist"
         finalist_records.append({"candidate_sha256": record["candidate_sha256"], "cost": record["cost"], "status": verdict,
-                                 "level": finalist_level, "ratio": outcome.get("ratio")})
+                                 "level": finalist_level, "ratio": outcome.get("ratio"),
+                                 "geometry": gg.to_geometry(graphs[record["candidate_sha256"]], domain),
+                                 "cost_breakdown": evaluate_cost(gg.to_geometry(graphs[record["candidate_sha256"]], domain))})
         if verdict == "demoted":
             counts["demoted_at_finalist_level"] += 1
         else:
-            survivor_cells.append(cells(graphs[record["candidate_sha256"]]))
-        return True
+            survivor_cells.append(candidate_cells)
 
+    def finalist_check_batch(records: list[dict[str, Any]]) -> int:
+        requests = [(finalist_level, gg.to_geometry(graphs[r["candidate_sha256"]], domain), r["candidate_sha256"])
+                    for r in records]
+        outcomes = electrical_parallel(requests)
+        completed = 0
+        for record, outcome in zip(records, outcomes):
+            if outcome is None:
+                break
+            finalize_record(record, outcome)
+            completed += 1
+        return completed
+
+    pending_checks: list[dict[str, Any]] = []
     for record in confirmed_by_cost:                        # first pass: cheap AND different from the survivors so far
         if len(survivor_cells) >= finalists:
             break
         mine = cells(graphs[record["candidate_sha256"]])
-        if any(1 - len(mine & other) / len(mine | other) < min_elite_distance for other in survivor_cells):
+        pending_cells = [cells(graphs[item["candidate_sha256"]]) for item in pending_checks]
+        if any(1 - len(mine & other) / len(mine | other) < min_elite_distance for other in survivor_cells + pending_cells):
             similar.append(record)
             counts["finalists_skipped_similar"] += 1
             continue
-        if not finalist_check(record):
-            break
-    for record in similar:                                  # second pass: fill any seats the diversity rule left empty
-        if len(survivor_cells) >= finalists:
-            break
-        if not finalist_check(record):
-            break
+        pending_checks.append(record)
+        if len(pending_checks) >= parallel_workers:
+            completed = finalist_check_batch(pending_checks)
+            pending_checks = []
+            if completed == 0 or exhausted:
+                break
+    if pending_checks and len(survivor_cells) < finalists:
+        finalist_check_batch(pending_checks)
+    if len(survivor_cells) < finalists:
+        remaining_similar = [record for record in similar if record["candidate_sha256"] not in {f["candidate_sha256"] for f in finalist_records}]
+        for start in range(0, len(remaining_similar), parallel_workers):
+            batch = remaining_similar[start:start + parallel_workers]
+            completed = finalist_check_batch(batch)
+            if completed == 0 or exhausted or len(survivor_cells) >= finalists:
+                break
 
     survivors = [f for f in finalist_records if f["status"] == "finalist"]
     best = min(survivors, key=lambda f: (f["cost"], f["candidate_sha256"]), default=None)

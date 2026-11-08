@@ -42,6 +42,21 @@ def test_the_exact_sign_test_is_the_textbook_one():
     assert bench._sign_test(7, 2) == pytest.approx(2 * sum(math.comb(9, k) for k in range(3)) / 2 ** 9)
 
 
+def test_feasibility_rate_has_a_deterministic_binomial_interval():
+    assert bench._wilson(0, 0) is None
+    low, high = bench._wilson(5, 10)
+    assert low == pytest.approx(0.2366, abs=1e-4)
+    assert high == pytest.approx(0.7634, abs=1e-4)
+    assert bench._wilson(10, 10)[0] > 0.7
+
+
+def test_summary_reports_feasibility_rate_and_uncertainty():
+    rows = [row("site", 1, "alns", 1.0), row("site", 2, "alns", None)]
+    result = bench.analyse(rows, ("alns",))["overall"]["alns"]
+    assert result["feasibility_rate"] == 0.5
+    assert result["feasibility_rate_ci95"] == pytest.approx(bench._wilson(1, 2))
+
+
 def test_the_report_renders_every_strategy_and_scenario():
     rows = [row(sc, sd, st, 100.0 + i) for sc in ("a", "b") for sd in range(3) for i, st in enumerate(STRATEGIES)]
     text = bench.markdown(bench.analyse(rows, STRATEGIES), {"scenarios": 2, "seeds": 3, "strategies": list(STRATEGIES), "budget": 100})

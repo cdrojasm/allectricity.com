@@ -10,11 +10,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import uuid
+from dataclasses import dataclass
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from src.domain.spat import geometry_seeds
+from src.domain.spat import geometry_graph as gg
 from src.domain.spat.feasibility import admits
 from src.domain.spat.geometry_cost import evaluate_geometry_cost
 from src.domain.spat.geometry_operators import OperatorConstraints
@@ -101,6 +104,53 @@ def save_checkpoint(path: str | os.PathLike[str], log: dict[str, Any]) -> None:
     os.replace(temporary, target)
 
 
+@dataclass(frozen=True)
+class _EliteSeed:
+    family: str
+    geometry: dict[str, Any]
+    graph_hash: str
+    metadata: dict[str, Any]
+
+
+def load_elite_archive(path: str | os.PathLike[str], context_sha256: str) -> list[_EliteSeed]:
+    """Load portable candidate geometries only when their design/evaluation context matches."""
+    target = Path(path)
+    if not target.is_file():
+        return []
+    payload = json.loads(target.read_text())
+    if payload.get("schema_version") != "spat.optimizer-elite-archive/1.0":
+        raise ValueError("unsupported elite archive schema")
+    if payload.get("context_sha256") != context_sha256:
+        raise ValueError("elite archive belongs to an incompatible optimization context")
+    result = []
+    for item in payload.get("candidates", []):
+        geometry = item["geometry"]
+        digest = gg.canonical_hash(gg.from_geometry(geometry))
+        if digest != item.get("candidate_sha256"):
+            raise ValueError("elite archive candidate hash mismatch")
+        result.append(_EliteSeed("archive", geometry, digest, {"source_run_id": item.get("source_run_id")}))
+    return result
+
+
+def save_elite_archive(path: str | os.PathLike[str], context_sha256: str, result: dict[str, Any], run_id: str) -> None:
+    """Atomically retain distinct L3-admitted geometries; archive data is only a source of starts, never proof."""
+    target = Path(path)
+    previous = load_elite_archive(target, context_sha256) if target.is_file() else []
+    by_hash = {seed.graph_hash: {"candidate_sha256": seed.graph_hash, "geometry": seed.geometry,
+                                "source_run_id": seed.metadata.get("source_run_id")} for seed in previous}
+    for item in result.get("finalists", []):
+        if item.get("status") != "finalist" or item.get("level") != "L3" or not item.get("geometry"):
+            continue
+        digest = gg.canonical_hash(gg.from_geometry(item["geometry"]))
+        by_hash[digest] = {"candidate_sha256": digest, "geometry": item["geometry"], "source_run_id": run_id}
+    ranked = sorted(by_hash.values(), key=lambda item: item["candidate_sha256"])[:20]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    temporary.write_text(json.dumps({"schema_version": "spat.optimizer-elite-archive/1.0", "context_sha256": context_sha256,
+                                     "candidates": ranked}, sort_keys=True, indent=2))
+    os.replace(temporary, target)
+
+
 def run_topology_optimizer(
     *,
     domain: dict[str, Any],
@@ -131,6 +181,8 @@ def run_topology_optimizer(
     selector_scores: dict[str, float] | None = None,
     checkpoint_path: str | os.PathLike[str] | None = None,
     checkpoint_every: int = 1,
+    elite_archive_path: str | os.PathLike[str] | None = None,
+    parallel_workers: int = 1,
 ) -> dict[str, Any]:
     """Run the search on a budget of solver calls (`max_solver_calls`, repeatable) or of seconds (`time_budget_s`,
     the fast mode: part of it is held for the L3 check of the finalists, see `search_topology`). With `checkpoint_path`, every new solver verdict is saved and a later call with the same
@@ -139,11 +191,21 @@ def run_topology_optimizer(
     # is discretised). Ask for a few extra and keep the first `seed_count` the solver accepts, so every strategy
     # starts from the same valid seeds.
     candidates = geometry_seeds.generate_seeds(domain, seed=seed, count=seed_count + 3, initial=initial_geometry)
-    starts = [s for s in candidates if not solver_evaluation.discretization_violations(s.geometry, soil, settings)][:seed_count]
+    elite_context = problem_fingerprint(domain=domain, rate_card=rate_card, soil=soil_record(as_soil(soil)),
+                                       injection_a=injection_a, exposure=asdict(exposure), standards=standards, settings=settings,
+                                       engine=[getattr(client, "quadrature_tolerance", None),
+                                               _file_sha256(getattr(client, "executable", "")) if getattr(client, "executable", None) else None])
+    archived = load_elite_archive(elite_archive_path, elite_context) if elite_archive_path else []
+    known = {s.graph_hash for s in candidates}
+    candidates.extend(s for s in archived if s.graph_hash not in known)
+    valid_archive = [s for s in archived if not solver_evaluation.discretization_violations(s.geometry, soil, settings)]
+    valid_generated = [s for s in candidates if s.graph_hash not in {a.graph_hash for a in valid_archive}
+                       and not solver_evaluation.discretization_violations(s.geometry, soil, settings)]
+    starts = (valid_archive[:seed_count] + valid_generated[:max(0, seed_count - len(valid_archive[:seed_count]))])
     problem = problem_fingerprint(
         domain=domain, rate_card=rate_card, soil=soil_record(as_soil(soil)), injection_a=injection_a, exposure=asdict(exposure),
         standards=standards, settings=settings, seed=seed, seeds=[s.graph_hash for s in starts], constraints=asdict(constraints),
-        search=[neighbors_per_step, patience, uphill_moves, uphill_tolerance, max_steps_per_start, finalists, repair_share, strategy, max_repair_starts, selector_scores]
+        search=[neighbors_per_step, patience, uphill_moves, uphill_tolerance, max_steps_per_start, finalists, repair_share, strategy, max_repair_starts, selector_scores, parallel_workers]
         + ([time_budget_s, finalist_time_share] if time_budget_s is not None else []),
         engine=[getattr(client, "quadrature_tolerance", None), _file_sha256(getattr(client, "executable", "")) if getattr(client, "executable", None) else None])
     evaluations = load_checkpoint(checkpoint_path) if checkpoint_path else {}
@@ -177,10 +239,17 @@ def run_topology_optimizer(
         domain=domain, seeds=starts, evaluate_cost=evaluate_cost, evaluate_electrical=evaluate_electrical, seed=seed,
         max_solver_calls=max_solver_calls, time_budget_s=time_budget_s, finalist_time_share=finalist_time_share, constraints=constraints, neighbors_per_step=neighbors_per_step, patience=patience,
         uphill_tolerance=uphill_tolerance, max_steps_per_start=max_steps_per_start, finalists=finalists,
-        evaluations=evaluations, on_checkpoint=on_checkpoint, problem_sha256=problem, repair_share=repair_share, **options)
+        evaluations=evaluations, on_checkpoint=on_checkpoint, problem_sha256=problem, repair_share=repair_share,
+        parallel_workers=parallel_workers, **options)
     if checkpoint_path:
         save_checkpoint(checkpoint_path, evaluations)
     result["seeds"] = [{"family": s.family, "candidate_sha256": s.graph_hash} for s in starts]
     result["seeds_dropped_by_solver_check"] = len(candidates) - len(starts) if len(candidates) > seed_count else 0
     result["cost_currency"] = rate_card["currency"]
+    if elite_archive_path:
+        archive_run_id = str(uuid.uuid4())
+        save_elite_archive(elite_archive_path, elite_context, result, archive_run_id)
+        result["elite_archive"] = {"path": str(elite_archive_path), "loaded": len(archived),
+                                   "saved": len(load_elite_archive(elite_archive_path, elite_context)),
+                                   "context_sha256": elite_context}
     return result

@@ -37,6 +37,13 @@ def test_topology_search_with_the_real_solver_is_bounded_deterministic_and_uncer
     assert result["best"] is not None and result["best"]["status"] == "finalist" and result["best"]["ratio"] <= 1.0
     assert {s["family"] for s in result["seeds"]} >= {"perimeter", "inscribed"}
     assert result["best"]["candidate_sha256"] == run(client)["best"]["candidate_sha256"]
+    parallel = run_topology_optimizer(
+        domain=DOMAIN, rate_card=RATES, soil=100.0, injection_a=1000.0,
+        exposure=safety_criteria.FaultExposure(0.5, 70, 3000, 0.1, 100),
+        standards=[safety_criteria.IEEE80_2013], client=client, seed=7, max_solver_calls=60,
+        seed_count=4, parallel_workers=2)
+    assert parallel["solver_calls_total"] <= 60 and parallel["certified"] is False
+    assert parallel["best"]["candidate_sha256"] == result["best"]["candidate_sha256"]
 
 
 def test_the_best_design_costs_no_more_than_the_best_feasible_seed(client):
@@ -103,6 +110,71 @@ def test_a_checkpoint_is_not_reused_for_another_problem_or_another_current(clien
     run_topology_optimizer(injection_a=1000.0, **common)
     with pytest.raises(ValueError, match="different problem"):
         run_topology_optimizer(injection_a=1500.0, **common)
+
+
+def test_elite_archive_is_context_bound_hashed_and_only_stores_l3_admitted_designs(tmp_path):
+    from src.domain.spat.geometry_graph import canonical_hash, from_geometry
+    from src.application.use_cases.optimizer_topology_run import load_elite_archive, save_elite_archive
+
+    path = tmp_path / "elite.json"
+    geometry = {"length_m": 10, "width_m": 10, "burial_depth_m": 0.5,
+                "conductors": [{"start": {"x": 1, "y": 1}, "end": {"x": 9, "y": 1}}], "rods": []}
+    digest = canonical_hash(from_geometry(geometry))
+    result = {"finalists": [
+        {"candidate_sha256": digest, "status": "finalist", "level": "L3", "geometry": geometry},
+        {"candidate_sha256": "bad", "status": "demoted", "level": "L3", "geometry": geometry},
+        {"candidate_sha256": "unknown", "status": "finalist", "level": "L2+", "geometry": geometry},
+    ]}
+    save_elite_archive(path, "context-a", result, "run-a")
+    loaded = load_elite_archive(path, "context-a")
+    assert len(loaded) == 1 and loaded[0].graph_hash == digest
+    with pytest.raises(ValueError, match="incompatible"):
+        load_elite_archive(path, "context-b")
+    payload = json.loads(path.read_text())
+    payload["candidates"][0]["geometry"]["width_m"] = 12
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="hash mismatch"):
+        load_elite_archive(path, "context-a")
+
+
+def test_topology_run_uses_context_matched_elite_seeds(monkeypatch, tmp_path):
+    from dataclasses import asdict
+    from types import SimpleNamespace
+
+    from src.domain.spat import geometry_seeds
+    from src.domain.spat.geometry_graph import canonical_hash, from_geometry
+
+    exposure = safety_criteria.FaultExposure(0.5, 70, 3000, 0.1, 100)
+    generated = geometry_seeds.generate_seeds(DOMAIN, seed=7, count=5)
+    archived = next(seed for seed in geometry_seeds.generate_seeds(DOMAIN, seed=8, count=5)
+                    if seed.graph_hash not in {item.graph_hash for item in generated})
+    soil_record = topology_run.soil_record(topology_run.as_soil(100.0))
+    context = topology_run.problem_fingerprint(
+        domain=DOMAIN, rate_card=RATES, soil=soil_record, injection_a=1000.0,
+        exposure=asdict(exposure), standards=[safety_criteria.IEEE80_2013], settings=None,
+        engine=[None, None])
+    archive_path = tmp_path / "elite.json"
+    topology_run.save_elite_archive(archive_path, context, {"finalists": [{
+        "candidate_sha256": archived.graph_hash, "status": "finalist", "level": "L3",
+        "geometry": archived.geometry}]}, "prior-run")
+
+    monkeypatch.setattr(geometry_seeds, "generate_seeds", lambda *_args, **_kwargs: generated)
+    monkeypatch.setattr(topology_run.solver_evaluation, "discretization_violations", lambda *_args: [])
+    observed = {}
+
+    def capture_search(**kwargs):
+        observed["seeds"] = kwargs["seeds"]
+        return {"finalists": [], "solver_calls_total": 0}
+
+    monkeypatch.setattr(topology_run, "search_topology", capture_search)
+    result = run_topology_optimizer(
+        domain=DOMAIN, rate_card=RATES, soil=100.0, injection_a=1000.0, exposure=exposure,
+        standards=[safety_criteria.IEEE80_2013], client=SimpleNamespace(quadrature_tolerance=None, executable=None),
+        seed=7, max_solver_calls=20, seed_count=2, elite_archive_path=archive_path)
+
+    assert canonical_hash(from_geometry(observed["seeds"][0].geometry)) == archived.graph_hash
+    assert result["seeds"][0]["candidate_sha256"] == archived.graph_hash
+    assert result["elite_archive"]["loaded"] == 1
 
 
 # ---- fast mode and parametric refinement with the real solver ------------------------------------------------

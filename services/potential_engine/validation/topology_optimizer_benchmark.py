@@ -8,7 +8,7 @@ alns_refined is alns with part of the same budget spent tuning the rod lengths o
 also compared directly with alns, paired by scenario and seed.
 Every strategy gets the same scenario, the same starting seeds and the same cap on solver calls, so a
 difference in cost is a difference in search. Reported per scenario and overall:
-  feasibility and best cost, regret against the best design any strategy found for that (scenario, seed),
+  feasibility rate with a 95% Wilson interval and best cost, regret against the best design any strategy found for that (scenario, seed),
   paired comparison against plain descent (better / equal / worse, mean change with a bootstrap interval and an
   exact sign test), average rank, solver calls and time units used, finalists demoted by the finest check,
   and what each kind of move earned (atomic versus large-neighbourhood).
@@ -18,9 +18,11 @@ Nothing here certifies a design. A cost is for a design that survived sampled ch
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import math
+import platform
 import random
 import statistics
 import sys
@@ -100,6 +102,17 @@ def _bootstrap(values: list[float], draws: int = 2000) -> tuple[float, float]:
     return means[int(0.025 * draws)], means[int(0.975 * draws) - 1]
 
 
+def _wilson(successes: int, trials: int, z: float = 1.959963984540054) -> tuple[float, float] | None:
+    """Deterministic 95% Wilson interval for the probability that a run finds an admitted finalist."""
+    if trials == 0:
+        return None
+    p = successes / trials
+    denominator = 1 + z * z / trials
+    center = (p + z * z / (2 * trials)) / denominator
+    radius = z * math.sqrt(p * (1 - p) / trials + z * z / (4 * trials * trials)) / denominator
+    return (max(0.0, center - radius), min(1.0, center + radius))
+
+
 def analyse(rows: list[dict], strategies: tuple[str, ...]) -> dict:
     out: dict = {"runs": len(rows), "scenarios": {}, "overall": {}}
     keys = sorted({(r["scenario"], r["seed"]) for r in rows})
@@ -137,6 +150,8 @@ def analyse(rows: list[dict], strategies: tuple[str, ...]) -> dict:
             feasible = [r for r in runs if r["best_cost"] is not None]
             regrets = [(r["best_cost"] - best_known[(r["scenario"], r["seed"])]) / best_known[(r["scenario"], r["seed"])] for r in feasible]
             entry = {"runs": len(runs), "feasible": len(feasible),
+                     "feasibility_rate": len(feasible) / len(runs) if runs else None,
+                     "feasibility_rate_ci95": _wilson(len(feasible), len(runs)),
                      "mean_cost": statistics.mean(r["best_cost"] for r in feasible) if feasible else None,
                      "mean_regret": statistics.mean(regrets) if regrets else None,
                      "found_best": sum(1 for g in regrets if g <= 1e-9),
@@ -179,12 +194,13 @@ def analyse(rows: list[dict], strategies: tuple[str, ...]) -> dict:
 def markdown(result: dict, meta: dict) -> str:
     def fmt(value, scale=1.0, digits=3):
         return "—" if value is None else f"{value / scale:.{digits}f}"
+    worker_note = f" Execution used {meta['workers']} workers." if meta.get("workers") else ""
     lines = ["# Topology optimizer benchmark", "",
              f"{result['runs']} runs: {meta['scenarios']} scenarios x {meta['seeds']} seeds x {len(meta['strategies'])} strategies, "
-             f"a cap of {meta['budget']} solver calls each. Same scenario, same starting seeds and same cap for every strategy.", ""]
+             f"a cap of {meta['budget']} solver calls each. Same scenario, same starting seeds and same cap for every strategy.{worker_note}", ""]
 
     def table(title, data):
-        lines.extend([f"## {title}", "", "| strategy | feasible | mean cost (M) | mean regret | found the best | rank | calls | time units | vs descent (better/equal/worse, p) | mean change [95%] | vs alns (better/equal/worse, p) | mean change [95%] |",
+        lines.extend([f"## {title}", "", "| strategy | feasible (95% CI) | mean cost (M) | mean regret | found the best | rank | calls | time units | vs descent (better/equal/worse, p) | mean change [95%] | vs alns (better/equal/worse, p) | mean change [95%] |",
                       "|---|---|---|---|---|---|---|---|---|---|---|---|"])
         for strategy, e in data.items():
             def describe(v):
@@ -194,7 +210,9 @@ def markdown(result: dict, meta: dict) -> str:
                 return versus, change
             versus, change = describe(e.get("versus_descent"))
             versus_alns, change_alns = describe(e.get("versus_alns"))
-            lines.append(f"| {strategy} | {e['feasible']}/{e['runs']} | {fmt(e['mean_cost'], 1e6)} | {fmt(e['mean_regret'] and 100 * e['mean_regret'], 1, 1)}% | "
+            interval = e.get("feasibility_rate_ci95")
+            feasible = f"{e['feasible']}/{e['runs']}" + (f" [{100*interval[0]:.0f}–{100*interval[1]:.0f}%]" if interval else "")
+            lines.append(f"| {strategy} | {feasible} | {fmt(e['mean_cost'], 1e6)} | {fmt(e['mean_regret'] and 100 * e['mean_regret'], 1, 1)}% | "
                          f"{e['found_best']} | {fmt(e['mean_rank'], 1, 2)} | {fmt(e['mean_solver_calls'], 1, 0)} | {fmt(e['mean_time_units'], 1, 0)} | {versus} | {change} | {versus_alns} | {change_alns} |")
         lines.append("")
     table("Overall", result["overall"])
@@ -216,11 +234,25 @@ def main() -> None:
     parser.add_argument("--markdown", default=None)
     args = parser.parse_args()
     scenarios, strategies = args.scenarios.split(","), tuple(args.strategies.split(","))
+    unknown_scenarios = sorted(set(scenarios) - set(SCENARIOS))
+    unknown_strategies = sorted(set(strategies) - set(STRATEGIES))
+    if unknown_scenarios:
+        parser.error(f"unknown scenarios: {', '.join(unknown_scenarios)}")
+    if unknown_strategies:
+        parser.error(f"unknown strategies: {', '.join(unknown_strategies)}")
+    if args.seeds < 1 or args.budget < 1 or args.workers < 1:
+        parser.error("--seeds, --budget and --workers must be positive integers")
+    if not scenarios or not strategies or len(set(scenarios)) != len(scenarios) or len(set(strategies)) != len(strategies):
+        parser.error("scenario and strategy lists must be non-empty and contain no duplicates")
     jobs = [{"scenario": sc, "seed": args.first_seed + i, "strategy": st, "budget": args.budget}
             for sc in scenarios for i in range(args.seeds) for st in strategies]
     with ProcessPoolExecutor(args.workers) as pool:
         rows = list(pool.map(run_one, jobs, chunksize=1))
-    meta = {"scenarios": len(scenarios), "seeds": args.seeds, "strategies": list(strategies), "budget": args.budget, "first_seed": args.first_seed}
+    solver_binary = Path(__file__).resolve().parent / "build" / "spat-potential-engine"
+    meta = {"scenarios": len(scenarios), "seeds": args.seeds, "strategies": list(strategies), "budget": args.budget,
+            "first_seed": args.first_seed, "workers": args.workers, "host_cpu_count": os.cpu_count(),
+            "platform": platform.platform(), "python_version": sys.version.split()[0],
+            "solver_sha256": hashlib.sha256(solver_binary.read_bytes()).hexdigest() if solver_binary.is_file() else None}
     result = analyse(rows, strategies)
     Path(args.json).write_text(json.dumps({"meta": meta, "result": result, "rows": rows}, indent=1))
     text = markdown(result, meta)
