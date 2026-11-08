@@ -263,7 +263,9 @@ def test_calculation_lifecycle_through_api(env, engine, monkeypatch):  # noqa: F
                                          "safety_standards": ["IEEE 80-2013", "RETIE 2013"], "fault_split": None,
                                          "x_over_r": None, "system_frequency_hz": 60.0,
                                          "segmentation": "graded", "estimate_uncertainty": False,
-                                             "touch_reach_m": 0.0}
+                                             "touch_reach_m": 0.0,
+                                         "scenarios": [], "transfer_assessment_complete": None,
+                                         "transfer_assessment_evidence": None, "transfer_exposures": []}
 
     run_potential_calculation(services.store, calculation["id"], engine)
     run_potential_calculation(services.store, calculation["id"], engine)  # redelivery is a no-op

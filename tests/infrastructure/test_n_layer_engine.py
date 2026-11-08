@@ -308,7 +308,7 @@ def test_client_mirrors_kernel_cost_and_limits(client):
     trace = result["trace"]
     assert trace["soil"]["model"] == "n-layer" and len(trace["soil"]["layers"]) == 8
     assert trace["soil_layer_count"] == "8" and trace["soil_layers_resistivity_ohm_m_thickness_m"].endswith("400:inf")
-    assert "n-layer-generalized-reflection-recursion" in trace["method"] and trace["solver_version"] == "3.4.0"
+    assert "n-layer-generalized-reflection-recursion" in trace["method"] and trace["solver_version"] == "3.6.0"
     assert "max_error_bound=1e-4" in trace["kernel_limits"]
     # Surface points are batched so that every request respects the point image-work limit.
     many = [PotentialPoint(f"q{i}", (float(i % 100), float(i // 100), 0.0)) for i in range(20000)]

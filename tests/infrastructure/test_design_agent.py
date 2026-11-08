@@ -253,7 +253,10 @@ def test_site_zones_from_chat_put_the_grid_in_the_chosen_zone(chat):
     xs = {c[k]["x"] for c in geometry["conductors"] for k in ("start", "end")}
     assert xs == {22, 27} and len(geometry["conductors"]) == 5
     assert {(r["x"], r["y"]) for r in geometry["rods"]} == {(22, 0), (22, 10), (27, 0), (27, 10)}
-    assert geometry["structures"][0]["label"] == "Edificio existente" and geometry["areas"] == areas
+    assert geometry["structures"][0]["label"] == "Edificio existente" and [(a["type"], a["label"]) for a in geometry["areas"]] == [(a["type"], a["label"]) for a in areas]
+    # Areas are stored as polygons: each rectangle becomes its four corners.
+    assert geometry["areas"][1]["polygon"] == [{"x": 22.0, "y": 0.0}, {"x": 27.0, "y": 0.0},
+                                               {"x": 27.0, "y": 10.0}, {"x": 22.0, "y": 10.0}]
     assert artifact["origin"]["provenance"]["geometry.conductors"]["kind"] == "user"
 
 
