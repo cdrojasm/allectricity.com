@@ -1387,7 +1387,11 @@ function GroundingCalculations({
               <label>
                 Material
                 <select
-                  value={design.conductor_material_id}
+                  value={
+                    design.conductor_material_id === "copper_clad_rod_20"
+                      ? "copper_clad_rod_17"
+                      : design.conductor_material_id
+                  }
                   onChange={(e) =>
                     setDesign({
                       ...design,
@@ -1405,8 +1409,8 @@ function GroundingCalculations({
                   <option value="copper_clad_30">
                     Acero recubierto de cobre 30 %
                   </option>
-                  <option value="copper_clad_rod_20">
-                    Varilla de acero recubierta de cobre 20 %
+                  <option value="copper_clad_rod_17">
+                    Varilla de acero recubierta de cobre 17 %
                   </option>
                   <option value="aluminum_clad_steel">
                     Acero recubierto de aluminio
