@@ -1,0 +1,229 @@
+{
+  "schema_version": "1.0",
+  "profile_id": "IEEE 80-2013",
+  "standard": "IEEE Std 80",
+  "edition": "2013 (with Corrigendum 1-2015)",
+  "equation_form": "tcap",
+  "reference": "IEEE Std 80-2013, 11.3.1, Eq. (37)/(38)/(45)/(46), Tables 1 and 2",
+  "default_ambient_c": 40.0,
+  "aliases": {
+    "copper_clad_rod_20": "copper_clad_rod_17"
+  },
+  "materials": [
+    {
+      "id": "copper_annealed",
+      "name": "Cobre recocido",
+      "conductivity_pct": 100.0,
+      "alpha_r": 0.00393,
+      "k0_c": 234.0,
+      "resistivity_micro_ohm_cm": 1.72,
+      "tcap_j_cm3_c": 3.42,
+      "tcap_printed_j_cm3_c": 3.4,
+      "fusion_temp_c": 1083.0,
+      "source": "IEEE Std 80-2013, Table 1, row 'Copper, annealed soft-drawn'",
+      "published_kf": [
+        {
+          "tm_c": 1083.0,
+          "value": 7.0,
+          "source": "IEEE Std 80-2013, Table 2, row 'Copper, annealed soft-drawn'",
+          "status": "consistent"
+        }
+      ],
+      "notes": "TCAP is the unrounded value behind the one-decimal figure printed in Table 1; it reproduces the Kf of Table 2 and the worked examples within 0.1 %."
+    },
+    {
+      "id": "copper_hard_drawn",
+      "name": "Cobre comercial duro",
+      "conductivity_pct": 97.0,
+      "alpha_r": 0.00381,
+      "k0_c": 242.0,
+      "resistivity_micro_ohm_cm": 1.78,
+      "tcap_j_cm3_c": 3.42,
+      "tcap_printed_j_cm3_c": 3.4,
+      "fusion_temp_c": 1084.0,
+      "source": "IEEE Std 80-2013, Table 1, row 'Copper, commercial hard-drawn'",
+      "published_kf": [
+        {
+          "tm_c": 1084.0,
+          "value": 7.06,
+          "source": "IEEE Std 80-2013, Table 2, row 'Copper, commercial hard-drawn'",
+          "status": "consistent"
+        },
+        {
+          "tm_c": 250.0,
+          "value": 11.78,
+          "source": "IEEE Std 80-2013, Table 2, row 'Copper, commercial hard-drawn'",
+          "status": "consistent"
+        }
+      ],
+      "notes": "TCAP is the unrounded value behind the one-decimal figure printed in Table 1; it reproduces the Kf of Table 2 and the worked examples within 0.1 %."
+    },
+    {
+      "id": "copper_clad_40",
+      "name": "Acero recubierto de cobre 40 %",
+      "conductivity_pct": 40.0,
+      "alpha_r": 0.00378,
+      "k0_c": 245.0,
+      "resistivity_micro_ohm_cm": 4.4,
+      "tcap_j_cm3_c": 3.85,
+      "tcap_printed_j_cm3_c": 3.8,
+      "fusion_temp_c": 1084.0,
+      "source": "IEEE Std 80-2013, Table 1, row 'Copper-clad steel wire 40.0'",
+      "published_kf": [
+        {
+          "tm_c": 1084.0,
+          "value": 10.45,
+          "source": "IEEE Std 80-2013, Table 2, row 'Copper-clad steel wire 40.0'",
+          "status": "consistent"
+        }
+      ],
+      "notes": "TCAP 3.85 is the value used by the norm's own worked example (11.3.1.2); Table 1 prints 3.8."
+    },
+    {
+      "id": "copper_clad_30",
+      "name": "Acero recubierto de cobre 30 %",
+      "conductivity_pct": 30.0,
+      "alpha_r": 0.00378,
+      "k0_c": 245.0,
+      "resistivity_micro_ohm_cm": 5.86,
+      "tcap_j_cm3_c": 3.85,
+      "tcap_printed_j_cm3_c": 3.8,
+      "fusion_temp_c": 1084.0,
+      "source": "IEEE Std 80-2013, Table 1, row 'Copper-clad steel wire 30.0'",
+      "published_kf": [
+        {
+          "tm_c": 1084.0,
+          "value": 12.06,
+          "source": "IEEE Std 80-2013, Table 2, row 'Copper-clad steel wire 30.0'",
+          "status": "consistent"
+        }
+      ],
+      "notes": "TCAP 3.85 is the value used by the norm's own worked example (11.3.1.2); Table 1 prints 3.8."
+    },
+    {
+      "id": "copper_clad_rod_17",
+      "name": "Varilla de acero recubierta de cobre 17 %",
+      "conductivity_pct": 17.0,
+      "alpha_r": 0.00378,
+      "k0_c": 245.0,
+      "resistivity_micro_ohm_cm": 10.1,
+      "tcap_j_cm3_c": 3.85,
+      "tcap_printed_j_cm3_c": 3.8,
+      "fusion_temp_c": 1084.0,
+      "source": "IEEE Std 80-2013, Table 1, row 'Copper-clad steel rod'",
+      "published_kf": [
+        {
+          "tm_c": 1084.0,
+          "value": 14.64,
+          "source": "IEEE Std 80-2013, Table 2, row 'Copper-clad steel rod'",
+          "status": "stale_in_norm"
+        }
+      ],
+      "notes": "Table 1 (2013) changed this rod from 20 % / 8.62 to 17 % / 10.1 and derives 10.1 on the same page; Table 2 still prints the Kf of the 20 % rod (14.64). Table 1 is used (larger Kf, conservative)."
+    },
+    {
+      "id": "aluminum_clad_steel",
+      "name": "Acero recubierto de aluminio",
+      "conductivity_pct": 20.3,
+      "alpha_r": 0.0036,
+      "k0_c": 258.0,
+      "resistivity_micro_ohm_cm": 8.48,
+      "tcap_j_cm3_c": 3.561,
+      "tcap_printed_j_cm3_c": 3.561,
+      "fusion_temp_c": 657.0,
+      "source": "IEEE Std 80-2013, Table 1, row 'Aluminum-clad steel wire'",
+      "published_kf": [
+        {
+          "tm_c": 657.0,
+          "value": 17.26,
+          "source": "IEEE Std 80-2013, Table 2, row 'Aluminum-clad steel wire'",
+          "status": "consistent"
+        }
+      ]
+    },
+    {
+      "id": "steel_1020",
+      "name": "Acero 1020",
+      "conductivity_pct": 10.8,
+      "alpha_r": 0.00377,
+      "k0_c": 245.0,
+      "resistivity_micro_ohm_cm": 15.9,
+      "tcap_j_cm3_c": 3.8,
+      "tcap_printed_j_cm3_c": 3.8,
+      "fusion_temp_c": 1510.0,
+      "source": "IEEE Std 80-2013, Table 1, row 'Steel, 1020'",
+      "published_kf": [
+        {
+          "tm_c": 1510.0,
+          "value": 18.39,
+          "source": "IEEE Std 80-2013, Table 2, row 'Steel, 1020'",
+          "status": "consistent"
+        }
+      ],
+      "notes": "The 2013 edition replaced the 2000 constants (alpha 0.0016, K0 605, TCAP 3.28; Kf 15.95). The worked example (c) of 11.3.1.3 still uses the old Kf 15.95 and is superseded by Table 2."
+    },
+    {
+      "id": "stainless_clad_rod",
+      "name": "Varilla de acero inoxidable revestida",
+      "conductivity_pct": 9.8,
+      "alpha_r": 0.00377,
+      "k0_c": 245.0,
+      "resistivity_micro_ohm_cm": 17.5,
+      "tcap_j_cm3_c": 4.4,
+      "tcap_printed_j_cm3_c": 4.4,
+      "fusion_temp_c": 1400.0,
+      "source": "IEEE Std 80-2013, Table 1, row 'Stainless-clad steel rod'",
+      "published_kf": [
+        {
+          "tm_c": 1400.0,
+          "value": 14.72,
+          "source": "IEEE Std 80-2013, Table 2, row 'Stainless-clad steel rod'",
+          "status": "stale_in_norm"
+        }
+      ],
+      "notes": "Table 1 (2013) gives alpha 0.00377 and K0 245; Table 2 still prints the Kf of the 2000 constants (14.72). Table 1 is used (larger Kf, conservative)."
+    },
+    {
+      "id": "zinc_coated_steel_rod",
+      "name": "Varilla de acero galvanizada",
+      "conductivity_pct": 8.6,
+      "alpha_r": 0.0032,
+      "k0_c": 293.0,
+      "resistivity_micro_ohm_cm": 20.1,
+      "tcap_j_cm3_c": 3.93,
+      "tcap_printed_j_cm3_c": 3.9,
+      "fusion_temp_c": 419.0,
+      "source": "IEEE Std 80-2013, Table 1, row 'Zinc-coated steel rod'",
+      "published_kf": [
+        {
+          "tm_c": 419.0,
+          "value": 28.96,
+          "source": "IEEE Std 80-2013, Table 2, row 'Zinc-coated steel rod'",
+          "status": "consistent"
+        }
+      ],
+      "notes": "TCAP is the unrounded value behind the one-decimal figure printed in Table 1; it reproduces the Kf of Table 2 and the worked examples within 0.1 %."
+    },
+    {
+      "id": "stainless_304",
+      "name": "Acero inoxidable 304",
+      "conductivity_pct": 2.4,
+      "alpha_r": 0.0013,
+      "k0_c": 749.0,
+      "resistivity_micro_ohm_cm": 72.0,
+      "tcap_j_cm3_c": 4.03,
+      "tcap_printed_j_cm3_c": 4.0,
+      "fusion_temp_c": 1400.0,
+      "source": "IEEE Std 80-2013, Table 1, row 'Stainless steel, 304'",
+      "published_kf": [
+        {
+          "tm_c": 1400.0,
+          "value": 30.05,
+          "source": "IEEE Std 80-2013, Table 2, row 'Stainless steel, 304'",
+          "status": "consistent"
+        }
+      ],
+      "notes": "TCAP is the unrounded value behind the one-decimal figure printed in Table 1; it reproduces the Kf of Table 2 and the worked examples within 0.1 %."
+    }
+  ]
+}

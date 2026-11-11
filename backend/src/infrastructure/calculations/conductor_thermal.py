@@ -5,34 +5,25 @@ from __future__ import annotations
 from math import log, pi, sqrt
 from typing import Any
 
+from src.domain.spat.thermal_profile import load_profile
+
 
 IEEE80_PROFILE = "IEEE 80-2013"
 REFERENCE = "IEEE Std 80-2013, 11.3.1, Eq. (37), Table 1; corrigendum 1-2015"
 
-# Material constants from IEEE 80-2013 Table 1. Resistivity is in micro-ohm-cm,
-# TCAP in J/(cm³·°C), and alpha in 1/°C. Only entries used for grounding conductors.
+# Material constants come from the versioned profile (IEEE 80-2013 Table 1, each row with its source).
+# Resistivity is in micro-ohm-cm, TCAP in J/(cm³·°C), and alpha in 1/°C.
+_PROFILE = load_profile(IEEE80_PROFILE)
 MATERIALS: dict[str, dict[str, Any]] = {
-    "copper_annealed": {"name": "Cobre recocido", "alpha": 0.00393, "k0_c": 234.0,
-                        "resistivity_micro_ohm_cm": 1.72, "tcap_j_cm3_c": 3.42, "fusion_temp_c": 1083.0},
-    "copper_hard_drawn": {"name": "Cobre comercial duro", "alpha": 0.00381, "k0_c": 242.0,
-                          "resistivity_micro_ohm_cm": 1.78, "tcap_j_cm3_c": 3.42, "fusion_temp_c": 1084.0},
-    "copper_clad_40": {"name": "Acero recubierto de cobre 40 %", "alpha": 0.00378, "k0_c": 245.0,
-                       "resistivity_micro_ohm_cm": 4.40, "tcap_j_cm3_c": 3.85, "fusion_temp_c": 1084.0},
-    "copper_clad_30": {"name": "Acero recubierto de cobre 30 %", "alpha": 0.00378, "k0_c": 245.0,
-                       "resistivity_micro_ohm_cm": 5.86, "tcap_j_cm3_c": 3.85, "fusion_temp_c": 1084.0},
-    "copper_clad_rod_20": {"name": "Varilla de acero recubierta de cobre 20 %", "alpha": 0.00378, "k0_c": 245.0,
-                           "resistivity_micro_ohm_cm": 8.62, "tcap_j_cm3_c": 3.85, "fusion_temp_c": 1084.0},
-    "aluminum_clad_steel": {"name": "Acero recubierto de aluminio", "alpha": 0.00360, "k0_c": 258.0,
-                            "resistivity_micro_ohm_cm": 8.48, "tcap_j_cm3_c": 3.58, "fusion_temp_c": 657.0},
-    "steel_1020": {"name": "Acero 1020", "alpha": 0.00160, "k0_c": 605.0,
-                   "resistivity_micro_ohm_cm": 15.9, "tcap_j_cm3_c": 3.28, "fusion_temp_c": 1510.0},
-    "stainless_clad_rod": {"name": "Varilla de acero inoxidable revestida", "alpha": 0.00160, "k0_c": 605.0,
-                            "resistivity_micro_ohm_cm": 17.5, "tcap_j_cm3_c": 4.44, "fusion_temp_c": 1400.0},
-    "zinc_coated_steel_rod": {"name": "Varilla de acero galvanizada", "alpha": 0.00320, "k0_c": 293.0,
-                              "resistivity_micro_ohm_cm": 20.1, "tcap_j_cm3_c": 3.93, "fusion_temp_c": 419.0},
-    "stainless_304": {"name": "Acero inoxidable 304", "alpha": 0.00130, "k0_c": 749.0,
-                      "resistivity_micro_ohm_cm": 72.0, "tcap_j_cm3_c": 4.03, "fusion_temp_c": 1400.0},
+    material["id"]: {"name": material["name"], "alpha": material["alpha_r"], "k0_c": material["k0_c"],
+                     "resistivity_micro_ohm_cm": material["resistivity_micro_ohm_cm"],
+                     "tcap_j_cm3_c": material["tcap_j_cm3_c"], "fusion_temp_c": material["fusion_temp_c"],
+                     "source": material["source"]}
+    for material in _PROFILE["materials"]
 }
+# Retired identifiers still found in saved artifacts resolve to their current material.
+MATERIAL_ALIASES: dict[str, str] = dict(_PROFILE["aliases"])
+MATERIALS.update({alias: MATERIALS[target] for alias, target in MATERIAL_ALIASES.items()})
 
 # Nominal metric sections used only to suggest a next standard size, not to
 # imply compliance with a particular procurement catalogue.
@@ -63,7 +54,8 @@ def calculate_thermal_size(current_a: float, duration_s: float, ambient_temp_c: 
         raise ValueError("La sección elegida debe ser positiva.")
     if ambient_temp_c < -273.15 or max_temp_c <= ambient_temp_c:
         raise ValueError("La temperatura máxima debe ser superior a la temperatura ambiente.")
-    material = MATERIALS[material_id]
+    canonical_id = MATERIAL_ALIASES.get(material_id, material_id)
+    material = MATERIALS[canonical_id]
     if material["k0_c"] + ambient_temp_c <= 0:
         raise ValueError("La temperatura ambiente está fuera del rango válido del modelo térmico.")
     if max_temp_c > material["fusion_temp_c"]:
@@ -96,8 +88,10 @@ def calculate_thermal_size(current_a: float, duration_s: float, ambient_temp_c: 
         "thermal_duration_s": duration_s,
         "ambient_temperature_c": ambient_temp_c,
         "maximum_temperature_c": max_temp_c,
-        "material_id": material_id,
+        "material_id": canonical_id,
+        **({"material_id_requested": material_id} if canonical_id != material_id else {}),
         "material_name": material["name"],
+        "material_constants_source": material["source"],
         "selected_section_mm2": selected,
         "selected_section_kcmil": selected / 0.506707,
         "minimum_section_mm2": minimum,
