@@ -35,7 +35,11 @@ CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "w
 
 FROM base AS render-worker
 USER root
-RUN pip install --no-cache-dir '.[render]' && playwright install --with-deps chromium
-USER spat
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# libatomic1 is required by Playwright's bundled node driver on python-slim.
+RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir '.[render]' \
+    && playwright install --with-deps chromium
+USER spat
 CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "-Q", "render"]
