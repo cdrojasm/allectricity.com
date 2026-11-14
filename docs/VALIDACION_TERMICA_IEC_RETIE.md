@@ -5,8 +5,23 @@ Contraste hecho el 2026-11-14 con IEC 60364-5-54:2011 (edición 3.0, copia licen
 `backend/src/infrastructure/calculations/conductor_thermal_profiles.py`, datos en `backend/src/domain/spat/thermal_profiles/`
 y pruebas en `tests/infrastructure/test_conductor_thermal_standards.py`.
 
-**Estado:** contraste técnico del equipo de desarrollo; no sustituye la firma independiente (ver `BACKLOG.md`). Los perfiles
-existen y se calculan, pero **aún no se eligen por proyecto**: eso depende de la «Matriz normativa».
+**Estado:** contraste técnico del equipo de desarrollo; no sustituye la firma independiente (ver `BACKLOG.md`). Cada artefacto
+elige su norma con `conductor.thermal_profile` (ver «Elección de la norma»).
+
+## Elección de la norma
+
+- **Dónde:** `conductor.thermal_profile` (`IEEE 80-2013` por defecto, `IEC 60364-5-54:2011` o `RETIE 2024`) y, solo para RETIE,
+  `conductor.voltage_level` (`medium_high_extra_high` por defecto o `low`). Solo se guardan cuando no son el valor por defecto,
+  de modo que los artefactos existentes quedan idénticos y no aparecen diferencias falsas entre versiones.
+- **Qué cambia por norma:** el material (cada norma tiene su lista) y cómo se usan las dos temperaturas. IEEE 80: ambiente y
+  máxima. IEC y RETIE en baja tensión: `ambient_temperature_c` es la temperatura inicial y `maximum_temperature_c` la final (t ≤ 5 s).
+  RETIE en media, alta y extra alta tensión: Tm y Kf salen de la tabla (el ambiente debe ser 40 °C y la temperatura máxima no se usa).
+- **Validación:** el API rechaza con 422 un material de otra norma, t > 5 s en IEC, o un ambiente distinto de 40 °C en la tabla de RETIE.
+- **Advertencias:** el resultado lleva `conductor_thermal.warnings` (también en la traza). Se copian a `model_warnings` con el
+  prefijo «Conductor (norma):», de modo que el estudio público, el panel del chat y el resumen del agente ya las muestran.
+  Hay dos: Kf de RETIE menor que el de IEEE 80-2013 para el mismo material, y una unión declarada que no corresponde a la fila
+  de RETIE (exotérmica ↔ soldada, mecánico ↔ apernada).
+- **Catálogo:** `GET /api/v1/perfiles-termicos` entrega las normas, sus materiales y qué entradas aplican; la interfaz lo usa.
 
 ## A7. IEC 60364-5-54:2011
 
@@ -47,6 +62,6 @@ etiqueta si corresponde. Además, la 40117 tiene régimen de transición (instal
 
 ## Pendiente
 
-- Elegir el perfil por proyecto (Matriz normativa) y mostrar la advertencia de RETIE en la traza y la interfaz.
+- Proponer la norma por defecto de cada proyecto según la Matriz normativa (hoy se elige a mano en cada artefacto).
 - Tabla 250-66 de la NTC 2050 para el conductor al electrodo en baja tensión.
 - IEC 60949, si se necesita el efecto no adiabático o tiempos mayores de 5 s.
