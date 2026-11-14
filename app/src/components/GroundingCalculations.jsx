@@ -59,6 +59,38 @@ const REQUIRED_DESIGN_FIELDS = [
   "split_factor",
 ];
 
+// Fallback until the backend catalog (/api/v1/perfiles-termicos) loads: the original IEEE 80-2013 choices.
+const FALLBACK_THERMAL_PROFILES = [
+  {
+    profile: "IEEE 80-2013",
+    label: "IEEE 80-2013",
+    modes: [
+      {
+        voltage_level: null,
+        temperature_inputs: "ambient_and_maximum",
+        max_duration_s: null,
+        note: "",
+        materials: [
+          { id: "copper_hard_drawn", name: "Cobre comercial duro" },
+          { id: "copper_annealed", name: "Cobre recocido" },
+          { id: "copper_clad_40", name: "Acero recubierto de cobre 40 %" },
+          { id: "copper_clad_30", name: "Acero recubierto de cobre 30 %" },
+          { id: "copper_clad_rod_17", name: "Varilla de acero recubierta de cobre 17 %" },
+          { id: "aluminum_clad_steel", name: "Acero recubierto de aluminio" },
+          { id: "steel_1020", name: "Acero 1020" },
+          { id: "stainless_clad_rod", name: "Varilla de acero inoxidable revestida" },
+          { id: "zinc_coated_steel_rod", name: "Varilla de acero galvanizada" },
+          { id: "stainless_304", name: "Acero inoxidable 304" },
+        ],
+      },
+    ],
+  },
+];
+const VOLTAGE_LEVEL_LABELS = {
+  medium_high_extra_high: "Media, alta y extra alta tensión",
+  low: "Baja tensión",
+};
+
 function isDesignComplete(design) {
   const numericFieldsPresent = REQUIRED_DESIGN_FIELDS.every(
     (key) =>
@@ -322,6 +354,7 @@ function GroundingCalculations({
     value_kind: "apparent_resistivity",
   });
   const [soilFileSource, setSoilFileSource] = useState(null);
+  const [thermalProfiles, setThermalProfiles] = useState(FALLBACK_THERMAL_PROFILES);
   // Fallback until the backend table (/api/v1/materiales-suelo) loads.
   const [soilMaterials, setSoilMaterials] = useState([
     { name: "Grava", rho: 3000, range: "1.000–10.000" },
@@ -378,6 +411,8 @@ function GroundingCalculations({
     conductor_material_id: "",
     conductor_section_mm2: "",
     conductor_joint_type: "",
+    conductor_thermal_profile: "IEEE 80-2013",
+    conductor_voltage_level: "medium_high_extra_high",
     conductor_maximum_temperature_c: "",
     thermal_duration_s: "",
     ambient_temperature_c: "",
@@ -418,6 +453,36 @@ function GroundingCalculations({
     return data;
   };
   const root = `/api/v1/projects/${project.id}/artefactos-diseno-tierras`;
+  const thermalProfile =
+    thermalProfiles.find((p) => p.profile === design.conductor_thermal_profile) ||
+    thermalProfiles[0];
+  const thermalMode =
+    thermalProfile.modes.find(
+      (m) => m.voltage_level === design.conductor_voltage_level,
+    ) || thermalProfile.modes[0];
+  const thermalFromTable = thermalMode.temperature_inputs === "table";
+  const thermalInitialFinal = thermalMode.temperature_inputs === "initial_and_final";
+  // A standard fixes which materials exist and how the two temperatures are used, so a change of standard,
+  // level or material re-aligns the dependent fields.
+  function updateThermal(patch) {
+    const next = { ...design, ...patch };
+    const profile =
+      thermalProfiles.find((p) => p.profile === next.conductor_thermal_profile) ||
+      thermalProfiles[0];
+    const mode =
+      profile.modes.find((m) => m.voltage_level === next.conductor_voltage_level) ||
+      profile.modes[0];
+    if (!mode.materials.some((m) => m.id === next.conductor_material_id))
+      next.conductor_material_id = mode.materials[0].id;
+    if (mode.temperature_inputs === "table") {
+      const row = mode.materials.find((m) => m.id === next.conductor_material_id);
+      next.ambient_temperature_c = "40";
+      next.conductor_maximum_temperature_c = String(row?.tm_c ?? "");
+    }
+    if (mode.max_duration_s && Number(next.thermal_duration_s) > mode.max_duration_s)
+      next.thermal_duration_s = String(mode.max_duration_s);
+    setDesign(next);
+  }
   const tableFiles = files.filter(
     (file) =>
       file.status === "available" &&
@@ -468,6 +533,11 @@ function GroundingCalculations({
       m.min_ohm_m === m.max_ohm_m
         ? m.min_ohm_m.toLocaleString("es-CO")
         : `${m.min_ohm_m.toLocaleString("es-CO")}–${m.max_ohm_m.toLocaleString("es-CO")}`;
+    request("/api/v1/perfiles-termicos")
+      .then((catalog) => {
+        if (live && catalog.length) setThermalProfiles(catalog);
+      })
+      .catch(() => {});
     request("/api/v1/materiales-suelo")
       .then((table) => {
         if (live && table.length)
@@ -584,6 +654,10 @@ function GroundingCalculations({
             material_id: design.conductor_material_id,
             cross_section_mm2: Number(design.conductor_section_mm2),
             joint_type: design.conductor_joint_type,
+            thermal_profile: design.conductor_thermal_profile,
+            ...(design.conductor_thermal_profile === "RETIE 2024"
+              ? { voltage_level: design.conductor_voltage_level }
+              : {}),
             maximum_temperature_c: Number(
               design.conductor_maximum_temperature_c,
             ),
@@ -1385,44 +1459,58 @@ function GroundingCalculations({
             </p>
             <div className="calc-form-grid">
               <label>
+                Norma de dimensionamiento
+                <select
+                  value={design.conductor_thermal_profile}
+                  onChange={(e) =>
+                    updateThermal({ conductor_thermal_profile: e.target.value })
+                  }
+                >
+                  {thermalProfiles.map((p) => (
+                    <option key={p.profile} value={p.profile}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {thermalProfile.modes.length > 1 && (
+                <label>
+                  Nivel de tensión
+                  <select
+                    value={thermalMode.voltage_level}
+                    onChange={(e) =>
+                      updateThermal({ conductor_voltage_level: e.target.value })
+                    }
+                  >
+                    {thermalProfile.modes.map((m) => (
+                      <option key={m.voltage_level} value={m.voltage_level}>
+                        {VOLTAGE_LEVEL_LABELS[m.voltage_level] || m.voltage_level}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <label>
                 Material
                 <select
                   value={
-                    design.conductor_material_id === "copper_clad_rod_20"
+                    design.conductor_material_id === "copper_clad_rod_20" &&
+                    thermalProfile.profile === "IEEE 80-2013"
                       ? "copper_clad_rod_17"
                       : design.conductor_material_id
                   }
                   onChange={(e) =>
-                    setDesign({
-                      ...design,
-                      conductor_material_id: e.target.value,
-                    })
+                    updateThermal({ conductor_material_id: e.target.value })
                   }
                 >
-                  <option value="copper_hard_drawn">
-                    Cobre comercial duro
-                  </option>
-                  <option value="copper_annealed">Cobre recocido</option>
-                  <option value="copper_clad_40">
-                    Acero recubierto de cobre 40 %
-                  </option>
-                  <option value="copper_clad_30">
-                    Acero recubierto de cobre 30 %
-                  </option>
-                  <option value="copper_clad_rod_17">
-                    Varilla de acero recubierta de cobre 17 %
-                  </option>
-                  <option value="aluminum_clad_steel">
-                    Acero recubierto de aluminio
-                  </option>
-                  <option value="steel_1020">Acero 1020</option>
-                  <option value="stainless_clad_rod">
-                    Varilla de acero inoxidable revestida
-                  </option>
-                  <option value="zinc_coated_steel_rod">
-                    Varilla de acero galvanizada
-                  </option>
-                  <option value="stainless_304">Acero inoxidable 304</option>
+                  {thermalMode.materials.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                      {m.tm_c != null
+                        ? ` · Tₘ ${m.tm_c} °C · Kf ${m.kf}`
+                        : ""}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label>
@@ -1458,11 +1546,14 @@ function GroundingCalculations({
                 />
               </label>
               <label>
-                Temperatura máxima Tₘ (°C)
+                {thermalInitialFinal
+                  ? "Temperatura final θf (°C)"
+                  : "Temperatura máxima Tₘ (°C)"}
                 <input
                   type="number"
                   min="-50"
                   step="any"
+                  disabled={thermalFromTable}
                   value={design.conductor_maximum_temperature_c}
                   onChange={(e) =>
                     setDesign({
@@ -1477,6 +1568,7 @@ function GroundingCalculations({
                 <input
                   type="number"
                   min="0.001"
+                  max={thermalMode.max_duration_s ?? undefined}
                   step="any"
                   value={design.thermal_duration_s}
                   onChange={(e) =>
@@ -1485,11 +1577,14 @@ function GroundingCalculations({
                 />
               </label>
               <label>
-                Temperatura ambiente Tₐ (°C)
+                {thermalInitialFinal
+                  ? "Temperatura inicial θi (°C)"
+                  : "Temperatura ambiente Tₐ (°C)"}
                 <input
                   type="number"
                   min="-50"
                   step="any"
+                  disabled={thermalFromTable}
                   value={design.ambient_temperature_c}
                   onChange={(e) =>
                     setDesign({
@@ -1500,6 +1595,7 @@ function GroundingCalculations({
                 />
               </label>
             </div>
+            {thermalMode.note && <p className="muted-label">{thermalMode.note}</p>}
           </details>
 
           <details className="safety-advanced">
@@ -1597,8 +1693,13 @@ function GroundingCalculations({
                 {calculation.result.conductor_thermal
                   .suggested_standard_section_mm2 ??
                   "supera la tabla orientativa"}{" "}
-                mm².
+                mm² · norma {calculation.result.conductor_thermal.profile}.
               </p>
+              {calculation.result.conductor_thermal.warnings?.map((w) => (
+                <small className="calc-warning" role="note" key={w}>
+                  Conductor: {w}
+                </small>
+              ))}
               <SurfacePotentialMap
                 field={calculation.result.surface_potential}
               />
