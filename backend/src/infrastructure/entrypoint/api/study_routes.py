@@ -90,6 +90,18 @@ def _public_study(db, slug, access=None, render=False):
     return study
 
 
+RESULT_DETAIL_KEYS = ("grid_resistance_ohm", "gpr_v", "injected_current_a", "safety", "conductor_thermal", "surface_potential", "model_warnings")
+
+
+def _calculation_detail(calculation):
+    """What the public study draws from a completed calculation: the same fields the workspace results panel
+    shows, so the study and the workspace cannot reach different conclusions from the same stored result."""
+    result = calculation.get("result") or {}
+    parameters = calculation.get("parameters") or {}
+    return {"result": {key: result[key] for key in RESULT_DETAIL_KEYS if key in result},
+            "parameters": {key: parameters.get(key) for key in ("touch_reach_m", "safety_standards")}}
+
+
 def _payload(db, study):
     artifact = db.one("artefacto_diseno_tierras", project_id=study["project_id"], artifact_id=study["artifact_id"], version=study["artifact_version"])
     project = db.one("projects", id=study["project_id"])
@@ -106,11 +118,14 @@ def _payload(db, study):
         if logo:
             config["logo_url"] = storage_client().presign_download(logo["target_bucket"], logo["object_key"], logo["filename"])
     references = [{"path": path, "reference": value} for path, value in ((artifact.get("origin") or {}).get("provenance") or {}).items() if value]
+    calculation_detail = None
     calculations = [row for row in db.many("calculos_potencial_tierras", project_id=study["project_id"], artifact_id=study["artifact_id"], artifact_version=study["artifact_version"], limit=1000) if row["status"] == "completed"]
     if calculations:
         from src.infrastructure.agents.calculation_summary import summarize
-        snapshot = {**snapshot, "result": summarize(max(calculations, key=lambda row: row["created_at"]))}
-    return {"study": {**{k: study[k] for k in ("id", "slug", "title", "access", "status", "artifact_id", "artifact_version", "expires_at", "published_at", "updated_at")}, "config": config}, "project": {"name": project["name"], "description": project["description"], "city": project.get("city"), "country": project.get("country")}, "artifact": snapshot, "references": references, "draft": bool(unconfirmed), "unconfirmed_critical": unconfirmed, "has_newer_version": bool(latest and latest["version"] > study["artifact_version"])}
+        latest_calculation = max(calculations, key=lambda row: row["created_at"])
+        snapshot = {**snapshot, "result": summarize(latest_calculation)}
+        calculation_detail = _calculation_detail(latest_calculation)
+    return {"study": {**{k: study[k] for k in ("id", "slug", "title", "access", "status", "artifact_id", "artifact_version", "expires_at", "published_at", "updated_at")}, "config": config}, "project": {"name": project["name"], "description": project["description"], "city": project.get("city"), "country": project.get("country")}, "artifact": snapshot, "calculation": calculation_detail, "references": references, "draft": bool(unconfirmed), "unconfirmed_critical": unconfirmed, "has_newer_version": bool(latest and latest["version"] > study["artifact_version"])}
 
 
 @router.get("")
