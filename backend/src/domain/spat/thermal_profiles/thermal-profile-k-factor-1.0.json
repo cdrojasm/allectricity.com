@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Thermal sizing profile, k-factor form",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "standard",
+    "edition",
+    "equation_form",
+    "reference",
+    "max_duration_s",
+    "materials",
+    "published_k"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "profile_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "standard": {
+      "type": "string",
+      "minLength": 1
+    },
+    "edition": {
+      "type": "string",
+      "minLength": 1
+    },
+    "equation_form": {
+      "const": "k_factor"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1
+    },
+    "max_duration_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 60
+    },
+    "materials": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "beta_c",
+          "qc_j_c_mm3",
+          "rho20_ohm_mm",
+          "published_sqrt_term",
+          "source"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$",
+            "maxLength": 60
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "beta_c": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1000
+          },
+          "qc_j_c_mm3": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 0.1
+          },
+          "rho20_ohm_mm": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 0.01
+          },
+          "published_sqrt_term": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1000
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "published_k": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "material_id",
+          "condition",
+          "initial_c",
+          "final_c",
+          "k",
+          "source"
+        ],
+        "properties": {
+          "material_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "condition": {
+            "type": "string",
+            "minLength": 1
+          },
+          "initial_c": {
+            "type": "number",
+            "minimum": -50,
+            "maximum": 500
+          },
+          "final_c": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 2000
+          },
+          "k": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1000
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

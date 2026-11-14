@@ -1,0 +1,184 @@
+{
+  "schema_version": "1.0",
+  "profile_id": "IEC 60364-5-54:2011",
+  "standard": "IEC 60364-5-54",
+  "edition": "3.0 (2011-03)",
+  "equation_form": "k_factor",
+  "reference": "IEC 60364-5-54:2011, 543.1.2 (S = I·√t / k) and Annex A (k from Table A.54.1 parameters)",
+  "max_duration_s": 5.0,
+  "materials": [
+    {
+      "id": "copper",
+      "name": "Cobre",
+      "beta_c": 234.5,
+      "qc_j_c_mm3": 0.00345,
+      "rho20_ohm_mm": 1.7241e-05,
+      "published_sqrt_term": 226,
+      "source": "IEC 60364-5-54:2011, Table A.54.1"
+    },
+    {
+      "id": "aluminium",
+      "name": "Aluminio",
+      "beta_c": 228.0,
+      "qc_j_c_mm3": 0.0025,
+      "rho20_ohm_mm": 2.8264e-05,
+      "published_sqrt_term": 148,
+      "source": "IEC 60364-5-54:2011, Table A.54.1"
+    },
+    {
+      "id": "steel",
+      "name": "Acero",
+      "beta_c": 202.0,
+      "qc_j_c_mm3": 0.0038,
+      "rho20_ohm_mm": 0.000138,
+      "published_sqrt_term": 78,
+      "source": "IEC 60364-5-54:2011, Table A.54.1"
+    }
+  ],
+  "published_k": [
+    {
+      "material_id": "copper",
+      "condition": "Visible y en zona restringida",
+      "initial_c": 30,
+      "final_c": 500,
+      "k": 228,
+      "source": "IEC 60364-5-54:2011, Table A.54.6"
+    },
+    {
+      "material_id": "aluminium",
+      "condition": "Visible y en zona restringida",
+      "initial_c": 30,
+      "final_c": 300,
+      "k": 125,
+      "source": "IEC 60364-5-54:2011, Table A.54.6"
+    },
+    {
+      "material_id": "steel",
+      "condition": "Visible y en zona restringida",
+      "initial_c": 30,
+      "final_c": 500,
+      "k": 82,
+      "source": "IEC 60364-5-54:2011, Table A.54.6"
+    },
+    {
+      "material_id": "copper",
+      "condition": "Condiciones normales",
+      "initial_c": 30,
+      "final_c": 200,
+      "k": 159,
+      "source": "IEC 60364-5-54:2011, Table A.54.6"
+    },
+    {
+      "material_id": "aluminium",
+      "condition": "Condiciones normales",
+      "initial_c": 30,
+      "final_c": 200,
+      "k": 105,
+      "source": "IEC 60364-5-54:2011, Table A.54.6"
+    },
+    {
+      "material_id": "steel",
+      "condition": "Condiciones normales",
+      "initial_c": 30,
+      "final_c": 200,
+      "k": 58,
+      "source": "IEC 60364-5-54:2011, Table A.54.6"
+    },
+    {
+      "material_id": "copper",
+      "condition": "Riesgo de incendio",
+      "initial_c": 30,
+      "final_c": 150,
+      "k": 138,
+      "source": "IEC 60364-5-54:2011, Table A.54.6"
+    },
+    {
+      "material_id": "aluminium",
+      "condition": "Riesgo de incendio",
+      "initial_c": 30,
+      "final_c": 150,
+      "k": 91,
+      "source": "IEC 60364-5-54:2011, Table A.54.6"
+    },
+    {
+      "material_id": "steel",
+      "condition": "Riesgo de incendio",
+      "initial_c": 30,
+      "final_c": 150,
+      "k": 50,
+      "source": "IEC 60364-5-54:2011, Table A.54.6"
+    },
+    {
+      "material_id": "copper",
+      "condition": "Contacto con cubierta de PVC",
+      "initial_c": 30,
+      "final_c": 200,
+      "k": 159,
+      "source": "IEC 60364-5-54:2011, Table A.54.3"
+    },
+    {
+      "material_id": "aluminium",
+      "condition": "Contacto con cubierta de PVC",
+      "initial_c": 30,
+      "final_c": 200,
+      "k": 105,
+      "source": "IEC 60364-5-54:2011, Table A.54.3"
+    },
+    {
+      "material_id": "steel",
+      "condition": "Contacto con cubierta de PVC",
+      "initial_c": 30,
+      "final_c": 200,
+      "k": 58,
+      "source": "IEC 60364-5-54:2011, Table A.54.3"
+    },
+    {
+      "material_id": "copper",
+      "condition": "Contacto con cubierta de polietileno",
+      "initial_c": 30,
+      "final_c": 150,
+      "k": 138,
+      "source": "IEC 60364-5-54:2011, Table A.54.3"
+    },
+    {
+      "material_id": "aluminium",
+      "condition": "Contacto con cubierta de polietileno",
+      "initial_c": 30,
+      "final_c": 150,
+      "k": 91,
+      "source": "IEC 60364-5-54:2011, Table A.54.3"
+    },
+    {
+      "material_id": "steel",
+      "condition": "Contacto con cubierta de polietileno",
+      "initial_c": 30,
+      "final_c": 150,
+      "k": 50,
+      "source": "IEC 60364-5-54:2011, Table A.54.3"
+    },
+    {
+      "material_id": "copper",
+      "condition": "Contacto con cubierta de CSP",
+      "initial_c": 30,
+      "final_c": 220,
+      "k": 166,
+      "source": "IEC 60364-5-54:2011, Table A.54.3"
+    },
+    {
+      "material_id": "aluminium",
+      "condition": "Contacto con cubierta de CSP",
+      "initial_c": 30,
+      "final_c": 220,
+      "k": 110,
+      "source": "IEC 60364-5-54:2011, Table A.54.3"
+    },
+    {
+      "material_id": "steel",
+      "condition": "Contacto con cubierta de CSP",
+      "initial_c": 30,
+      "final_c": 220,
+      "k": 60,
+      "source": "IEC 60364-5-54:2011, Table A.54.3"
+    }
+  ]
+}

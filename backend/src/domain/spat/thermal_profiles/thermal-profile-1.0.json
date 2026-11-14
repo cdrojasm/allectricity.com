@@ -10,7 +10,7 @@
     "profile_id": {"type": "string", "minLength": 1},
     "standard": {"type": "string", "minLength": 1},
     "edition": {"type": "string", "minLength": 1},
-    "equation_form": {"enum": ["tcap", "k_factor", "kf"]},
+    "equation_form": {"const": "tcap"},
     "reference": {"type": "string", "minLength": 1},
     "default_ambient_c": {"type": "number", "minimum": -50, "maximum": 200},
     "aliases": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},

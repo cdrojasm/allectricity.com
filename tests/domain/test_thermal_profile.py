@@ -38,3 +38,30 @@ def test_incomplete_or_inconsistent_profiles_are_rejected(mutate, message) -> No
     mutate(broken)
     with pytest.raises(ValueError, match=message):
         validate_profile(broken)
+
+
+def test_iec_and_retie_profiles_load_and_carry_their_sources() -> None:
+    iec, retie = load_profile("IEC 60364-5-54:2011"), load_profile("RETIE 2024")
+    assert iec["equation_form"] == "k_factor" and iec["max_duration_s"] == 5.0 and len(iec["published_k"]) == 18
+    assert retie["equation_form"] == "kf" and len(retie["materials"]) == 14
+    assert all("Tabla 3.12.2.2.a" in m["source"] for m in retie["materials"])
+    assert {m["joint_type"] for m in retie["materials"] if "joint_type" in m} == {"exothermic", "mechanical"}
+
+
+@pytest.mark.parametrize("profile_id,mutate,message", [
+    ("IEC 60364-5-54:2011", lambda p: p["materials"][0].pop("beta_c"), "beta_c"),
+    ("IEC 60364-5-54:2011", lambda p: p["published_k"][0].update(material_id="brass"), "desconocido"),
+    ("IEC 60364-5-54:2011", lambda p: p["published_k"][0].update(final_c=10), "no supera"),
+    ("IEC 60364-5-54:2011", lambda p: p["materials"].append(copy.deepcopy(p["materials"][0])), "repetidos"),
+    ("IEC 60364-5-54:2011", lambda p: p.update(max_duration_s=0), "max_duration_s"),
+    ("RETIE 2024", lambda p: p["materials"][0].pop("kf"), "kf"),
+    ("RETIE 2024", lambda p: p["materials"][0].update(joint_type="bolted"), "joint_type"),
+    ("RETIE 2024", lambda p: p["materials"].append(copy.deepcopy(p["materials"][0])), "repetidos"),
+    ("RETIE 2024", lambda p: p["voltage_levels"].pop("low"), "low"),
+    ("RETIE 2024", lambda p: p.update(equation_form="adiabatic"), "equation_form"),
+])
+def test_incomplete_iec_and_retie_profiles_are_rejected(profile_id, mutate, message) -> None:
+    broken = copy.deepcopy(load_profile(profile_id))
+    mutate(broken)
+    with pytest.raises(ValueError, match=message):
+        validate_profile(broken)

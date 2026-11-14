@@ -1,0 +1,160 @@
+{
+  "schema_version": "1.0",
+  "profile_id": "RETIE 2024",
+  "standard": "RETIE",
+  "edition": "Resolución 40117 del 2 de abril de 2024",
+  "equation_form": "kf",
+  "reference": "Resolución Minenergía 40117 de 2024, Libro 3, 3.12.2.2, Ecuaciones 3 y 4, Tabla 3.12.2.2.a",
+  "issuing_act": "Resolución 40117 del 2 de abril de 2024 (Ministerio de Minas y Energía)",
+  "default_ambient_c": 40.0,
+  "area_divisor_kcmil_per_mm2": 1.9737,
+  "voltage_levels": {
+    "low": {
+      "equation": "A = I·√t / K, con K del Anexo A de IEC 60364-5-54",
+      "delegates_to": "IEC 60364-5-54:2011",
+      "alternative": "Tabla 250-66 de la NTC 2050 segunda actualización (no cargada)"
+    },
+    "medium_high_extra_high": {
+      "equation": "A[mm²] = I[kA]·Kf·√tc / 1,9737",
+      "table": "Tabla 3.12.2.2.a"
+    }
+  },
+  "materials": [
+    {
+      "id": "copper_soft",
+      "name": "Cobre blando",
+      "conductivity_pct": 100,
+      "tm_c": 1083,
+      "kf": 7.0,
+      "source": "Resolución Minenergía 40117 de 2024, Libro 3, Tabla 3.12.2.2.a, fila 'Cobre blando'",
+      "ieee80_2013_material_id": "copper_annealed"
+    },
+    {
+      "id": "copper_hard_exothermic",
+      "name": "Cobre duro con soldadura exotérmica",
+      "conductivity_pct": 97,
+      "tm_c": 1084,
+      "kf": 7.06,
+      "source": "Resolución Minenergía 40117 de 2024, Libro 3, Tabla 3.12.2.2.a, fila 'Cobre duro cuando se utiliza soldadura exotérmica'",
+      "ieee80_2013_material_id": "copper_hard_drawn",
+      "joint_type": "exothermic"
+    },
+    {
+      "id": "copper_hard_mechanical",
+      "name": "Cobre duro con conector mecánico",
+      "conductivity_pct": 97,
+      "tm_c": 250,
+      "kf": 11.78,
+      "source": "Resolución Minenergía 40117 de 2024, Libro 3, Tabla 3.12.2.2.a, fila 'Cobre duro cuando se utiliza conector mecánico'",
+      "ieee80_2013_material_id": "copper_hard_drawn",
+      "joint_type": "mechanical"
+    },
+    {
+      "id": "copper_clad_wire_40",
+      "name": "Alambre de acero recubierto de cobre 40 %",
+      "conductivity_pct": 40,
+      "tm_c": 1084,
+      "kf": 10.45,
+      "source": "Resolución Minenergía 40117 de 2024, Libro 3, Tabla 3.12.2.2.a, fila 'Alambre de acero recubierto de cobre (40)'",
+      "ieee80_2013_material_id": "copper_clad_40"
+    },
+    {
+      "id": "copper_clad_wire_30",
+      "name": "Alambre de acero recubierto de cobre 30 %",
+      "conductivity_pct": 30,
+      "tm_c": 1084,
+      "kf": 14.64,
+      "source": "Resolución Minenergía 40117 de 2024, Libro 3, Tabla 3.12.2.2.a, fila 'Alambre de acero recubierto de cobre (30)'",
+      "ieee80_2013_material_id": "copper_clad_30",
+      "notes": "Kf impreso 14,64 es el de la varilla; IEEE 80 da 12,06 para el alambre de 30 %. Se usa el impreso (conservador)."
+    },
+    {
+      "id": "copper_clad_rod_20",
+      "name": "Varilla de acero recubierta de cobre 20 %",
+      "conductivity_pct": 20,
+      "tm_c": 1084,
+      "kf": 14.64,
+      "source": "Resolución Minenergía 40117 de 2024, Libro 3, Tabla 3.12.2.2.a, fila 'Varilla de acero recubierta de cobre'",
+      "ieee80_2013_material_id": "copper_clad_rod_17",
+      "notes": "Nota 1: el recubrimiento de cobre no debe ser menor a 0,25 mm. IEEE 80-2013 la trata como varilla de 17 %."
+    },
+    {
+      "id": "aluminium_ec",
+      "name": "Aluminio grado EC",
+      "conductivity_pct": 61,
+      "tm_c": 657,
+      "kf": 12.12,
+      "source": "Resolución Minenergía 40117 de 2024, Libro 3, Tabla 3.12.2.2.a, fila 'Aluminio grado EC'",
+      "ieee80_2013_material_id": null,
+      "notes": "El Libro 3 (nota b) prohíbe el aluminio enterrado."
+    },
+    {
+      "id": "aluminium_alloy_5005",
+      "name": "Aleación de aluminio 5005",
+      "conductivity_pct": 53.5,
+      "tm_c": 652,
+      "kf": 12.41,
+      "source": "Resolución Minenergía 40117 de 2024, Libro 3, Tabla 3.12.2.2.a, fila 'Aleación de aluminio 5005'",
+      "ieee80_2013_material_id": null,
+      "notes": "El Libro 3 (nota b) prohíbe el aluminio enterrado."
+    },
+    {
+      "id": "aluminium_alloy_6201",
+      "name": "Aleación de aluminio 6201",
+      "conductivity_pct": 52.5,
+      "tm_c": 654,
+      "kf": 12.47,
+      "source": "Resolución Minenergía 40117 de 2024, Libro 3, Tabla 3.12.2.2.a, fila 'Aleación de aluminio 6201'",
+      "ieee80_2013_material_id": null,
+      "notes": "El Libro 3 (nota b) prohíbe el aluminio enterrado."
+    },
+    {
+      "id": "aluminum_clad_steel",
+      "name": "Alambre de acero recubierto de aluminio",
+      "conductivity_pct": 20.3,
+      "tm_c": 657,
+      "kf": 17.2,
+      "source": "Resolución Minenergía 40117 de 2024, Libro 3, Tabla 3.12.2.2.a, fila 'Alambre de acero recubierto de aluminio'",
+      "ieee80_2013_material_id": "aluminum_clad_steel",
+      "notes": "El Libro 3 (nota b) prohíbe el aluminio enterrado."
+    },
+    {
+      "id": "steel_1020",
+      "name": "Acero 1020",
+      "conductivity_pct": 10.8,
+      "tm_c": 1510,
+      "kf": 15.95,
+      "source": "Resolución Minenergía 40117 de 2024, Libro 3, Tabla 3.12.2.2.a, fila 'Acero 1020'",
+      "ieee80_2013_material_id": "steel_1020",
+      "notes": "Kf de la edición 2000 de IEEE 80; la edición 2013 da 18,39."
+    },
+    {
+      "id": "stainless_clad_rod",
+      "name": "Varilla de acero recubierta en acero inoxidable",
+      "conductivity_pct": 9.8,
+      "tm_c": 1400,
+      "kf": 14.72,
+      "source": "Resolución Minenergía 40117 de 2024, Libro 3, Tabla 3.12.2.2.a, fila 'Varilla de acero recubierta en acero inoxidable'",
+      "ieee80_2013_material_id": "stainless_clad_rod"
+    },
+    {
+      "id": "zinc_coated_steel_rod",
+      "name": "Varilla de acero con baño de zinc (galvanizado)",
+      "conductivity_pct": 8.5,
+      "tm_c": 419,
+      "kf": 28.96,
+      "source": "Resolución Minenergía 40117 de 2024, Libro 3, Tabla 3.12.2.2.a, fila 'Varilla de acero con baño de zinc (galvanizado)'",
+      "ieee80_2013_material_id": "zinc_coated_steel_rod",
+      "notes": "La nota c permite usar estos parámetros para cables de acero galvanizado."
+    },
+    {
+      "id": "stainless_304",
+      "name": "Acero inoxidable 304",
+      "conductivity_pct": 2.4,
+      "tm_c": 1400,
+      "kf": 30.05,
+      "source": "Resolución Minenergía 40117 de 2024, Libro 3, Tabla 3.12.2.2.a, fila 'Acero inoxidable 304'",
+      "ieee80_2013_material_id": "stainless_304"
+    }
+  ]
+}
