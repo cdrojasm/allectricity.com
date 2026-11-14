@@ -1,10 +1,50 @@
 import React, { useEffect, useRef, useState } from "react";
+import { SurfacePotentialMap } from "./GroundingCalculations.jsx";
+import { criterionLabel, evaluateResult, formatNumber, verdictLabels } from "../resultInterpretation.js";
 
 async function jsonRequest(url, options = {}) {
   const response = await fetch(url, options);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.detail || "No se pudo completar la operación.");
   return body;
+}
+
+const display = (value, unit = "", digits = 2) => (value === undefined || value === null || value === "" ? "—" : `${formatNumber(value, digits)}${unit ? ` ${unit}` : ""}`);
+
+function StudyInputs({ artifact, version }) {
+  const geometry = artifact.geometry || {}; const fault = artifact.fault || {}; const conductor = artifact.conductor || {}; const layers = artifact.soil_layers || [];
+  const spacing = geometry.conductor_spacing_x_m && geometry.conductor_spacing_y_m ? `${display(geometry.conductor_spacing_x_m, "", 2)} × ${display(geometry.conductor_spacing_y_m, "", 2)} m` : display(geometry.conductor_spacing_m, "m");
+  const groups = [
+    ["Malla", [["Dimensiones", `${display(geometry.length_m, "", 2)} × ${display(geometry.width_m, "", 2)} m`], ["Retícula", spacing], ["Profundidad", display(geometry.burial_depth_m, "m")], ["Varillas", geometry.rods_count ? `${geometry.rods_count} × ${display(geometry.rod_length_m, "m")}` : "Sin varillas"]]],
+    ["Falla", [["Corriente", display(fault.current_a, "A", 0)], ["Tiempo de despeje", display(fault.clearing_time_s, "s")], ["Capa superficial", fault.surface_resistivity_ohm_m ? `${display(fault.surface_resistivity_ohm_m, "Ω·m", 0)} · ${display(fault.surface_thickness_m, "m")}` : "Sin capa superficial"]]],
+    ["Conductor", [["Material", conductor.material_name || conductor.material_id || "—"], ["Sección", display(conductor.cross_section_mm2, "mm²")]]],
+  ];
+  return <div className="study-inputs">
+    {groups.map(([title, rows]) => <div className="study-input-group" key={title}><h3>{title}</h3><dl>{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></div>)}
+    <div className="study-input-group"><h3>Suelo</h3>{layers.length ? <dl>{layers.map((layer, index) => <div key={index}><dt>Capa {index + 1}{layer.material ? ` · ${layer.material}` : ""}</dt><dd>{display(layer.resistivity_ohm_m, "Ω·m", 1)}{layer.depth_m ? ` · ${display(layer.depth_m, "m")}` : " · semiinfinita"}</dd></div>)}</dl> : <p className="study-muted">Sin capas registradas.</p>}</div>
+    <p className="study-muted">Versión del artefacto: {version}</p>
+  </div>;
+}
+
+function StudyResult({ calculation, summary }) {
+  const result = calculation?.result;
+  if (!result?.safety) {
+    if (!summary?.verdict || summary.verdict === "no_evaluado") return <p className="study-muted" data-testid="study-verdict">Pendiente de cálculo.</p>;
+    return <><div className={`agent-verdict ${summary.verdict} study-verdict`} data-testid="study-verdict">{verdictLabels[summary.verdict] || summary.verdict}</div><p className="study-disclaimer" data-testid="study-disclaimer">Verificación de prefactibilidad; requiere revisión de un ingeniero competente.</p></>;
+  }
+  const { verdict, interpretation, safety } = evaluateResult(result);
+  const thermal = result.conductor_thermal;
+  const reach = Number(calculation.parameters?.touch_reach_m) > 0;
+  return <div className="study-result-view">
+    <div className={`agent-verdict ${verdict} study-verdict`} data-testid="study-verdict">{verdictLabels[verdict]}</div>
+    <div className="study-interpretation" data-testid="study-interpretation"><div><small>Restricción dominante</small><strong>{interpretation.constraint}</strong></div><div><small>Por qué</small><span>{interpretation.explanation}</span></div></div>
+    <div className="study-grid study-metrics"><div><small>Resistencia de malla</small><strong>{formatNumber(result.grid_resistance_ohm, 3)} Ω</strong></div><div><small>GPR</small><strong>{formatNumber(result.gpr_v)} V</strong></div><div><small>Corriente inyectada</small><strong>{formatNumber(result.injected_current_a)} A</strong></div></div>
+    {safety.map((standard) => <table className="study-table" key={standard.standard}><caption>{standard.standard}</caption><thead><tr><th>Criterio</th><th>Calculado</th><th>Tolerable</th><th>Margen</th><th>Estado</th></tr></thead><tbody>{(standard.criteria || []).map((criterion) => <tr key={criterion.criterion} className={criterion.status === "cumple" ? "" : "agent-fails"}><td>{criterionLabel(criterion.criterion)}</td><td>{formatNumber(criterion.actual_v)} V</td><td>{formatNumber(criterion.tolerable_v)} V</td><td>{formatNumber(100 * criterion.margin_rel)} %</td><td>{criterion.status === "cumple" ? "Cumple" : "No cumple"}</td></tr>)}</tbody></table>)}
+    {thermal && <p className={thermal.status === "cumple" ? "" : "agent-fails"} data-testid="study-thermal"><strong>Conductor (térmico):</strong> sección {formatNumber(thermal.selected_section_mm2)} mm² · mínima {formatNumber(thermal.minimum_section_mm2)} mm² · {thermal.status === "cumple" ? "cumple" : "no cumple"}</p>}
+    {result.surface_potential && <figure className="study-map" data-testid="study-map"><SurfacePotentialMap field={result.surface_potential}/><figcaption>Contacto evaluado sobre la malla ({formatNumber(result.surface_potential.grid_width_m)} × {formatNumber(result.surface_potential.grid_height_m)} m{reach ? `, ${calculation.parameters.touch_reach_m} m fuera del perímetro` : ", dentro del perímetro"}); paso en todo el terreno, salvo dentro de construcciones.</figcaption></figure>}
+    {result.model_warnings?.length > 0 && <div className="study-model-warnings"><strong>Advertencias del modelo</strong><ul>{result.model_warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
+    <p className="study-disclaimer" data-testid="study-disclaimer">Verificación de prefactibilidad; requiere revisión de un ingeniero competente.</p>
+  </div>;
 }
 
 export function PublicStudyPage({ slug }) {
@@ -16,7 +56,7 @@ export function PublicStudyPage({ slug }) {
   if (!data) return <main className="study-public"><div className="study-card">Cargando estudio…</div></main>;
   if (data.requires_password) return <main className="study-public"><div className="study-card"><h1>{data.study.title}</h1><p>Este estudio requiere una contraseña.</p><form onSubmit={(e) => { e.preventDefault(); load(`/api/v1/public/studies/${encodeURIComponent(slug)}/access`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) }); }}><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Contraseña"/><button className="button primary">Abrir estudio</button></form></div></main>;
   const { study, project, artifact } = data; const enabled = (id) => study.config?.sections?.find((s) => s.id === id)?.enabled !== false;
-  return <main className="study-public"><article className="study-document"><header className="study-header">{study.config?.logo_url && <img className="study-logo" src={study.config.logo_url} alt="Logo del estudio"/>}<div><div className="eyebrow">ESTUDIO DE PUESTA A TIERRA</div><h1>{study.title}</h1><p>{project.name}{project.city ? ` · ${project.city}` : ""}</p></div></header>{data.draft && <div className="study-warning">BORRADOR · contiene supuestos críticos sin confirmar.</div>}{data.has_newer_version && <div className="study-warning">Existe una versión más reciente. Este estudio conserva la versión {study.artifact_version} publicada.</div>}{enabled("summary") && <section><h2>Resumen</h2><p>{study.config?.sections?.find((s) => s.id === "summary")?.text || project.description || "Estudio calculado y trazable."}</p></section>}{enabled("inputs") && <section><h2>Entradas</h2><div className="study-grid"><div><small>Versión</small><strong>{study.artifact_version}</strong></div><div><small>Geometría</small><strong>{artifact.geometry?.length_m || "—"} × {artifact.geometry?.width_m || "—"} m</strong></div><div><small>Corriente de falla</small><strong>{artifact.fault?.current_a || "—"} A</strong></div></div><p>{study.config?.sections?.find((s) => s.id === "inputs")?.text}</p></section>}{enabled("results") && <section><h2>Resultado</h2><p>{study.config?.sections?.find((s) => s.id === "results")?.text}</p><pre className="study-result">{JSON.stringify(artifact.result || { estado: "Pendiente de cálculo" }, null, 2)}</pre></section>}{enabled("references") && <section><h2>Referencias y trazabilidad</h2><p>{study.config?.sections?.find((s) => s.id === "references")?.text || "Los valores publicados conservan su origen técnico."}</p>{data.references?.length > 0 && <ul className="study-references">{data.references.map((item) => <li key={item.path}><strong>{item.path}</strong> · {item.reference.ref || item.reference.note || item.reference.kind || "origen registrado"}</li>)}</ul>}</section>}<footer>{study.config?.show_terra_brand !== false && <span>Publicado con Terra</span>}<button className="button" onClick={() => window.print()}>Guardar como PDF</button></footer></article></main>;
+  return <main className="study-public"><article className="study-document"><header className="study-header">{study.config?.logo_url && <img className="study-logo" src={study.config.logo_url} alt="Logo del estudio"/>}<div><div className="eyebrow">ESTUDIO DE PUESTA A TIERRA</div><h1>{study.title}</h1><p>{project.name}{project.city ? ` · ${project.city}` : ""}</p></div></header>{data.draft && <div className="study-warning">BORRADOR · contiene supuestos críticos sin confirmar.</div>}{data.has_newer_version && <div className="study-warning">Existe una versión más reciente. Este estudio conserva la versión {study.artifact_version} publicada.</div>}{enabled("summary") && <section><h2>Resumen</h2><p>{study.config?.sections?.find((s) => s.id === "summary")?.text || project.description || "Estudio calculado y trazable."}</p></section>}{enabled("inputs") && <section data-testid="study-inputs"><h2>Entradas</h2><StudyInputs artifact={artifact} version={study.artifact_version}/><p>{study.config?.sections?.find((s) => s.id === "inputs")?.text}</p></section>}{enabled("results") && <section data-testid="study-results"><h2>Resultado</h2><p>{study.config?.sections?.find((s) => s.id === "results")?.text}</p><StudyResult calculation={data.calculation} summary={artifact.result}/></section>}{enabled("references") && <section><h2>Referencias y trazabilidad</h2><p>{study.config?.sections?.find((s) => s.id === "references")?.text || "Los valores publicados conservan su origen técnico."}</p>{data.references?.length > 0 && <ul className="study-references">{data.references.map((item) => <li key={item.path}><strong>{item.path}</strong> · {item.reference.ref || item.reference.note || item.reference.kind || "origen registrado"}</li>)}</ul>}</section>}<footer>{study.config?.show_terra_brand !== false && <span>Publicado con Terra</span>}<button className="button" onClick={() => window.print()}>Guardar como PDF</button></footer></article></main>;
 }
 
 function SectionEditor({ section, onChange, onGenerate }) {

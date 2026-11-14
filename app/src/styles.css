@@ -2518,3 +2518,25 @@ h2 {
 .session-expired-actions { display: flex; justify-content: center; gap: 9px; }
 .session-expired-actions .button { min-height: 39px; padding: 0 14px; }
 @media (max-width: 480px) { .session-expired-dialog { padding: 24px 18px; } }
+
+/* Estudio público: resultado legible (mismo veredicto que el panel Resultados del espacio de trabajo). */
+.study-inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.study-input-group { padding: 14px 16px; background: #f5f3ee; border-radius: 8px; }
+.study-input-group h3 { margin: 0 0 8px; font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; color: #746f66; }
+.study-input-group dl { margin: 0; display: grid; gap: 6px; }
+.study-input-group dl > div { display: flex; justify-content: space-between; gap: 12px; font-size: .88rem; }
+.study-input-group dt { color: #746f66; } .study-input-group dd { margin: 0; font-weight: 600; text-align: right; }
+.study-muted { color: #746f66; font-size: .85rem; margin: 0; }
+.study-verdict { margin: 0 0 14px; padding: 12px 14px; font-size: 1rem; }
+.study-interpretation { display: grid; gap: 10px; margin-bottom: 14px; padding: 14px 16px; border: 1px solid #dce9e3; border-radius: 8px; background: #f8fbfa; }
+.study-interpretation small { display: block; color: #74837d; }
+.study-metrics { margin-bottom: 14px; }
+.study-table { width: 100%; margin: 0 0 14px; border-collapse: collapse; font-size: .88rem; }
+.study-table caption { text-align: left; font-weight: 700; padding-bottom: 6px; }
+.study-table th, .study-table td { padding: 8px 10px; border-bottom: 1px solid #ebe7df; text-align: right; }
+.study-table th:first-child, .study-table td:first-child { text-align: left; }
+.study-table .agent-fails td { color: #a8443c; }
+.study-map { margin: 14px 0; } .study-map figcaption { margin-top: 8px; font-size: .8rem; color: #746f66; }
+.study-model-warnings { margin-top: 12px; font-size: .85rem; } .study-model-warnings ul { margin: 6px 0 0; padding-left: 20px; color: #746f66; }
+.study-disclaimer { margin: 16px 0 0; padding: 10px 12px; font-size: .82rem; color: #746f66; border-left: 3px solid #e1ddd5; }
+@media (max-width: 600px) { .study-document, .study-card { padding: 24px 18px; } .study-table { font-size: .78rem; } .study-table th, .study-table td { padding: 6px 4px; } }

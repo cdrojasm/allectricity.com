@@ -1,6 +1,7 @@
 import React, { Suspense, lazy, useEffect, useState } from "react";
 import { Activity, Box, ChevronRight, ExternalLink, Eye, FileText, PencilRuler, RefreshCw, Rotate3d, Settings2, Undo2, X } from "lucide-react";
 import { SurfacePotentialMap } from "./GroundingCalculations.jsx";
+import { evaluateResult, formatNumber, verdictLabels } from "../resultInterpretation.js";
 
 const fieldLabels = {
   name: "Nombre",
@@ -231,7 +232,6 @@ function ArtifactUpdateCard({ message, token, project, onView, onUndone }) {
 // three.js loads only when the 3D view opens.
 const Surface3D = lazy(() => import("./Surface3D.jsx"));
 
-const verdictLabels = { cumple: "Cumple", no_cumple: "No cumple", no_evaluable: "No evaluable" };
 
 function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggestion }) {
   const [artifact, setArtifact] = useState(null);
@@ -300,19 +300,9 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
     finally { setRecalculating(false); }
   }
   const result = calculation?.result;
-  const safety = result?.safety || [];
-  const verdict = safety.some((s) => s.status === "no_cumple") || result?.conductor_thermal?.status === "no_cumple" ? "no_cumple" : safety.length && safety.every((s) => s.status === "cumple") ? "cumple" : "no_evaluable";
-  const value = (field) => Number(field?.value ?? field).toLocaleString("es-CO", { maximumFractionDigits: 1 });
+  const { verdict, interpretation, safety } = evaluateResult(result);
+  const value = formatNumber;
   const freshnessLabel = freshness === "desactualizado" ? "El resultado quedó desactualizado · recalcula para esta versión" : freshness === "calculando" ? "Calculando la versión vigente…" : null;
-  const failedCriteria = safety.flatMap((standard) => (standard.criteria || []).filter((criterion) => criterion.status === "no_cumple").map((criterion) => ({ ...criterion, standard: standard.standard }))).sort((a, b) => (a.margin_rel ?? 0) - (b.margin_rel ?? 0));
-  const dominant = failedCriteria[0];
-  const thermalFailed = result?.conductor_thermal?.status === "no_cumple";
-  const interpretation = verdict === "no_cumple" ? {
-    title: "No cumple",
-    constraint: thermalFailed && !dominant ? "Sección térmica del conductor" : dominant ? `${dominant.criterion === "touch" ? "Tensión de contacto" : "Tensión de paso"} · ${dominant.standard}` : "Criterio de seguridad",
-    explanation: thermalFailed && !dominant ? `La sección seleccionada (${value(result.conductor_thermal.selected_section_mm2)} mm²) está por debajo de la mínima (${value(result.conductor_thermal.minimum_section_mm2)} mm²).` : dominant ? `${dominant.actual_v.toLocaleString("es-CO", { maximumFractionDigits: 1 })} V frente a ${dominant.tolerable_v.toLocaleString("es-CO", { maximumFractionDigits: 1 })} V tolerables; margen ${(100 * dominant.margin_rel).toLocaleString("es-CO", { maximumFractionDigits: 1 })}%.` : "Existe al menos una restricción de seguridad que no se satisface.",
-    actions: thermalFailed && !dominant ? ["Aumenta la sección del conductor y recalcula"] : dominant?.criterion === "touch" ? ["Agrega varillas en el perímetro y recalcula", "Reduce la retícula perimetral y recalcula"] : dominant?.criterion === "step" ? ["Reduce la retícula perimetral y recalcula", "Agrega varillas en el perímetro y recalcula"] : ["Revisa los parámetros eléctricos y recalcula"],
-  } : verdict === "cumple" ? { title: "Cumple", constraint: "Ninguna restricción dominante", explanation: "Contacto, paso y sección térmica están dentro de los límites evaluados.", actions: ["Revisa la evidencia y confirma el diseño"] } : { title: "No evaluable", constraint: "Faltan datos o criterios evaluables", explanation: "Completa y confirma los parámetros críticos antes de presentar el resultado como cumplimiento.", actions: ["Completa los parámetros eléctricos y recalcula"] };
   const recalculateButton = <button className="button primary" disabled={!artifact || recalculating || ["pending", "running"].includes(calculation?.status)} onClick={recalculate}><RefreshCw size={14}/> {recalculating || ["pending", "running"].includes(calculation?.status) ? "Calculando…" : "Recalcular"}</button>;
   return <aside className="panel artifact-side-panel agent-results-panel"><div className="panel-heading"><div><Activity size={17}/><h2>Resultados</h2></div><div className="artifact-results-heading-actions">{calculation && <span className="muted-label">Versión {calculation.artifact_version}</span>}{recalculateButton}</div></div>
     {actionError && <p className="artifact-update-warning">{actionError}</p>}
