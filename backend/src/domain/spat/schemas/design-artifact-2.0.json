@@ -514,6 +514,21 @@
           "minimum": -50,
           "title": "Ambient Temperature C",
           "type": "number"
+        },
+        "thermal_profile": {
+          "default": "IEEE 80-2013",
+          "description": "Norma con la que se dimensiona el conductor: 'IEEE 80-2013', 'IEC 60364-5-54:2011' o 'RETIE 2024'. Con IEC, ambient_temperature_c es la temperatura inicial y maximum_temperature_c la final.",
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Thermal Profile",
+          "type": "string"
+        },
+        "voltage_level": {
+          "default": "medium_high_extra_high",
+          "description": "Solo aplica a RETIE 2024: 'low' (baja tensión, Ecuación 3) o 'medium_high_extra_high' (Ecuación 4, con Tm y Kf de la Tabla 3.12.2.2.a; maximum_temperature_c no se usa).",
+          "pattern": "^(low|medium_high_extra_high)$",
+          "title": "Voltage Level",
+          "type": "string"
         }
       },
       "title": "GroundingConductorRequest",

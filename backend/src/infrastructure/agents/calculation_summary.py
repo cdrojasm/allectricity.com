@@ -71,8 +71,8 @@ def summarize(calculation: dict) -> dict:
         max_touch_v=round(_value(result["max_touch_v"]), 1),
         max_step_v=round(_value(result["max_step_v"]), 1),
         standards=standards,
-        conductor_thermal={k: thermal.get(k) for k in ("status", "minimum_section_mm2", "selected_section_mm2",
-                                                       "material_name")} if thermal else None,
+        conductor_thermal={k: thermal.get(k) for k in ("profile", "status", "minimum_section_mm2",
+                                                       "selected_section_mm2", "material_name")} if thermal else None,
         warnings=[*(result.get("model_warnings") or []), *(result.get("engine_warnings") or [])],
         segment_count=result.get("segment_count"),
     )

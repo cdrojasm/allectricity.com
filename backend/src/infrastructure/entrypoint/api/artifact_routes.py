@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from zipfile import BadZipFile
 
 from src.application.use_cases import potential_calculations
-from src.domain.spat.artifact_contract import validate_artifact
+from src.domain.spat.artifact_contract import snapshot_fields, validate_artifact
 from src.domain.agent.patches import diff
 from src.domain.spat.grid_geometry import (MAX_CONDUCTORS, MAX_RODS, area_grid, geometry_conflicts, geometry_warnings,
                                            missing_for_calculation)
@@ -17,6 +17,7 @@ from src.domain.spat.plan_revisions import compare_plan_revisions
 from src.infrastructure.entrypoint.api.schemas import (GroundingArtifactRequest, PotentialCalculationRequest,
                                                        SoilFileImportRequest, SoilMeasurementsRequest)
 from src.domain.spat import soil_materials
+from src.infrastructure.calculations.conductor_thermal_profiles import thermal_profile_catalog
 from src.infrastructure.calculations.soil_sounding import fit_sounding
 from src.application.use_cases.agent_runs import AgentRuns
 from src.infrastructure.entrypoint.worker.tasks import calculate_artifact_potential, enqueue_agent_step
@@ -281,6 +282,12 @@ def grid_in_areas(project_id: str, payload: AreaGridRequest, request: Request,
     return {"conductors": conductors, **_plan_check({**payload.geometry, "conductors": conductors})}
 
 
+@catalog_router.get("/perfiles-termicos")
+def thermal_profiles(actor=Depends(require())):
+    """Standards a conductor can be sized with, and for each the materials and the inputs that apply."""
+    return thermal_profile_catalog()
+
+
 @catalog_router.get("/materiales-suelo")
 def soil_material_table(q: str | None = None, resistividad_ohm_m: float | None = None,
                         actor=Depends(require())):
@@ -371,14 +378,7 @@ def owned_project(db, project_id, actor):
 
 
 def snapshot(payload):
-    data = payload.model_dump(mode="json")
-    if data.get("schema_version") == "1.0":
-        # Keep persisted legacy snapshots byte-for-byte compatible with the frozen 1.0 contract.
-        for key in ("buildings", "networks", "electrodes", "connections"):
-            data.pop(key, None)
-    else:
-        data.pop("geometry", None)
-    return validate_artifact(data)
+    return validate_artifact(snapshot_fields(payload.model_dump(mode="json")))
 
 
 def with_calculation_freshness(db, row: dict) -> dict:

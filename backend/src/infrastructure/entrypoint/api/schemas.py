@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from src.domain.spat.grid_geometry import MAX_CONDUCTORS, MAX_RODS, geometry_problems
 from src.infrastructure.calculations.safety_criteria import IEEE80_2013, SUPPORTED_STANDARDS
 from src.infrastructure.calculations.conductor_thermal import MATERIALS
+from src.infrastructure.calculations.conductor_thermal_profiles import (
+    DEFAULT_THERMAL_PROFILE, DEFAULT_VOLTAGE_LEVEL, IEEE80_PROFILE, thermal_material_ids, thermal_mode)
 
 
 class StrictRequestModel(BaseModel):
@@ -225,16 +227,39 @@ class GroundingConductorRequest(StrictRequestModel):
     maximum_temperature_c: float = Field(default=250, gt=-273.15, le=2000)
     thermal_duration_s: float = Field(default=1.0, gt=0, le=60, description="t_c; independiente del tiempo de choque t_s")
     ambient_temperature_c: float = Field(default=40, ge=-50, le=200)
+    thermal_profile: str = Field(
+        default=DEFAULT_THERMAL_PROFILE, min_length=1, max_length=40,
+        description="Norma con la que se dimensiona el conductor: 'IEEE 80-2013', 'IEC 60364-5-54:2011' o 'RETIE 2024'. "
+                    "Con IEC, ambient_temperature_c es la temperatura inicial y maximum_temperature_c la final.")
+    voltage_level: str = Field(
+        default=DEFAULT_VOLTAGE_LEVEL, pattern="^(low|medium_high_extra_high)$",
+        description="Solo aplica a RETIE 2024: 'low' (baja tensión, Ecuación 3) o 'medium_high_extra_high' (Ecuación 4, "
+                    "con Tm y Kf de la Tabla 3.12.2.2.a; maximum_temperature_c no se usa).")
 
     @model_validator(mode="after")
     def material_and_temperature_are_valid(self):
-        material = MATERIALS.get(self.material_id)
-        if not material:
-            raise ValueError(f"Material IEEE 80 no soportado: {self.material_id}")
-        if self.maximum_temperature_c > material["fusion_temp_c"]:
-            raise ValueError("La temperatura máxima supera la de fusión del material")
+        try:
+            mode = thermal_mode(self.thermal_profile, self.voltage_level)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        if self.material_id not in thermal_material_ids(self.thermal_profile, self.voltage_level):
+            if self.thermal_profile == IEEE80_PROFILE:
+                raise ValueError(f"Material IEEE 80 no soportado: {self.material_id}")
+            raise ValueError(f"Material no soportado por {self.thermal_profile}"
+                             f"{' (' + self.voltage_level + ')' if mode['voltage_level'] else ''}: {self.material_id}")
+        if mode["max_duration_s"] is not None and self.thermal_duration_s > mode["max_duration_s"]:
+            raise ValueError(f"{self.thermal_profile} solo aplica a tiempos de hasta {mode['max_duration_s']:g} s "
+                             "(para tiempos mayores se requiere IEC 60949)")
+        if mode["temperature_inputs"] == "table":
+            if self.ambient_temperature_c != 40:
+                raise ValueError("La Tabla 3.12.2.2.a de RETIE está definida para una temperatura ambiente de 40 °C")
+            return self
         if self.maximum_temperature_c <= self.ambient_temperature_c:
             raise ValueError("La temperatura máxima debe ser superior a la temperatura ambiente")
+        if mode["temperature_inputs"] == "ambient_and_maximum":
+            material = MATERIALS.get(self.material_id)
+            if self.maximum_temperature_c > material["fusion_temp_c"]:
+                raise ValueError("La temperatura máxima supera la de fusión del material")
         return self
 
 

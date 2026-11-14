@@ -362,3 +362,25 @@ def test_unsupported_safety_standard_is_rejected(env, monkeypatch):  # noqa: F81
     response = client.post(f"{base}/{artifact['artifact_id']}/versions/1/calculos-potencial",
                            json={"safety_standards": ["IEEE 80-2000"]}, headers=headers(tokens))
     assert response.status_code == 422
+
+
+def test_the_conductor_standard_chosen_by_the_artifact_reaches_result_trace_and_warnings(engine):
+    steel = {"material_id": "steel_1020", "cross_section_mm2": 70.0, "joint_type": "welded", "maximum_temperature_c": 250.0,
+             "thermal_duration_s": 0.5, "ambient_temperature_c": 40.0, "thermal_profile": "RETIE 2024"}
+    outcome = calculate({**ANNEX_H_GRID1, "conductor": steel}, PARAMETERS, engine)
+    thermal = outcome["result"]["conductor_thermal"]
+    assert thermal["profile"] == "RETIE 2024" and thermal["kf_kcmil_per_ka_sqrt_s"] == 15.95
+    assert thermal["maximum_temperature_c"] == 1510  # the table's Tm, not the 250 °C input
+    assert len(thermal["warnings"]) == 1 and "IEEE 80-2013" in thermal["warnings"][0]
+    # The same advisory is in the trace and in the warnings every viewer already shows.
+    assert outcome["trace"]["conductor_thermal"] == thermal
+    assert f"Conductor (RETIE 2024): {thermal['warnings'][0]}" in outcome["result"]["model_warnings"]
+    # An artifact that never chose a profile is sized by IEEE 80-2013 as before, with no advisory.
+    plain = calculate({**ANNEX_H_GRID1, "conductor": {**steel, "material_id": "copper_hard_drawn"} | {"thermal_profile": "IEEE 80-2013"}},
+                      PARAMETERS, engine)["result"]
+    assert plain["conductor_thermal"]["profile"] == "IEEE 80-2013" and plain["conductor_thermal"]["warnings"] == []
+    assert not any(w.startswith("Conductor (") for w in plain["model_warnings"])
+    iec = calculate({**ANNEX_H_GRID1, "conductor": {**steel, "material_id": "copper", "thermal_profile": "IEC 60364-5-54:2011",
+                                                    "maximum_temperature_c": 200.0, "ambient_temperature_c": 30.0}},
+                    PARAMETERS, engine)["result"]["conductor_thermal"]
+    assert iec["profile"] == "IEC 60364-5-54:2011" and iec["k_factor"] == pytest.approx(159, abs=0.6)

@@ -99,8 +99,8 @@ def test_retie_soft_copper_20_ka_3_s_matches_the_ieee_80_worked_example() -> Non
 def test_the_retie_joint_type_changes_the_temperature_and_the_section() -> None:
     exothermic = calculate_retie_size(10_000, 1.0, "copper_hard_exothermic", 70.0)
     mechanical = calculate_retie_size(10_000, 1.0, "copper_hard_mechanical", 70.0)
-    assert (exothermic["joint_type"], exothermic["maximum_temperature_c"]) == ("exothermic", 1084)
-    assert (mechanical["joint_type"], mechanical["maximum_temperature_c"]) == ("mechanical", 250)
+    assert (exothermic["retie_joint_type"], exothermic["maximum_temperature_c"]) == ("exothermic", 1084)
+    assert (mechanical["retie_joint_type"], mechanical["maximum_temperature_c"]) == ("mechanical", 250)
     assert mechanical["minimum_section_mm2"] / exothermic["minimum_section_mm2"] == pytest.approx(11.78 / 7.06)
 
 
@@ -131,9 +131,19 @@ def test_the_steel_1020_warning_quantifies_the_difference() -> None:
     assert "15,95" not in result["warnings"][0] and "15.95" in result["warnings"][0] and "15 %" in result["warnings"][0]
 
 
-def test_retie_low_voltage_is_not_calculated_here() -> None:
-    with pytest.raises(ValueError, match="IEC 60364-5-54"):
-        calculate_retie_size(5000, 1.0, "copper_soft", 35.0, voltage_level="low")
+def test_retie_low_voltage_is_equation_3_the_iec_equation() -> None:
+    low = calculate_retie_size(5000, 1.0, "copper", 35.0, voltage_level="low", initial_c=30, final_c=200)
+    iec = calculate_iec_size(5000, 1.0, "copper", 30, 200, 35.0)
+    assert low["profile"] == "RETIE 2024" and low["voltage_level"] == "low" and low["equation_source"] == "IEC 60364-5-54:2011"
+    assert low["minimum_section_mm2"] == iec["minimum_section_mm2"] and low["k_factor"] == iec["k_factor"]
+    assert low["warnings"] == [] and any("kA" in text for text in low["assumptions"])
+    with pytest.raises(ValueError, match="temperaturas"):
+        calculate_retie_size(5000, 1.0, "copper", 35.0, voltage_level="low")
+    with pytest.raises(ValueError, match="IEC 60949"):
+        calculate_retie_size(5000, 6.0, "copper", 35.0, voltage_level="low", initial_c=30, final_c=200)
+
+
+def test_retie_rejects_an_unknown_level_or_material() -> None:
     with pytest.raises(ValueError, match="no soportado"):
         calculate_retie_size(5000, 1.0, "copper_soft", 35.0, voltage_level="ultra")
     with pytest.raises(ValueError, match="Material RETIE"):

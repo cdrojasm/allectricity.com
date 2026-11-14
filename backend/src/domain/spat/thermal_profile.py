@@ -12,6 +12,9 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
+DEFAULT_THERMAL_PROFILE = "IEEE 80-2013"
+RETIE_PROFILE_ID = "RETIE 2024"
+DEFAULT_VOLTAGE_LEVEL = "medium_high_extra_high"
 PROFILE_DIR = Path(__file__).with_name("thermal_profiles")
 PROFILE_FILES = {"IEEE 80-2013": PROFILE_DIR / "ieee-80-2013.json",
                  "IEC 60364-5-54:2011": PROFILE_DIR / "iec-60364-5-54-2011.json",

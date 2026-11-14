@@ -5,6 +5,8 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
+from src.domain.spat.thermal_profile import DEFAULT_THERMAL_PROFILE, DEFAULT_VOLTAGE_LEVEL, RETIE_PROFILE_ID
+
 SCHEMA_DIR = Path(__file__).with_name("schemas")
 SUPPORTED_ARTIFACT_SCHEMAS = {
     "1.0": SCHEMA_DIR / "design-artifact-1.0.json",
@@ -17,6 +19,30 @@ DOCUMENT_SCHEMAS = {
     "calculation_trace_v2": SCHEMA_DIR / "calculation-trace-2.0.json",
     "artifact_diff": SCHEMA_DIR / "artifact-diff-1.0.json",
 }
+
+
+# Fields the frozen 1.0 contract does not know; a request dumped for a 1.0 snapshot must not carry them.
+V1_UNSUPPORTED_FIELDS = ("buildings", "networks", "electrodes", "connections")
+
+
+def snapshot_fields(data: dict) -> dict:
+    """Trim a dumped artifact request to the fields its schema version stores (the one place that knows).
+
+    The conductor's `thermal_profile` and `voltage_level` are stored only when they differ from the default, so
+    artifacts that do not use them stay identical to what was saved before they existed (no phantom diff).
+    """
+    if data.get("schema_version") == "1.0":
+        for key in V1_UNSUPPORTED_FIELDS:
+            data.pop(key, None)
+    else:
+        data.pop("geometry", None)
+    conductor = data.get("conductor")
+    if isinstance(conductor, dict):
+        if conductor.get("thermal_profile") == DEFAULT_THERMAL_PROFILE:
+            conductor.pop("thermal_profile")
+        if conductor.get("thermal_profile") != RETIE_PROFILE_ID or conductor.get("voltage_level") == DEFAULT_VOLTAGE_LEVEL:
+            conductor.pop("voltage_level", None)
+    return data
 
 
 def _load(path: Path) -> dict:

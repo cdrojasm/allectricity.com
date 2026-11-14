@@ -22,6 +22,7 @@ from src.domain.agent.patches import (
 )
 from src.domain.identity import ServiceError
 from src.domain.spat import soil_materials
+from src.domain.spat.artifact_contract import snapshot_fields
 from src.domain.spat.soundings import apparent_resistivity, missing_in_text
 from src.infrastructure.calculations.soil_sounding import fit_sounding
 from src.infrastructure.processing import measurement_tables
@@ -530,12 +531,7 @@ class ArtifactWorkspace:
 
     def validate(self, _args=None) -> dict:
         try:
-            normalized = GroundingArtifactRequest.model_validate(self.draft).model_dump(mode="json")
-            if normalized.get("schema_version") == "1.0":
-                for key in ("buildings", "networks", "electrodes", "connections"):
-                    normalized.pop(key, None)
-            else:
-                normalized.pop("geometry", None)
+            normalized = snapshot_fields(GroundingArtifactRequest.model_validate(self.draft).model_dump(mode="json"))
         except ValidationError as exc:
             return {"valid": False, "errors": _errors(exc)}
         return {"valid": True, "errors": [], "normalized": normalized,
