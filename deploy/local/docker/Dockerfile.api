@@ -14,6 +14,8 @@ COPY dependencies/pyproject.toml ./
 COPY backend/src ./src
 COPY backend/migrations ./migrations
 COPY backend/alembic.ini ./alembic.ini
+# smoke_local.py runs `python -m scripts.smoke_session` inside this container.
+COPY scripts/smoke_session.py ./scripts/smoke_session.py
 RUN pip install --no-cache-dir '.[api,agent]'
 RUN useradd --create-home --uid 10001 spat
 USER spat
