@@ -91,6 +91,10 @@ const VOLTAGE_LEVEL_LABELS = {
   low: "Baja tensión",
 };
 
+// El motor entrega las tensiones máximas como {value, x_m, y_m}; datos antiguos pueden traer el número plano.
+const quantityValue = (quantity) =>
+  quantity !== null && typeof quantity === "object" ? quantity.value : quantity;
+
 function isDesignComplete(design) {
   const numericFieldsPresent = REQUIRED_DESIGN_FIELDS.every(
     (key) =>
@@ -300,8 +304,8 @@ function ArtifactPanel({ fit = null, calculation = null, design = null }) {
         {result ? (
           <span>
             {result.safety?.[0]?.status || "Resultado disponible"} ·{" "}
-            {Number(result.max_touch_v).toFixed(1)} V contacto ·{" "}
-            {Number(result.max_step_v).toFixed(1)} V paso
+            {Number(quantityValue(result.max_touch_v)).toFixed(1)} V contacto ·{" "}
+            {Number(quantityValue(result.max_step_v)).toFixed(1)} V paso
           </span>
         ) : (
           <span className="no-information">
@@ -461,6 +465,10 @@ function GroundingCalculations({
       (m) => m.voltage_level === design.conductor_voltage_level,
     ) || thermalProfile.modes[0];
   const thermalFromTable = thermalMode.temperature_inputs === "table";
+  const durationExceeded = Boolean(
+    thermalMode.max_duration_s &&
+      Number(design.thermal_duration_s) > thermalMode.max_duration_s,
+  );
   const thermalInitialFinal = thermalMode.temperature_inputs === "initial_and_final";
   // A standard fixes which materials exist and how the two temperatures are used, so a change of standard,
   // level or material re-aligns the dependent fields.
@@ -1596,6 +1604,12 @@ function GroundingCalculations({
               </label>
             </div>
             {thermalMode.note && <p className="muted-label">{thermalMode.note}</p>}
+            {durationExceeded && (
+              <p className="calc-warning" role="alert">
+                {thermalProfile.profile} solo aplica a tiempos de hasta{" "}
+                {thermalMode.max_duration_s} s; corrige la duración térmica para calcular.
+              </p>
+            )}
           </details>
 
           <details className="safety-advanced">
@@ -1644,7 +1658,7 @@ function GroundingCalculations({
 
           <button
             className="button primary calc-run"
-            disabled={!soilReady || !designReady || busy}
+            disabled={!soilReady || !designReady || durationExceeded || busy}
             onClick={calculate}
           >
             <Activity size={15} />
@@ -1659,11 +1673,11 @@ function GroundingCalculations({
               <div className="result-metrics">
                 <span>
                   <small>Tensión de contacto</small>
-                  <strong>{num(calculation.result.max_touch_v)} V</strong>
+                  <strong>{num(quantityValue(calculation.result.max_touch_v))} V</strong>
                 </span>
                 <span>
                   <small>Tensión de paso</small>
-                  <strong>{num(calculation.result.max_step_v)} V</strong>
+                  <strong>{num(quantityValue(calculation.result.max_step_v))} V</strong>
                 </span>
                 <span>
                   <small>GPR</small>
