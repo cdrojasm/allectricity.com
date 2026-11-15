@@ -14,7 +14,7 @@ import uuid
 from dataclasses import dataclass
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from src.domain.spat import geometry_seeds
 from src.domain.spat import geometry_graph as gg
@@ -80,7 +80,10 @@ def electrical_verdict(level: str, result: dict[str, Any]) -> dict[str, Any]:
     at L1 to be escalated, at finer levels when `Feasible` is True. Otherwise it could not be assessed (a standard
     with no evaluable criterion, a mandatory criterion missing) and is rejected, never promoted on silence.
     """
-    verdict = {"status": result["FeasibilityStatus"], "ratio": utilization_ratio(result), "feasible": result["Feasible"]}
+    verdict = {"status": result["FeasibilityStatus"], "ratio": utilization_ratio(result), "feasible": result["Feasible"],
+               # what the comparison and the report show; plain numbers so the verdict stays checkpointable
+               "metrics": {"Rg_ohm": result.get("Rg"), "Vs_v": result.get("Vs"), "Vt_v": result.get("Vt"),
+                           "missing_mandatory_criteria": list(result.get("MissingMandatoryCriteria") or [])}}
     if verdict["status"] != "VIOLATED" and not admits(level=level, status=verdict["status"], feasible=verdict["feasible"]):
         return {**verdict, "status": "REJECTED", "reason": "not_assessable", "detail": "no criterion could be assessed"}
     return verdict
@@ -183,10 +186,16 @@ def run_topology_optimizer(
     checkpoint_every: int = 1,
     elite_archive_path: str | os.PathLike[str] | None = None,
     parallel_workers: int = 1,
+    constraint_context: dict[str, Any] | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Run the search on a budget of solver calls (`max_solver_calls`, repeatable) or of seconds (`time_budget_s`,
     the fast mode: part of it is held for the L3 check of the finalists, see `search_topology`). With `checkpoint_path`, every new solver verdict is saved and a later call with the same
-    problem resumes from the file: nothing already evaluated is evaluated again."""
+    problem resumes from the file: nothing already evaluated is evaluated again.
+
+    `constraint_context` is a resolved OP-05 context: its mandatory criteria must be assessed for a design to pass, as in the
+    parametric search. `on_progress({"verdicts": n})` runs after each new verdict is logged, outside the evaluation boundary,
+    so an exception it raises (a cancellation, say) stops the search; with `checkpoint_every=1` the file already holds that verdict."""
     # A seed can pass the geometry rules and still be refused by the solver (a piece shorter than five radii once it
     # is discretised). Ask for a few extra and keep the first `seed_count` the solver accepts, so every strategy
     # starts from the same valid seeds.
@@ -202,7 +211,10 @@ def run_topology_optimizer(
     valid_generated = [s for s in candidates if s.graph_hash not in {a.graph_hash for a in valid_archive}
                        and not solver_evaluation.discretization_violations(s.geometry, soil, settings)]
     starts = (valid_archive[:seed_count] + valid_generated[:max(0, seed_count - len(valid_archive[:seed_count]))])
+    # Only a given context enters the fingerprint, so runs without one keep their earlier checkpoints valid.
+    context_part = {} if constraint_context is None else {"constraint_context": constraint_context}
     problem = problem_fingerprint(
+        **context_part,
         domain=domain, rate_card=rate_card, soil=soil_record(as_soil(soil)), injection_a=injection_a, exposure=asdict(exposure),
         standards=standards, settings=settings, seed=seed, seeds=[s.graph_hash for s in starts], constraints=asdict(constraints),
         search=[neighbors_per_step, patience, uphill_moves, uphill_tolerance, max_steps_per_start, finalists, repair_share, strategy, max_repair_starts, selector_scores, parallel_workers]
@@ -215,6 +227,8 @@ def run_topology_optimizer(
         pending["n"] += 1
         if checkpoint_path and pending["n"] % max(1, checkpoint_every) == 0:
             save_checkpoint(checkpoint_path, log)
+        if on_progress is not None:
+            on_progress({"verdicts": len(log)})
 
     context = optimizer_evaluation.EvaluationContext(max_evaluations=max_solver_calls)     # None (time mode): the search keeps the time
 
@@ -225,7 +239,8 @@ def run_topology_optimizer(
         try:
             result = optimizer_evaluation.evaluate_design(
                 design_parameters=None, base_geometry=geometry, soil=soil, injection_a=injection_a, points=[],
-                client=client, exposure=exposure, standards=standards, settings=settings, context=context, level=level)
+                client=client, exposure=exposure, standards=standards, settings=settings, context=context, level=level,
+                constraint_context=constraint_context)
         except OptimizerGeometryRejected as rejected:
             return {"status": "REJECTED", "reason": "geometry_rejected", "detail": str(rejected), "charged": False}
         return electrical_verdict(level, result)

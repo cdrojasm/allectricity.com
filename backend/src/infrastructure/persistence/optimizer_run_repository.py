@@ -25,6 +25,27 @@ class OptimizerRunRepository:
         ).mappings().first()
         return dict(row) if row else None
 
+    def get_run_by_id(self, run_id):
+        """For the worker, which only receives the run id; routes always scope by project."""
+        row = self.connection.execute(select(optimizer_runs).where(optimizer_runs.c.id == run_id)).mappings().first()
+        return dict(row) if row else None
+
+    def transition(self, project_id, run_id, from_statuses, values):
+        """Change lifecycle fields only while the run is still in one of ``from_statuses``.
+
+        Returns the updated run, or None when another writer moved it first (a cancellation racing a
+        worker that finishes, say), so a late writer never overwrites a terminal state.
+        """
+        allowed = {"status", "result_summary", "error", "updated_at"}
+        changes = {key: value for key, value in values.items() if key in allowed}
+        moved = self.connection.execute(
+            update(optimizer_runs)
+            .where(optimizer_runs.c.project_id == project_id, optimizer_runs.c.id == run_id,
+                   optimizer_runs.c.status.in_(tuple(from_statuses)))
+            .values(**changes)
+        ).rowcount
+        return self.get_run(project_id, run_id) if moved else None
+
     def list_runs(self, project_id, limit=50):
         rows = self.connection.execute(
             select(optimizer_runs)

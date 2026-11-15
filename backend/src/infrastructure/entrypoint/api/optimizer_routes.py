@@ -1,4 +1,4 @@
-"""Synchronous project-scoped endpoint for discrete optimizer runs (OP-06/OP-19)."""
+"""Project-scoped optimizer runs: the synchronous discrete search (OP-06/OP-19) and the queued topological search."""
 
 from __future__ import annotations
 
@@ -387,3 +387,215 @@ def create_optimizer_run(project_id: str, payload: OptimizerRunRequest, request:
         if isinstance(exc, (ValueError, TypeError)):
             raise HTTPException(422, str(exc)) from exc
         raise HTTPException(502, "Optimizer run failed while evaluating candidates") from exc
+
+
+# ---- topological optimizer (OPT-010…017 in the product): queued job, cancel, comparison, apply ------------------
+
+from src.application.use_cases import optimizer_topology_job as topology_job  # noqa: E402
+from src.domain.spat.geometry_cost import evaluate_geometry_cost  # noqa: E402
+from src.infrastructure.calculations import optimizer_topology_inputs  # noqa: E402
+
+
+class RateInput(StrictModel):
+    """One rate: an approved catalog item, or an explicit amount with its source. Never both, never neither."""
+
+    catalog_item_id: str | None = Field(default=None, min_length=36, max_length=36)
+    amount: float | None = Field(default=None, ge=0, le=1_000_000_000_000)
+    source: str | None = Field(default=None, min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def one_origin(self):
+        if (self.catalog_item_id is None) == (self.amount is None):
+            raise ValueError("a rate is either a catalog_item_id or an amount with its source")
+        if self.amount is not None and not (self.source or "").strip():
+            raise ValueError("an explicit amount needs its source")
+        return self
+
+
+class TopologyRunRequest(StrictModel):
+    artifact_id: str = Field(min_length=36, max_length=36)
+    artifact_version: int = Field(ge=1)
+    soil: SoilInput
+    injection_a: float = Field(gt=0, le=1_000_000)
+    exposure: ExposureInput
+    standards: list[str] = Field(min_length=1, max_length=5)
+    applicability_facts: ApplicabilityFacts = Field(default_factory=ApplicabilityFacts)
+    cost_currency: str = Field(pattern=r"^[A-Z]{3}$")
+    rates: dict[str, RateInput] = Field(min_length=1, max_length=40)
+    trench_width_m: float = Field(gt=0, le=5)
+    trench_width_source: str = Field(min_length=1, max_length=500)
+    seed: int = Field(ge=0, le=2_147_483_647)
+    max_solver_calls: int = Field(default=150, ge=20, le=400)
+    seed_count: int = Field(default=4, ge=1, le=6)
+
+    @model_validator(mode="after")
+    def known_standards(self):
+        if len(set(self.standards)) != len(self.standards):
+            raise ValueError("standards must not contain duplicates")
+        unknown = sorted(set(self.standards) - set(safety_criteria.SUPPORTED_STANDARDS))
+        if unknown:
+            raise ValueError("unsupported standards: " + ", ".join(unknown))
+        return self
+
+
+def dispatch_topology_run(run_id: str) -> None:
+    from src.infrastructure.entrypoint.worker.tasks import optimize_topology
+
+    optimize_topology.apply_async(args=[run_id], task_id=f"optimizer-topology:{run_id}")
+
+
+SITE_KEYS = ("length_m", "width_m", "burial_depth_m", "areas", "structures")
+
+
+@router.post("/topology", status_code=202)
+def create_topology_run(project_id: str, payload: TopologyRunRequest, request: Request,
+                        actor=Depends(require("designs:write"))):
+    """Queue a topological search over the saved site of an artifact version; poll the run for its result."""
+    now = int(time())
+    request_data = payload.model_dump(mode="json")
+    with request.app.state.services.store.transaction(write=True) as db:
+        project = _owned_project(db, project_id, actor)
+        artifact_row = db.designs.get_version(project_id, payload.artifact_id, payload.artifact_version)
+        if not artifact_row:
+            raise HTTPException(404, "Artifact version not found in this project")
+        try:
+            snapshot = validate_artifact(artifact_row["snapshot"])
+        except ValueError as exc:
+            raise HTTPException(422, f"Stored artifact is invalid: {exc}") from exc
+        if snapshot.get("schema_version") != "1.0" or not snapshot.get("geometry"):
+            raise HTTPException(422, "The topological optimizer supports version 1.0 artifacts with one grid geometry")
+        geometry = snapshot["geometry"]
+        if any(geometry.get(key) is None for key in ("length_m", "width_m")):
+            raise HTTPException(422, "The artifact geometry must define the site length and width")
+        selected = ConstraintProfileRepository(db.connection).selected(project_id)
+        if any(row["status"] != "reviewed" for row in selected):
+            raise HTTPException(409, "A selected profile is no longer reviewed; select a reviewed version")
+        context = _selected_context(project, selected, ["rod_length_m"])
+        facts = dict(payload.applicability_facts.values)
+        facts["country"] = project.get("country")
+        facts["installation_type"] = context.get("profile", {}).get("installation_type")
+        context["applicability_facts"] = facts
+        if context.get("status") != "ready":
+            raise HTTPException(422, "OP-05 context is blocked: " + ", ".join(
+                context.get("missing_mandatory_criteria") or ["unknown constraint"]))
+        catalog_rows = MaterialCatalogRepository(db.connection).list(project_id, "approved")
+        try:
+            built = topology_job.build_rate_card(
+                {key: value.model_dump() for key, value in payload.rates.items()}, currency=payload.cost_currency,
+                trench_width_m=payload.trench_width_m, trench_width_source=payload.trench_width_source,
+                catalog_rows=catalog_rows, now_epoch_s=now)
+            missing = topology_job.check_rate_card_covers(built["rate_card"], [geometry])
+            if missing:
+                raise HTTPException(422, "The rate card leaves cost lines unpriced: " + ", ".join(missing))
+            _, applied = topology_job.operator_constraints(context)
+            base_cost = evaluate_geometry_cost(geometry, built["rate_card"])
+        except topology_job.RateCardError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        conductor = snapshot.get("conductor") or {}
+        settings = ({"conductor_radius_m": equivalent_radius_m(float(conductor["cross_section_mm2"]))}
+                    if conductor.get("cross_section_mm2") else None)
+        run_id = str(uuid4())
+        request_snapshot = {
+            "algorithm": topology_job.TOPOLOGY_ALGORITHM,
+            "strategy": topology_job.TOPOLOGY_STRATEGY,
+            "request": request_data,
+            "constraint_context": context,
+            "site": geometry,
+            "initial_geometry": geometry,
+            "settings": settings,
+            "rate_card": built["rate_card"],
+            "rate_provenance": built["provenance"],
+            "operator_constraints": applied,
+            "parallel_workers": optimizer_topology_inputs.parallel_workers(),
+            "base": {"artifact_version": payload.artifact_version, "cost": float(base_cost["total"]),
+                     "cost_status": base_cost["status"], "cost_by_group": base_cost["by_group"],
+                     "complexity": topology_job.complexity(geometry),
+                     "electrical": "not evaluated by the optimizer; see the artifact's own potential calculation"},
+            "artifact_snapshot_sha256": hashlib.sha256(json.dumps(
+                snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest(),
+        }
+        run = OptimizerRunRepository(db.connection).create_run({
+            "id": run_id, "project_id": project_id, "artifact_id": payload.artifact_id,
+            "artifact_version": payload.artifact_version, "status": "queued",
+            "request_snapshot": request_snapshot, "result_summary": {"progress": {"verdicts": 0}}, "error": None,
+            "created_by": actor.user_id, "created_at": now, "updated_at": now,
+        })
+    try:
+        dispatch_topology_run(run_id)
+    except Exception as exc:
+        with request.app.state.services.store.transaction(write=True) as db:
+            OptimizerRunRepository(db.connection).transition(project_id, run_id, ("queued",), {
+                "status": "failed", "error": "The optimizer queue is unavailable", "updated_at": int(time())})
+        raise HTTPException(503, "The optimizer queue is unavailable; try again later") from exc
+    return {"run": run, "alternatives": []}
+
+
+@router.post("/{run_id}/cancel")
+def cancel_optimizer_run(project_id: str, run_id: str, request: Request, actor=Depends(require("designs:write"))):
+    """Cancel a queued or running run. A running search stops after its current solver call."""
+    with request.app.state.services.store.transaction(write=True) as db:
+        _owned_project(db, project_id, actor)
+        repo = OptimizerRunRepository(db.connection)
+        run = repo.get_run(project_id, run_id)
+        if not run:
+            raise HTTPException(404, "Optimizer run not found")
+        moved = repo.transition(project_id, run_id, ("queued", "running"), {
+            "status": "cancelled", "error": None, "updated_at": int(time())})
+        if moved is None:
+            raise HTTPException(409, f"The run is already {run['status']}")
+    return {"run": moved}
+
+
+@router.get("/{run_id}/comparison")
+def compare_optimizer_run(project_id: str, run_id: str, request: Request, actor=Depends(require("designs:read"))):
+    with request.app.state.services.store.transaction() as db:
+        _owned_project(db, project_id, actor)
+        repo = OptimizerRunRepository(db.connection)
+        run = repo.get_run(project_id, run_id)
+        if not run:
+            raise HTTPException(404, "Optimizer run not found")
+        alternatives = repo.list_alternatives(project_id, run_id)
+    return topology_job.compare_alternatives(run, alternatives)
+
+
+@router.post("/{run_id}/alternatives/{alternative_id}/apply", status_code=201)
+def apply_optimizer_alternative(project_id: str, run_id: str, alternative_id: str, request: Request,
+                                actor=Depends(require("designs:write"))):
+    """Append a new artifact version with the alternative's geometry (BL-20); history is never rewritten."""
+    from src.infrastructure.entrypoint.api.artifact_routes import announce_user_artifact_update
+
+    with request.app.state.services.store.transaction(write=True) as db:
+        _owned_project(db, project_id, actor)
+        repo = OptimizerRunRepository(db.connection)
+        run = repo.get_run(project_id, run_id)
+        if not run or run["status"] != "completed":
+            raise HTTPException(404, "Completed optimizer run not found")
+        alternative = next((a for a in repo.list_alternatives(project_id, run_id) if a["id"] == alternative_id), None)
+        if alternative is None:
+            raise HTTPException(404, "Alternative not found in this run")
+        source = db.designs.get_version(project_id, run["artifact_id"], run["artifact_version"])
+        if not source:
+            raise HTTPException(404, "The run's artifact version no longer exists")
+        geometry = (alternative["evaluation_snapshot"].get("geometry")
+                    or (alternative["candidate_snapshot"] or {}).get("geometry"))
+        if not geometry:
+            raise HTTPException(422, "This alternative carries no geometry to apply")
+        new_snapshot = {**source["snapshot"], "geometry": geometry}
+        try:
+            validate_artifact(new_snapshot)
+        except ValueError as exc:
+            raise HTTPException(422, f"The alternative does not form a valid artifact: {exc}") from exc
+        previous = db.designs.latest(project_id, run["artifact_id"])
+        origin = {"kind": "user", "optimizer": {
+            "run_id": run_id, "alternative_id": alternative_id, "candidate_sha256": alternative["candidate_sha256"],
+            "algorithm": (run["request_snapshot"] or {}).get("algorithm", "discrete_local_search"),
+            "based_on_version": run["artifact_version"], "certified": False}}
+        row = db.designs.append_version(project_id, run["artifact_id"], source["name"], new_snapshot, actor.user_id, origin)
+        cost = alternative["evaluation_snapshot"].get("cost")
+        announce_user_artifact_update(
+            db, project_id, row, previous,
+            f"Se aplicó la alternativa {alternative.get('rank') or ''} del optimizador (costo {cost}); "
+            "es un borrador sin certificar que requiere aprobación profesional")
+    return row

@@ -49,12 +49,12 @@
 
 | Id | Prio | Estado | Feature | Criterio de aceptación | Depende de |
 |---|---|---|---|---|---|
-| OP-08 | P1 | ⬜ | Costo de instalación | Excavación, mano de obra, conexiones, perforaciones, movilización y dificultad del terreno, con supuestos trazables. | OP-03 |
+| OP-08 | P1 | ◐ | Costo de instalación | Implementado en la búsqueda topológica: la tarifa cubre material de conductor y varilla, excavación de zanja (ancho explícito con fuente), tendido, hincado y conexiones; cada tarifa viene del catálogo aprobado (vigente, misma moneda, unidad del cómputo) o de un monto explícito con fuente, y una línea sin tarifa bloquea la corrida antes del solver. Pendiente: movilización, perforaciones y dificultad del terreno con supuestos trazables. | OP-03 |
 | OP-09 | P1 | ⬜ | Mínimo costo sujeto a seguridad | Factibilidad verificada y costo detallado frente al diseño base. Multistart desde varios iniciales para reducir la dependencia de un óptimo local; se reporta la variación entre corridas. | OP-06, OP-07 |
-| OP-10 | P1 | ⬜ | Exploración costo–margen (Pareto) | Resolver `min C` sujeto a `Phi ≤ α` para varios `α`; alternativas no dominadas, comparación gráfica y exportación. | OP-09 |
+| OP-10 | P1 | ◐ | Exploración costo–margen (Pareto) | Parcial: la comparación marca el frente costo–utilización entre las alternativas validadas en L3 de una corrida. Pendiente: barrer `min C` sujeto a `Phi ≤ α` para varios `α`, la gráfica y la exportación. | OP-09 |
 | OP-11 | P1 | ⬜ | Análisis de sensibilidad | Influencia de cada parámetro sobre costo, `Vs` y `Vt` (diferencias finitas al inicio); orienta qué variables vale la pena optimizar. | OP-04 |
-| OP-12 | P1 | ⬜ | Ejecución como job asíncrono | Lanzar, consultar y cancelar optimizaciones por Celery; el agente solo configura y lee resultados. Registro de decisiones y auditoría (SV-15). | OP-07, PE-17 |
-| OP-13 | P1 | ⬜ | Comparación de alternativas y reporte | Costo, `Rg`, `Vs`, `Vt`, margen y complejidad constructiva; reporte con entradas, hipótesis, restricciones, presupuesto, alternativas y advertencias. | OP-10, BL-21, PE-24 |
+| OP-12 | P1 | ◐ | Ejecución como job asíncrono | Implementado para la búsqueda topológica: `POST /optimizer-runs/topology` pone la corrida en cola (Celery, cola `calculations`, tarea `spat.optimize_topology`); se consulta con `GET /optimizer-runs/{id}` (progreso en `result_summary.progress`) y se cancela con `POST /{id}/cancel`, que detiene la búsqueda tras la llamada en curso. Un worker reiniciado reanuda desde el checkpoint de la corrida; un estado terminal nunca se sobrescribe. Pendiente: llevar la búsqueda discreta OP-06 al mismo job y registrar decisiones en SV-15. | OP-07, PE-17 |
+| OP-13 | P1 | ◐ | Comparación de alternativas y reporte | Implementado `GET /optimizer-runs/{id}/comparison`: costo y desglose, `Rg`, `Vs`, `Vt`, utilización y margen, complejidad constructiva (m de conductor, varillas, conexiones), ahorro frente al diseño base, procedencia de tarifas, perfil y advertencias (sin certificar, borrador). `POST /{id}/alternatives/{alt}/apply` crea una versión nueva del artefacto (BL-20). Panel en el editor de plano. El diseño base se evalúa en L3 (llamada fuera del presupuesto) y el ahorro solo se reporta si cumple. Pendiente: reporte exportable (PDF). | OP-10, BL-21, PE-24 |
 
 ### C. Optimización con gradientes (P2, condicionada)
 

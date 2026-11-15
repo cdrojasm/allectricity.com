@@ -596,6 +596,7 @@ def search_topology(
         verdict = "demoted" if outcome["status"] in ("VIOLATED", "REJECTED") else "finalist"
         finalist_records.append({"candidate_sha256": record["candidate_sha256"], "cost": record["cost"], "status": verdict,
                                  "level": finalist_level, "ratio": outcome.get("ratio"),
+                                 "metrics": outcome.get("metrics"),
                                  "geometry": gg.to_geometry(graphs[record["candidate_sha256"]], domain),
                                  "cost_breakdown": evaluate_cost(gg.to_geometry(graphs[record["candidate_sha256"]], domain))})
         if verdict == "demoted":

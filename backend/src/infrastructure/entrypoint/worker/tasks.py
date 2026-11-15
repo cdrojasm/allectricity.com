@@ -32,6 +32,7 @@ celery_app.conf.update(
         "spat.reprocess_document": {"queue": "documents"},
         "spat.reconcile_file_uploads": {"queue": "documents"},
         "spat.calculate_artifact_potential": {"queue": "calculations"},
+        "spat.optimize_topology": {"queue": "calculations"},
         "spat.render_study_pdf": {"queue": "render"},
         "spat.dispatch_reset_mail": {"queue": "mail"},
         "spat.send_reset_mail": {"queue": "mail"},
@@ -227,6 +228,20 @@ def calculate_artifact_potential(calculation_id):
         run_id = AgentRuns(upload_store()).calculation_finished(calculation_id)
         if run_id:
             enqueue_agent_step(run_id)
+
+
+@celery_app.task(name="spat.optimize_topology", soft_time_limit=3000, time_limit=3300)
+def optimize_topology(run_id):
+    """Run a queued topological optimizer run; a redelivered task resumes from the run's checkpoint."""
+    from src.application.use_cases.optimizer_topology_job import TopologyJobDeps, execute_topology_run
+    from src.application.use_cases.optimizer_topology_run import run_topology_optimizer
+    from src.infrastructure.calculations.optimizer_topology_inputs import build_inputs, evaluate_base
+    from src.infrastructure.calculations.potential_engine_client import PotentialEngineClient
+    from src.infrastructure.persistence.optimizer_run_repository import OptimizerRunRepository
+
+    execute_topology_run(TopologyJobDeps(
+        store=upload_store(), repository=OptimizerRunRepository, client_factory=PotentialEngineClient,
+        run_optimizer=run_topology_optimizer, build_inputs=build_inputs, evaluate_base=evaluate_base), run_id)
 
 
 @celery_app.task(name="spat.scan_file_upload", bind=True, autoretry_for=(Exception,), retry_backoff=30, retry_jitter=True, max_retries=5)
