@@ -115,6 +115,36 @@ def _verdict(db, study) -> str:
     return summarize(latest)["verdict"] if latest else "no_evaluado"
 
 
+def _optimization(db, project_id, origin):
+    """What the study says about an optimizer-applied version: the applied alternative against the base design,
+    where the rates came from and the run's warnings. Read from the stored run, never recomputed, so the study
+    cannot differ from the workspace comparison. None when the version did not come from the optimizer."""
+    applied = (origin or {}).get("optimizer")
+    if not applied or not applied.get("run_id"):
+        return None
+    from src.application.use_cases.optimizer_topology_job import compare_alternatives
+    from src.infrastructure.persistence.optimizer_run_repository import OptimizerRunRepository
+    repository = OptimizerRunRepository(db.connection)
+    run = repository.get_run(project_id, applied["run_id"])
+    if not run:
+        return {"available": False, "certified": False, "run_id": applied["run_id"]}
+    comparison = compare_alternatives(run, repository.list_alternatives(project_id, applied["run_id"]))
+    alternative = next((row for row in comparison["alternatives"] if row["alternative_id"] == applied.get("alternative_id")), None)
+    base = comparison["base"] or {}
+    electrical = base.get("electrical") if isinstance(base.get("electrical"), dict) else {}
+    summary = run.get("result_summary") or {}
+    return {
+        "available": True, "run_id": run["id"], "algorithm": comparison["algorithm"], "based_on_version": applied.get("based_on_version"),
+        "certified": False, "currency": comparison["currency"], "alternative": alternative,
+        "base": {"cost": base.get("cost"), "cost_status": base.get("cost_status"), "status": electrical.get("status"),
+                 "feasible": electrical.get("feasible"), "ratio": electrical.get("ratio")},
+        "saving": comparison["saving_vs_base"], "solver_calls": summary.get("solver_calls_total"),
+        "rates": [{"item": key, **{k: value.get(k) for k in ("source_type", "source", "unit", "catalog_version")}}
+                  for key, value in sorted((comparison["rate_provenance"] or {}).items())],
+        "warnings": comparison["warnings"],
+    }
+
+
 def _payload(db, study):
     artifact = db.one("artefacto_diseno_tierras", project_id=study["project_id"], artifact_id=study["artifact_id"], version=study["artifact_version"])
     project = db.one("projects", id=study["project_id"])
@@ -138,7 +168,7 @@ def _payload(db, study):
         latest_calculation = max(calculations, key=lambda row: row["created_at"])
         snapshot = {**snapshot, "result": summarize(latest_calculation)}
         calculation_detail = _calculation_detail(latest_calculation)
-    return {"study": {**{k: study[k] for k in ("id", "slug", "title", "access", "status", "artifact_id", "artifact_version", "expires_at", "published_at", "updated_at")}, "config": config}, "project": {"name": project["name"], "description": project["description"], "city": project.get("city"), "country": project.get("country")}, "artifact": snapshot, "calculation": calculation_detail, "references": references, "draft": bool(unconfirmed), "unconfirmed_critical": unconfirmed, "non_compliant": _verdict(db, study) == "no_cumple", "has_newer_version": bool(latest and latest["version"] > study["artifact_version"])}
+    return {"study": {**{k: study[k] for k in ("id", "slug", "title", "access", "status", "artifact_id", "artifact_version", "expires_at", "published_at", "updated_at")}, "config": config}, "project": {"name": project["name"], "description": project["description"], "city": project.get("city"), "country": project.get("country")}, "artifact": snapshot, "calculation": calculation_detail, "references": references, "optimization": _optimization(db, study["project_id"], artifact.get("origin")), "draft": bool(unconfirmed), "unconfirmed_critical": unconfirmed, "non_compliant": _verdict(db, study) == "no_cumple", "has_newer_version": bool(latest and latest["version"] > study["artifact_version"])}
 
 
 _DENIALS = ("no se cuenta", "no se dispone", "sin resultados", "no hay resultados", "no existen resultados", "aún no se ha calculado", "no se ha realizado")

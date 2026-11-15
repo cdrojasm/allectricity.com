@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { fieldLabel, pdfStatusLabels, referenceText, studyStatusLabels } from "../labels.js";
+import { fieldLabel, pdfStatusLabels, rateLabels, referenceText, studyStatusLabels } from "../labels.js";
 import { SurfacePotentialMap } from "./GroundingCalculations.jsx";
 import { criterionLabel, evaluateResult, formatNumber, verdictLabels } from "../resultInterpretation.js";
 
@@ -51,6 +51,33 @@ function StudyResult({ calculation, summary }) {
   </div>;
 }
 
+const rateSourceText = (rate) => (rate.source_type === "catalog" ? `Catálogo aprobado${rate.catalog_version ? ` (versión ${rate.catalog_version})` : ""}` : rate.source || "—");
+const savingText = (saving, currency) => (saving ? `${saving.kind === "saving" ? "Ahorro" : "Diferencia de costo"}: ${display(saving.amount, currency, 0)} (${formatNumber(100 * saving.fraction, 1)} %)` : null);
+
+// The optimizer's applied alternative against the base design it started from; a draft, never certified.
+function StudyOptimization({ optimization }) {
+  if (!optimization) return null;
+  if (!optimization.available) return <section data-testid="study-optimization"><h2>Optimización del diseño</h2><p className="study-muted">Esta versión proviene del optimizador, pero la corrida ya no está disponible. No está certificada.</p></section>;
+  const { alternative, base, currency } = optimization;
+  const baseStatus = base.status === "VIOLATED" ? "No cumple" : base.feasible === true ? "Sin violaciones" : "No evaluado";
+  const rows = [
+    ["Costo", display(base.cost, currency, 0), display(alternative?.cost, currency, 0)],
+    ["Resistencia de malla", "—", display(alternative?.Rg_ohm, "Ω", 3)],
+    ["Tensión de paso", "—", display(alternative?.Vs_v, "V", 0)],
+    ["Tensión de contacto", "—", display(alternative?.Vt_v, "V", 0)],
+    ["Utilización", display(base.ratio !== undefined && base.ratio !== null ? 100 * base.ratio : null, "%", 0), display(alternative?.utilization_ratio !== undefined && alternative?.utilization_ratio !== null ? 100 * alternative.utilization_ratio : null, "%", 0)],
+    ["Cumplimiento", baseStatus, alternative ? "Sin violaciones en el nivel más fino" : "—"],
+  ];
+  return <section data-testid="study-optimization">
+    <h2>Optimización del diseño</h2>
+    <p>Esta versión aplica una alternativa del optimizador de topología sobre la versión {optimization.based_on_version}. <strong>Borrador sin certificar</strong>: requiere aprobación de un profesional competente.</p>
+    <table className="study-table"><caption>Alternativa aplicada frente al diseño base</caption><thead><tr><th></th><th>Diseño base</th><th>Alternativa aplicada</th></tr></thead><tbody>{rows.map(([label, a, b]) => <tr key={label}><td>{label}</td><td>{a}</td><td>{b}</td></tr>)}</tbody></table>
+    {savingText(optimization.saving, currency) && <p data-testid="study-optimization-saving"><strong>{savingText(optimization.saving, currency)}</strong></p>}
+    {optimization.rates?.length > 0 && <><h3>Procedencia de las tarifas</h3><ul className="study-references" data-testid="study-optimization-rates">{optimization.rates.map((rate) => <li key={rate.item}><strong>{rateLabels[rate.item] || rate.item}</strong> · {rateSourceText(rate)}</li>)}</ul></>}
+    {optimization.warnings?.length > 0 && <div className="study-model-warnings" data-testid="study-optimization-warnings"><strong>Advertencias</strong><ul>{optimization.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
+  </section>;
+}
+
 export function PublicStudyPage({ slug }) {
   const [data, setData] = useState(null); const [error, setError] = useState(""); const [password, setPassword] = useState("");
   const renderToken = new URLSearchParams(window.location.search).get("render_token");
@@ -60,7 +87,7 @@ export function PublicStudyPage({ slug }) {
   if (!data) return <main className="study-public"><div className="study-card">Cargando estudio…</div></main>;
   if (data.requires_password) return <main className="study-public"><div className="study-card"><h1>{data.study.title}</h1><p>Este estudio requiere una contraseña.</p><form onSubmit={(e) => { e.preventDefault(); load(`/api/v1/public/studies/${encodeURIComponent(slug)}/access`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) }); }}><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Contraseña"/><button className="button primary">Abrir estudio</button></form></div></main>;
   const { study, project, artifact } = data; const enabled = (id) => study.config?.sections?.find((s) => s.id === id)?.enabled !== false;
-  return <main className="study-public"><article className="study-document"><header className="study-header">{study.config?.logo_url && <img className="study-logo" src={study.config.logo_url} alt="Logo del estudio"/>}<div><div className="eyebrow">ESTUDIO DE PUESTA A TIERRA</div><h1>{study.title}</h1><p>{project.name}{project.city ? ` · ${project.city}` : ""}</p></div></header>{data.non_compliant && <div className="study-warning study-nonconforming" role="alert" data-testid="study-nonconforming"><strong>DISEÑO NO CONFORME</strong> · los resultados de este estudio no cumplen la norma evaluada.</div>}{data.draft && <div className="study-warning">BORRADOR · contiene supuestos críticos sin confirmar.</div>}{data.has_newer_version && <div className="study-warning">Existe una versión más reciente. Este estudio conserva la versión {study.artifact_version} publicada.</div>}{enabled("summary") && <section><h2>Resumen</h2><p>{study.config?.sections?.find((s) => s.id === "summary")?.text || project.description || "Estudio calculado y trazable."}</p></section>}{enabled("inputs") && <section data-testid="study-inputs"><h2>Entradas</h2><StudyInputs artifact={artifact} version={study.artifact_version} thermal={data.calculation?.result?.conductor_thermal}/><p>{study.config?.sections?.find((s) => s.id === "inputs")?.text}</p></section>}{enabled("results") && <section data-testid="study-results"><h2>Resultado</h2><p>{study.config?.sections?.find((s) => s.id === "results")?.text}</p><StudyResult calculation={data.calculation} summary={artifact.result}/></section>}{enabled("references") && <section><h2>Referencias y trazabilidad</h2><p>{study.config?.sections?.find((s) => s.id === "references")?.text || "Los valores publicados conservan su origen técnico."}</p>{data.references?.length > 0 && <><ul className="study-references" data-testid="study-references">{data.references.map((item) => <li key={item.path}><strong>{fieldLabel(item.path)}</strong> · {referenceText(item.reference)}</li>)}</ul><details className="study-audit"><summary>Detalle para auditoría</summary><ul className="study-references">{data.references.map((item) => <li key={item.path}><code>{item.path}</code> · {JSON.stringify(item.reference)}</li>)}</ul></details></>}</section>}<footer>{study.config?.show_terra_brand !== false && <span>Publicado con Terra</span>}<button className="button" onClick={() => window.print()}>Guardar como PDF</button></footer></article></main>;
+  return <main className="study-public"><article className="study-document"><header className="study-header">{study.config?.logo_url && <img className="study-logo" src={study.config.logo_url} alt="Logo del estudio"/>}<div><div className="eyebrow">ESTUDIO DE PUESTA A TIERRA</div><h1>{study.title}</h1><p>{project.name}{project.city ? ` · ${project.city}` : ""}</p></div></header>{data.non_compliant && <div className="study-warning study-nonconforming" role="alert" data-testid="study-nonconforming"><strong>DISEÑO NO CONFORME</strong> · los resultados de este estudio no cumplen la norma evaluada.</div>}{data.draft && <div className="study-warning">BORRADOR · contiene supuestos críticos sin confirmar.</div>}{data.has_newer_version && <div className="study-warning">Existe una versión más reciente. Este estudio conserva la versión {study.artifact_version} publicada.</div>}{enabled("summary") && <section><h2>Resumen</h2><p>{study.config?.sections?.find((s) => s.id === "summary")?.text || project.description || "Estudio calculado y trazable."}</p></section>}{enabled("inputs") && <section data-testid="study-inputs"><h2>Entradas</h2><StudyInputs artifact={artifact} version={study.artifact_version} thermal={data.calculation?.result?.conductor_thermal}/><p>{study.config?.sections?.find((s) => s.id === "inputs")?.text}</p></section>}{enabled("results") && <section data-testid="study-results"><h2>Resultado</h2><p>{study.config?.sections?.find((s) => s.id === "results")?.text}</p><StudyResult calculation={data.calculation} summary={artifact.result}/></section>}{enabled("results") && <StudyOptimization optimization={data.optimization}/>}{enabled("references") && <section><h2>Referencias y trazabilidad</h2><p>{study.config?.sections?.find((s) => s.id === "references")?.text || "Los valores publicados conservan su origen técnico."}</p>{data.references?.length > 0 && <><ul className="study-references" data-testid="study-references">{data.references.map((item) => <li key={item.path}><strong>{fieldLabel(item.path)}</strong> · {referenceText(item.reference)}</li>)}</ul><details className="study-audit"><summary>Detalle para auditoría</summary><ul className="study-references">{data.references.map((item) => <li key={item.path}><code>{item.path}</code> · {JSON.stringify(item.reference)}</li>)}</ul></details></>}</section>}<footer>{study.config?.show_terra_brand !== false && <span>Publicado con Terra</span>}<button className="button" onClick={() => window.print()}>Guardar como PDF</button></footer></article></main>;
 }
 
 function SectionEditor({ section, onChange, onGenerate }) {

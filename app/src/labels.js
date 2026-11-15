@@ -43,3 +43,14 @@ export function referenceText(reference) {
 }
 
 export const designStatusLabels = { sin_diseno: "Sin diseño", borrador: "Borrador", no_cumple: "No cumple", cumple: "Cumple" };
+
+// Cost lines of the topology optimizer's rate card, in the order the run form asks for them.
+export const rateLabels = {
+  "material.conductor.unspecified": "Conductor (material)",
+  "material.rod.unspecified": "Varilla (material)",
+  "excavation.trench": "Excavación de zanja",
+  "installation.conductor": "Tendido de conductor",
+  "installation.rod": "Hincado de varilla",
+  "installation.connection": "Conexiones",
+  "assumption.trench_width_m": "Ancho de zanja",
+};
