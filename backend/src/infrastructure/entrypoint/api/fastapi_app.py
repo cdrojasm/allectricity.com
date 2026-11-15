@@ -122,12 +122,16 @@ def create_app(settings=None, services=None):
     @app.get("/api/v1/projects", tags=["projects"])
     def list_projects(actor=Depends(require())):
         with app.state.services.store.transaction() as db:
-            return db.many("projects", owner_id=actor.user_id, limit=500)
+            from src.infrastructure.entrypoint.api.artifact_routes import design_status
+            return [{**project, "design_status": design_status(db, project["id"])}
+                    for project in db.many("projects", owner_id=actor.user_id, limit=500)]
 
     @app.get("/api/v1/projects/{project_id}", tags=["projects"])
     def get_project(project_id: str, actor=Depends(require())):
         with app.state.services.store.transaction() as db:
-            return project_record(db, project_id, actor)
+            from src.infrastructure.entrypoint.api.artifact_routes import design_status
+            record = project_record(db, project_id, actor)
+            return {**record, "design_status": design_status(db, project_id)}
 
     @app.post("/api/v1/projects", status_code=201, tags=["projects"])
     def create_project(data: ProjectRequest, actor=Depends(require())):

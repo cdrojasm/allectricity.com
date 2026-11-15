@@ -40,6 +40,7 @@ class StudyRequest(BaseModel):
 
 class PublishRequest(BaseModel):
     status: str = Field(pattern="^(draft|published|revoked)$")
+    confirm_non_compliant: bool = False
 
 
 class PublicAccessRequest(BaseModel):
@@ -102,6 +103,18 @@ def _calculation_detail(calculation):
             "parameters": {key: parameters.get(key) for key in ("touch_reach_m", "safety_standards")}}
 
 
+def _latest_completed(db, study):
+    rows = [row for row in db.many("calculos_potencial_tierras", project_id=study["project_id"], artifact_id=study["artifact_id"], artifact_version=study["artifact_version"], limit=1000) if row["status"] == "completed"]
+    return max(rows, key=lambda row: row["created_at"]) if rows else None
+
+
+def _verdict(db, study) -> str:
+    """The stored safety verdict of the pinned version (never the model's opinion)."""
+    from src.infrastructure.agents.calculation_summary import summarize
+    latest = _latest_completed(db, study)
+    return summarize(latest)["verdict"] if latest else "no_evaluado"
+
+
 def _payload(db, study):
     artifact = db.one("artefacto_diseno_tierras", project_id=study["project_id"], artifact_id=study["artifact_id"], version=study["artifact_version"])
     project = db.one("projects", id=study["project_id"])
@@ -125,7 +138,15 @@ def _payload(db, study):
         latest_calculation = max(calculations, key=lambda row: row["created_at"])
         snapshot = {**snapshot, "result": summarize(latest_calculation)}
         calculation_detail = _calculation_detail(latest_calculation)
-    return {"study": {**{k: study[k] for k in ("id", "slug", "title", "access", "status", "artifact_id", "artifact_version", "expires_at", "published_at", "updated_at")}, "config": config}, "project": {"name": project["name"], "description": project["description"], "city": project.get("city"), "country": project.get("country")}, "artifact": snapshot, "calculation": calculation_detail, "references": references, "draft": bool(unconfirmed), "unconfirmed_critical": unconfirmed, "has_newer_version": bool(latest and latest["version"] > study["artifact_version"])}
+    return {"study": {**{k: study[k] for k in ("id", "slug", "title", "access", "status", "artifact_id", "artifact_version", "expires_at", "published_at", "updated_at")}, "config": config}, "project": {"name": project["name"], "description": project["description"], "city": project.get("city"), "country": project.get("country")}, "artifact": snapshot, "calculation": calculation_detail, "references": references, "draft": bool(unconfirmed), "unconfirmed_critical": unconfirmed, "non_compliant": _verdict(db, study) == "no_cumple", "has_newer_version": bool(latest and latest["version"] > study["artifact_version"])}
+
+
+_DENIALS = ("no se cuenta", "no se dispone", "sin resultados", "no hay resultados", "no existen resultados", "aún no se ha calculado", "no se ha realizado")
+
+
+def _denies_results(text: str) -> bool:
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in _DENIALS)
 
 
 @router.get("")
@@ -174,6 +195,8 @@ def publish_study(project_id: str, study_id: str, data: PublishRequest, request:
         if not study: raise HTTPException(404, "Study not found")
         artifact = db.one("artefacto_diseno_tierras", project_id=project_id, artifact_id=study["artifact_id"], version=study["artifact_version"])
         if data.status == "published" and artifact is None: raise HTTPException(409, "Pinned artifact version is unavailable")
+        if data.status == "published" and not data.confirm_non_compliant and _verdict(db, study) == "no_cumple":
+            raise HTTPException(409, {"code": "non_compliant", "message": "El diseño no cumple la norma. Confirma que quieres publicarlo con la banda «Diseño no conforme»."})
         db.change("studies", study_id, status=data.status, published_at=int(time()) if data.status == "published" else study["published_at"], updated_at=int(time()))
         return db.one("studies", id=study_id)
 
@@ -197,17 +220,24 @@ def generate_study_section(project_id: str, study_id: str, section_id: str, data
         _owned_project(db, project_id, actor)
         study = db.one("studies", id=study_id, project_id=project_id)
         artifact = db.one("artefacto_diseno_tierras", project_id=project_id, artifact_id=study["artifact_id"], version=study["artifact_version"]) if study else None
+        latest = _latest_completed(db, study) if study and artifact else None
     if not study or not artifact: raise HTTPException(404, "Study or artifact not found")
+    from src.infrastructure.agents.calculation_summary import summarize
+    outcome = summarize(latest) if latest else None
     try:
         from src.infrastructure.agents.runtime import clients
         _, client = clients()
         response = client.chat.completions.create(model=os.getenv("STUDY_WRITER_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini")), temperature=0.2, max_tokens=500, messages=[
-            {"role": "system", "content": "Escribe un párrafo técnico breve en español para un estudio de puesta a tierra. No inventes valores: si faltan datos, dilo explícitamente. Devuelve solo el párrafo."},
-            {"role": "user", "content": f"Sección: {section_id}. Título: {study['title']}. Proyecto: {project_id}. Artefacto: {artifact['snapshot']}. Instrucción: {data.instruction or 'Resume esta sección para un revisor técnico.'}"},
+            {"role": "system", "content": "Escribe un párrafo técnico breve en español para un estudio de puesta a tierra. No inventes valores: si faltan datos, dilo explícitamente. Si se entrega un resultado de cálculo, es la fuente de verdad: cita su veredicto (cumple / no cumple) tal cual y nunca digas que faltan resultados. No uses identificadores internos ni ids; nombra el proyecto por su título. Devuelve solo el párrafo."},
+            {"role": "user", "content": f"Sección: {section_id}. Título: {study['title']}. Artefacto: {artifact['snapshot']}. Resultado del cálculo fijado: {outcome if outcome else 'sin cálculo para esta versión'}. Instrucción: {data.instruction or 'Resume esta sección para un revisor técnico.'}"},
         ])
         text = (response.choices[0].message.content or "").strip()
     except Exception as exc:
         raise HTTPException(503, "El generador de texto no está disponible") from exc
+    if outcome and outcome["verdict"] in {"cumple", "no_cumple"} and _denies_results(text):
+        # The model denied results that exist: use the stored verdict instead of publishing a false statement.
+        text = ("El diseño cumple los criterios evaluados." if outcome["verdict"] == "cumple"
+                else "El diseño no cumple los criterios evaluados; ver la tabla de resultados.")
     return {"section_id": section_id, "text": text}
 
 

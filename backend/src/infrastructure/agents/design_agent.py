@@ -582,7 +582,16 @@ class ArtifactWorkspace:
         try:
             parameters = PotentialCalculationRequest.model_validate(options).model_dump()
         except ValidationError as exc:
-            return {"queued": False, "errors": _errors(exc), "suggestion": "Corrige los parámetros del cálculo."}
+            # A too-short justification is only free text: it must not stop the calculation, so the default
+            # one is used. Any other invalid setting (standards, split factor...) is never silently replaced.
+            bad = {str(error["loc"][0]) for error in exc.errors() if error.get("loc")}
+            if bad != {"justification"}:
+                return {"queued": False, "errors": _errors(exc), "suggestion": "Corrige los parámetros del cálculo."}
+            try:
+                parameters = PotentialCalculationRequest.model_validate(
+                    {k: v for k, v in options.items() if k not in bad}).model_dump()
+            except ValidationError:
+                return {"queued": False, "errors": _errors(exc), "suggestion": "Corrige los parámetros del cálculo."}
         with self.store.transaction() as db:
             done = [row for row in db.many("calculos_potencial_tierras", project_id=self.run["project_id"],
                                            artifact_id=self.artifact_id, artifact_version=self.base_version)

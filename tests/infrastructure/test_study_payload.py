@@ -17,3 +17,40 @@ def test_public_study_detail_carries_what_the_workspace_results_panel_draws():
 def test_public_study_detail_tolerates_a_result_without_the_workspace_fields():
     assert _calculation_detail({"parameters": None, "result": {"scenario_results": {}}}) == {
         "result": {}, "parameters": {"touch_reach_m": None, "safety_standards": None}}
+
+
+def test_a_summary_that_denies_existing_results_is_detected():
+    from src.infrastructure.entrypoint.api.study_routes import _denies_results
+
+    assert _denies_results("Aún no se cuenta con resultados de tensiones de contacto.")
+    assert not _denies_results("El diseño no cumple el criterio de contacto.")
+
+
+def test_publishing_a_non_compliant_design_needs_explicit_confirmation(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+    from src.infrastructure.entrypoint.api import study_routes
+
+    monkeypatch.setattr(study_routes, "_verdict", lambda db, study: "no_cumple")
+
+    class Db:
+        def one(self, table, **kw): return {"id": "s", "artifact_id": "a", "artifact_version": 1, "published_at": None} if table == "studies" else {"id": "art"}
+        def change(self, *a, **k): self.changed = True
+
+    class Store:
+        def transaction(self, write=False):
+            from contextlib import contextmanager
+            @contextmanager
+            def cm(): yield Db()
+            return cm()
+
+    class Req:
+        class app:
+            class state:
+                class services:
+                    store = Store()
+
+    monkeypatch.setattr(study_routes, "_owned_project", lambda *a, **k: None)
+    with pytest.raises(HTTPException) as err:
+        study_routes.publish_study("p", "s", study_routes.PublishRequest(status="published"), Req, actor=None)
+    assert err.value.status_code == 409 and err.value.detail["code"] == "non_compliant"

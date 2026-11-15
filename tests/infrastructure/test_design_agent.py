@@ -652,3 +652,16 @@ def test_confirm_inputs_tool_after_a_blocked_calculation(chat):
     ], dispatched)
     assert len(tool_result(llm, 1)["confirmed"]) == 2
     assert tool_result(llm, 2)["queued"] and dispatched
+
+
+def test_a_too_short_justification_does_not_stop_the_calculation(chat):
+    services, client, tokens, project, conversation, _, _ = chat
+    calculation_setup(chat)
+    sent = send(client, tokens, conversation, "Calcula la seguridad")
+    dispatched = []
+    llm = calc_step(services, sent["run_id"], [
+        ("request_potential_calculation", {"justification": "ok"}),
+        ("respond_to_user", {"text": "Lancé el cálculo.", "waits_for": "calculation"}),
+    ], dispatched)
+    queued = tool_result(llm, 1)
+    assert queued["queued"] is True and dispatched == [queued["calculation_id"]]

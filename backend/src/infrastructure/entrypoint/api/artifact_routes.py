@@ -398,7 +398,27 @@ def with_calculation_freshness(db, row: dict) -> dict:
         status = "error"
     return {**row, "calculation_status": status,
             "calculation_version": latest["artifact_version"] if latest else None,
-            "latest_calculation_id": latest["id"] if latest else None}
+            "latest_calculation_id": latest["id"] if latest else None,
+            "calculation_verdict": _version_verdict(calculations, row["version"])}
+
+
+def _version_verdict(calculations: list, version: int) -> str:
+    """Stored safety verdict of the newest completed calculation of this exact version."""
+    from src.infrastructure.agents.calculation_summary import summarize
+    done = [c for c in calculations if c["artifact_version"] == version and c["status"] == "completed"]
+    return summarize(max(done, key=lambda c: (c["created_at"], c["updated_at"])))["verdict"] if done else "no_evaluado"
+
+
+def design_status(db, project_id: str) -> dict:
+    """One state per project: sin_diseno, borrador, no_cumple or cumple, plus whether a study is published."""
+    rows = db.designs.latest_by_artifact(project_id)
+    count = len(db.many("studies", project_id=project_id, status="published", limit=100))
+    published = count > 0
+    if not rows:
+        return {"state": "sin_diseno", "published": published, "published_count": count}
+    newest = max(rows, key=lambda r: r["created_at"])
+    verdict = with_calculation_freshness(db, newest)["calculation_verdict"]
+    return {"state": verdict if verdict in {"cumple", "no_cumple"} else "borrador", "published": published, "published_count": count}
 
 
 def announce_user_artifact_update(db, project_id: str, row: dict, previous: dict | None, summary: str) -> None:
