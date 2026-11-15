@@ -454,3 +454,45 @@ def test_a_rod_with_a_non_positive_length_is_rejected_by_the_api_and_the_plan_ch
     checked = client.post(f"{base}/geometria/validar", json={"geometry": _square([2.4, 2.4, 6.0, 6.0])["geometry"]},
                           headers=headers(tokens)).json()
     assert checked["conflicts"] == []
+
+
+# ---- BL-15 / EG-21: deterministic coherence of the calculation inputs --------------------------------------------
+
+def test_incoherent_inputs_block_the_calculation_and_the_coherence_endpoint_explains_them(env, monkeypatch):  # noqa: F811
+    _, _, client, _, tokens, _ = env
+    monkeypatch.setattr(tasks.calculate_artifact_potential, "apply_async", lambda args, task_id: None)
+    # Clearing time 5 s with the default conductor (t_c = 1 s): t_c < t_s is an error; 5 s is also outside Dalziel's range.
+    base, artifact = _artifact(client, tokens, {**ANNEX_H_GRID1, "fault": {"current_a": 744.8, "clearing_time_s": 5.0}})
+    url = f"{base}/{artifact['artifact_id']}/versions/1"
+    blocked = client.post(f"{url}/calculos-potencial", json={}, headers=headers(tokens))
+    assert blocked.status_code == 409, blocked.text
+    detail = blocked.json()["detail"]
+    assert detail["message"].startswith("Los datos de entrada no son coherentes") and "t_c" in detail["message"]
+    assert [(d["path"], d["severity"]) for d in detail["coherence"]] == [("conductor.thermal_duration_s", "error")]
+    assert client.get(f"{url}/calculos-potencial", headers=headers(tokens)).json() == []    # nothing was queued
+
+    report = client.get(f"{url}/coherencia", headers=headers(tokens)).json()
+    assert report["version"] == 1 and report["missing"] == []
+    assert [(d["path"], d["severity"]) for d in report["diagnostics"]] == [
+        ("fault.clearing_time_s", "warning"), ("conductor.thermal_duration_s", "error")]
+    assert report["errors"][0]["related"] == ["fault.clearing_time_s"] and report["warnings"][0]["source"] == "IEEE 80-2013 §8.3"
+    assert client.get(f"{base}/{artifact['artifact_id']}/versions/9/coherencia", headers=headers(tokens)).status_code == 404
+
+    # A conductor sized for the clearing time makes the version calculable again; the warning stays a warning.
+    fixed = client.post(f"{base}/{artifact['artifact_id']}/versions", headers=headers(tokens),
+                        json={**ANNEX_H_GRID1, "fault": {"current_a": 744.8, "clearing_time_s": 5.0},
+                              "conductor": {"thermal_duration_s": 5.0}}).json()
+    queued = client.post(f"{base}/{artifact['artifact_id']}/versions/{fixed['version']}/calculos-potencial", json={}, headers=headers(tokens))
+    assert queued.status_code == 202, queued.text
+    assert client.get(f"{base}/{artifact['artifact_id']}/versions/{fixed['version']}/coherencia", headers=headers(tokens)).json()["errors"] == []
+
+
+def test_unusual_inputs_travel_with_the_result_as_warnings_and_a_plausible_resistance_is_silent(engine):
+    plain = calculate(ANNEX_H_GRID1, PARAMETERS, engine)["result"]
+    assert not any(w.startswith(("Entrada (", "Verosimilitud:")) for w in plain["model_warnings"])   # Annex H Grid 1 is sound
+    unusual = {**ANNEX_H_GRID1, "fault": {"current_a": 744.8, "clearing_time_s": 0.02, "surface_thickness_m": 0.02}}
+    result = calculate(unusual, PARAMETERS, engine)["result"]
+    flagged = [w for w in result["model_warnings"] if w.startswith("Entrada (")]
+    assert [w.split(")")[0] for w in flagged] == ["Entrada (fault.clearing_time_s", "Entrada (fault.surface_thickness_m"]
+    assert all("IEEE 80" in w or "Cs" in w for w in flagged)
+    assert result["grid_resistance_ohm"] == pytest.approx(plain["grid_resistance_ohm"])          # warnings never change numbers

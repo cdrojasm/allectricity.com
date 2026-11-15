@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from src.domain.agent.patches import unconfirmed_critical
 from src.domain.spat.grid_geometry import missing_for_calculation
+from src.domain.spat.input_coherence import coherence_errors
 
 
 class CalculationBlocked(Exception):
@@ -28,6 +29,12 @@ def create_calculation(db, project_id: str, artifact_id: str, version: int, para
     if unconfirmed:
         raise CalculationBlocked(409, {"message": "Confirma los datos críticos antes de calcular",
                                        "unconfirmed_critical": unconfirmed})
+    # BL-15: deterministic coherence rules; an error means the data cannot describe a real design.
+    incoherent = coherence_errors(artifact["snapshot"])
+    if incoherent:
+        raise CalculationBlocked(409, {"message": "Los datos de entrada no son coherentes; corrígelos antes de calcular: "
+                                                  + " ".join(d["message"] for d in incoherent),
+                                       "coherence": incoherent})
     now = int(time())
     row = {"id": str(uuid4()), "project_id": project_id, "artifact_id": artifact_id, "artifact_version": version,
            "status": "pending", "parameters": parameters, "result": None, "trace": None, "error": None,

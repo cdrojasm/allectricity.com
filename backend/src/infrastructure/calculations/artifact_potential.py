@@ -10,6 +10,7 @@ from typing import Any
 
 from src.domain.spat import grid_geometry
 from src.domain.spat.artifact_contract import validate_document
+from src.domain.spat.input_coherence import coherence_warnings, resistance_plausibility
 from src.infrastructure.calculations import safety_criteria
 from src.infrastructure.calculations.conductor_thermal import equivalent_radius_m
 from src.infrastructure.calculations.conductor_thermal_profiles import calculate_conductor_thermal
@@ -232,9 +233,13 @@ def calculate(snapshot: dict[str, Any], parameters: dict[str, Any], client: Pote
     result["conductor_thermal"] = calculate_conductor_thermal(thermal_input, current)
     # Advisories about the conductor standard travel with the other model warnings: the study page, the agent
     # summary and the chat panel already show them.
+    # BL-15 / EG-21: unusual inputs and an implausible resistance are reported, never repaired.
+    plausibility = resistance_plausibility(geometry, snapshot["soil_layers"], result["grid_resistance_ohm"])
     result["model_warnings"] = [*result["model_warnings"],
                                 *(f"Conductor ({result['conductor_thermal']['profile']}): {warning}"
-                                  for warning in result["conductor_thermal"]["warnings"])]
+                                  for warning in result["conductor_thermal"]["warnings"]),
+                                *(f"Entrada ({d['path']}): {d['message']}" for d in coherence_warnings(snapshot)),
+                                *([f"Verosimilitud: {plausibility['message']}"] if plausibility else [])]
     hashes = field["hashes"]
     if parameters.get("estimate_uncertainty"):
         result["numerical_uncertainty"], extra = _uncertainty(client, geometry, effective_parameters, soil, current, origin, field)

@@ -13,6 +13,7 @@ from src.domain.spat.artifact_contract import snapshot_fields, validate_artifact
 from src.domain.agent.patches import diff
 from src.domain.spat.grid_geometry import (MAX_CONDUCTORS, MAX_RODS, area_grid, geometry_conflicts, geometry_warnings,
                                            missing_for_calculation)
+from src.domain.spat.input_coherence import coherence_diagnostics
 from src.domain.spat.plan_revisions import compare_plan_revisions
 from src.infrastructure.entrypoint.api.schemas import (GroundingArtifactRequest, PotentialCalculationRequest,
                                                        SoilFileImportRequest, SoilMeasurementsRequest)
@@ -481,6 +482,23 @@ def get_version(project_id: str, artifact_id: str, version: int, request: Reques
     if not row:
         raise HTTPException(404, "Artifact version not found")
     return enriched
+
+
+@router.get("/{artifact_id}/versions/{version}/coherencia")
+def check_version_coherence(project_id: str, artifact_id: str, version: int, request: Request,
+                            actor=Depends(require("designs:read"))):
+    """BL-15: deterministic coherence diagnostics of the version's calculation inputs (ranges, t_c >= t_s,
+    surface layer against the soil). Errors block `calculos-potencial`; warnings travel with the result."""
+    with request.app.state.services.store.transaction() as db:
+        owned_project(db, project_id, actor)
+        row = db.designs.get_version(project_id, artifact_id, version)
+    if not row:
+        raise HTTPException(404, "Artifact version not found")
+    diagnostics = coherence_diagnostics(row["snapshot"])
+    return {"artifact_id": artifact_id, "version": version, "diagnostics": diagnostics,
+            "errors": [d for d in diagnostics if d["severity"] == "error"],
+            "warnings": [d for d in diagnostics if d["severity"] == "warning"],
+            "missing": missing_for_calculation(row["snapshot"])}
 
 
 @router.post("/{artifact_id}/versions", status_code=201)
