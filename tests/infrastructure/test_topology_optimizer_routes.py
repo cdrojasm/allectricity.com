@@ -342,9 +342,22 @@ def test_the_public_study_shows_the_applied_alternative_against_the_base_with_ra
     assert any("certificada" in warning for warning in optimization["warnings"])
     assert "request_snapshot" not in optimization and "run_id" in optimization
 
+    # BL-21: the study carries the bill of materials taken off the published geometry.
+    bom = data["bill_of_materials"]
+    assert bom["conductor"] == [{"material": "unspecified", "length_m": 80.0, "cross_section_mm2": 86.590147, "material_id": "copper_hard_drawn"}]
+    assert bom["rods"] == [{"material": "unspecified", "length_m": 2.4, "count": 1}] and bom["rods_total"] == {"count": 1, "length_m": 2.4}
+    assert bom["connections"] == 3                                                  # two T junctions at x = 18 and one rod
+    assert bom["trench"] == {"length_m": 80.0, "width_m": 0.4, "depth_m": 0.6, "excavation_m3": 19.2}   # width from the run
+    assert bom["cost"]["total"] == 800000.0 and bom["cost"]["currency"] == "COP" and bom["cost"]["by_group"] is None
+    assert all("excavación" not in note for note in bom["notes"])
+
     plain = client.post(base_path, json={"artifact_id": artifact["artifact_id"], "artifact_version": 1, "title": "Base", "access": "public"}, headers=h).json()
     client.post(f"{base_path}/{plain['id']}/publish", json={"status": "published"}, headers=h)
-    assert client.get(f"/api/v1/public/studies/{plain['slug']}").json()["optimization"] is None
+    base_study = client.get(f"/api/v1/public/studies/{plain['slug']}").json()
+    assert base_study["optimization"] is None
+    base_bom = base_study["bill_of_materials"]
+    assert base_bom["rods_total"] == {"count": 2, "length_m": 4.8} and base_bom["cost"] is None
+    assert base_bom["trench"]["excavation_m3"] is None and any("ancho de zanja" in note for note in base_bom["notes"])
 
 
 def test_rate_options_offer_only_what_the_run_would_accept(site):

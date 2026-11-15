@@ -15,11 +15,42 @@ async function jsonRequest(url, options = {}) {
 
 const display = (value, unit = "", digits = 2) => (value === undefined || value === null || value === "" ? "—" : `${formatNumber(value, digits)}${unit ? ` ${unit}` : ""}`);
 
+// Explicit rods carry their own length (SV-28); perimeter rods share rod_length_m.
+function rodsSummary(geometry) {
+  const rods = Array.isArray(geometry.rods) ? geometry.rods : [];
+  if (rods.length) {
+    const lengths = new Map();
+    rods.forEach((rod) => { const length = Number(rod.length_m ?? geometry.rod_length_m ?? 2.4); lengths.set(length, (lengths.get(length) || 0) + 1); });
+    const parts = [...lengths.entries()].sort((a, b) => a[0] - b[0]).map(([length, count]) => `${count} × ${display(length, "m")}`);
+    return `${rods.length} (${parts.join(", ")})`;
+  }
+  return geometry.rods_count ? `${geometry.rods_count} × ${display(geometry.rod_length_m, "m")}` : "Sin varillas";
+}
+
+const materialLabel = (material) => (material === "unspecified" || !material ? "sin especificar" : material);
+
+function StudyBillOfMaterials({ bom }) {
+  if (!bom) return null;
+  const rows = [
+    ...bom.conductor.map((line) => [`Conductor (${materialLabel(line.material)}${line.cross_section_mm2 ? `, ${formatNumber(line.cross_section_mm2)} mm²` : ""})`, display(line.length_m, "m", 1)]),
+    ...bom.rods.map((line) => [`Varillas de ${display(line.length_m, "m")} (${materialLabel(line.material)})`, `${line.count} und · ${display(line.length_m * line.count, "m", 1)}`]),
+    ["Conexiones (uniones y varillas)", `${bom.connections} und`],
+    ["Zanja", `${display(bom.trench.length_m, "m", 1)} · ${display(bom.trench.depth_m, "m")} de profundidad${bom.trench.width_m ? ` · ${display(bom.trench.width_m, "m")} de ancho` : ""}`],
+    ["Excavación", bom.trench.excavation_m3 === null || bom.trench.excavation_m3 === undefined ? "Sin ancho de zanja declarado" : display(bom.trench.excavation_m3, "m³", 1)],
+  ];
+  return <section data-testid="study-bom">
+    <h2>Lista de materiales</h2>
+    <table className="study-bom-table"><tbody>{rows.map(([label, value]) => <tr key={label}><th scope="row">{label}</th><td>{value}</td></tr>)}</tbody></table>
+    {bom.cost && <p data-testid="study-bom-cost"><strong>Costo estimado:</strong> {formatNumber(bom.cost.total, 0)} {bom.cost.currency || ""}{bom.cost.by_group ? ` (${Object.entries(bom.cost.by_group).map(([group, amount]) => `${rateLabels[group] || group}: ${formatNumber(Number(amount), 0)}`).join(" · ")})` : ""}. {bom.cost.note}</p>}
+    {bom.notes?.length > 0 && <ul className="study-references">{bom.notes.map((note) => <li key={note}>{note}</li>)}</ul>}
+  </section>;
+}
+
 function StudyInputs({ artifact, version, thermal }) {
   const geometry = artifact.geometry || {}; const fault = artifact.fault || {}; const conductor = artifact.conductor || {}; const layers = artifact.soil_layers || [];
   const spacing = geometry.conductor_spacing_x_m && geometry.conductor_spacing_y_m ? `${display(geometry.conductor_spacing_x_m, "", 2)} × ${display(geometry.conductor_spacing_y_m, "", 2)} m` : display(geometry.conductor_spacing_m, "m");
   const groups = [
-    ["Malla", [["Dimensiones", `${display(geometry.length_m, "", 2)} × ${display(geometry.width_m, "", 2)} m`], ["Retícula", spacing], ["Profundidad", display(geometry.burial_depth_m, "m")], ["Varillas", geometry.rods_count ? `${geometry.rods_count} × ${display(geometry.rod_length_m, "m")}` : "Sin varillas"]]],
+    ["Malla", [["Dimensiones", `${display(geometry.length_m, "", 2)} × ${display(geometry.width_m, "", 2)} m`], ["Retícula", spacing], ["Profundidad", display(geometry.burial_depth_m, "m")], ["Varillas", rodsSummary(geometry)]]],
     ["Falla", [["Corriente", display(fault.current_a, "A", 0)], ["Tiempo de despeje", display(fault.clearing_time_s, "s")], ["Capa superficial", fault.surface_resistivity_ohm_m ? `${display(fault.surface_resistivity_ohm_m, "Ω·m", 0)} · ${display(fault.surface_thickness_m, "m")}` : "Sin capa superficial"]]],
     ["Conductor", [["Material", conductor.material_name || thermal?.material_name || conductor.material_id || "—"], ["Sección", display(conductor.cross_section_mm2, "mm²")], ...(thermal?.profile ? [["Norma", thermal.profile]] : [])]],
   ];
@@ -87,7 +118,7 @@ export function PublicStudyPage({ slug }) {
   if (!data) return <main className="study-public"><div className="study-card">Cargando estudio…</div></main>;
   if (data.requires_password) return <main className="study-public"><div className="study-card"><h1>{data.study.title}</h1><p>Este estudio requiere una contraseña.</p><form onSubmit={(e) => { e.preventDefault(); load(`/api/v1/public/studies/${encodeURIComponent(slug)}/access`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) }); }}><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Contraseña"/><button className="button primary">Abrir estudio</button></form></div></main>;
   const { study, project, artifact } = data; const enabled = (id) => study.config?.sections?.find((s) => s.id === id)?.enabled !== false;
-  return <main className="study-public"><article className="study-document"><header className="study-header">{study.config?.logo_url && <img className="study-logo" src={study.config.logo_url} alt="Logo del estudio"/>}<div><div className="eyebrow">ESTUDIO DE PUESTA A TIERRA</div><h1>{study.title}</h1><p>{project.name}{project.city ? ` · ${project.city}` : ""}</p></div></header>{data.non_compliant && <div className="study-warning study-nonconforming" role="alert" data-testid="study-nonconforming"><strong>DISEÑO NO CONFORME</strong> · los resultados de este estudio no cumplen la norma evaluada.</div>}{data.draft && <div className="study-warning">BORRADOR · contiene supuestos críticos sin confirmar.</div>}{data.has_newer_version && <div className="study-warning">Existe una versión más reciente. Este estudio conserva la versión {study.artifact_version} publicada.</div>}{enabled("summary") && <section><h2>Resumen</h2><p>{study.config?.sections?.find((s) => s.id === "summary")?.text || project.description || "Estudio calculado y trazable."}</p></section>}{enabled("inputs") && <section data-testid="study-inputs"><h2>Entradas</h2><StudyInputs artifact={artifact} version={study.artifact_version} thermal={data.calculation?.result?.conductor_thermal}/><p>{study.config?.sections?.find((s) => s.id === "inputs")?.text}</p></section>}{enabled("results") && <section data-testid="study-results"><h2>Resultado</h2><p>{study.config?.sections?.find((s) => s.id === "results")?.text}</p><StudyResult calculation={data.calculation} summary={artifact.result}/></section>}{enabled("results") && <StudyOptimization optimization={data.optimization}/>}{enabled("references") && <section><h2>Referencias y trazabilidad</h2><p>{study.config?.sections?.find((s) => s.id === "references")?.text || "Los valores publicados conservan su origen técnico."}</p>{data.references?.length > 0 && <><ul className="study-references" data-testid="study-references">{data.references.map((item) => <li key={item.path}><strong>{fieldLabel(item.path)}</strong> · {referenceText(item.reference)}</li>)}</ul><details className="study-audit"><summary>Detalle para auditoría</summary><ul className="study-references">{data.references.map((item) => <li key={item.path}><code>{item.path}</code> · {JSON.stringify(item.reference)}</li>)}</ul></details></>}</section>}<footer>{study.config?.show_terra_brand !== false && <span>Publicado con Terra</span>}<button className="button" onClick={() => window.print()}>Guardar como PDF</button></footer></article></main>;
+  return <main className="study-public"><article className="study-document"><header className="study-header">{study.config?.logo_url && <img className="study-logo" src={study.config.logo_url} alt="Logo del estudio"/>}<div><div className="eyebrow">ESTUDIO DE PUESTA A TIERRA</div><h1>{study.title}</h1><p>{project.name}{project.city ? ` · ${project.city}` : ""}</p></div></header>{data.non_compliant && <div className="study-warning study-nonconforming" role="alert" data-testid="study-nonconforming"><strong>DISEÑO NO CONFORME</strong> · los resultados de este estudio no cumplen la norma evaluada.</div>}{data.draft && <div className="study-warning">BORRADOR · contiene supuestos críticos sin confirmar.</div>}{data.has_newer_version && <div className="study-warning">Existe una versión más reciente. Este estudio conserva la versión {study.artifact_version} publicada.</div>}{enabled("summary") && <section><h2>Resumen</h2><p>{study.config?.sections?.find((s) => s.id === "summary")?.text || project.description || "Estudio calculado y trazable."}</p></section>}{enabled("inputs") && <section data-testid="study-inputs"><h2>Entradas</h2><StudyInputs artifact={artifact} version={study.artifact_version} thermal={data.calculation?.result?.conductor_thermal}/><p>{study.config?.sections?.find((s) => s.id === "inputs")?.text}</p></section>}{enabled("results") && <section data-testid="study-results"><h2>Resultado</h2><p>{study.config?.sections?.find((s) => s.id === "results")?.text}</p><StudyResult calculation={data.calculation} summary={artifact.result}/></section>}{enabled("results") && <StudyOptimization optimization={data.optimization}/>}{enabled("results") && <StudyBillOfMaterials bom={data.bill_of_materials}/>}{enabled("references") && <section><h2>Referencias y trazabilidad</h2><p>{study.config?.sections?.find((s) => s.id === "references")?.text || "Los valores publicados conservan su origen técnico."}</p>{data.references?.length > 0 && <><ul className="study-references" data-testid="study-references">{data.references.map((item) => <li key={item.path}><strong>{fieldLabel(item.path)}</strong> · {referenceText(item.reference)}</li>)}</ul><details className="study-audit"><summary>Detalle para auditoría</summary><ul className="study-references">{data.references.map((item) => <li key={item.path}><code>{item.path}</code> · {JSON.stringify(item.reference)}</li>)}</ul></details></>}</section>}<footer>{study.config?.show_terra_brand !== false && <span>Publicado con Terra</span>}<button className="button" onClick={() => window.print()}>Guardar como PDF</button></footer></article></main>;
 }
 
 function SectionEditor({ section, onChange, onGenerate }) {

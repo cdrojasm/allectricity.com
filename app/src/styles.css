@@ -2526,6 +2526,9 @@ h2 {
 .study-input-group dl { margin: 0; display: grid; gap: 6px; }
 .study-input-group dl > div { display: flex; justify-content: space-between; gap: 12px; font-size: .88rem; }
 .study-input-group dt { color: #746f66; } .study-input-group dd { margin: 0; font-weight: 600; text-align: right; }
+.study-bom-table { width: 100%; border-collapse: collapse; font-size: .88rem; margin: 8px 0 12px; }
+.study-bom-table th { text-align: left; font-weight: 400; color: #746f66; padding: 6px 8px; border-bottom: 1px solid #e6e2d9; }
+.study-bom-table td { text-align: right; font-weight: 600; padding: 6px 8px; border-bottom: 1px solid #e6e2d9; white-space: nowrap; }
 .study-muted { color: #746f66; font-size: .85rem; margin: 0; }
 .study-verdict { margin: 0 0 14px; padding: 12px 14px; font-size: 1rem; }
 .study-interpretation { display: grid; gap: 10px; margin-bottom: 14px; padding: 14px 16px; border: 1px solid #dce9e3; border-radius: 8px; background: #f8fbfa; }
