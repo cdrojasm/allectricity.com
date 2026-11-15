@@ -2307,6 +2307,13 @@ h2 {
 .system-health-badge.ok { color:#2f7a5e; background:#e8f5ee; }
 .system-health-badge.degraded { color:#9a6b12; background:#fbf2df; }
 .system-health-badge.error { color:#b0473e; background:#fbeceb; }
+.system-health-badge.warning { color:#9a6b12; background:#fbf2df; }
+.system-queues { margin-top: 10px; padding-top: 10px; border-top: 1px solid #ecebe6; }
+.system-queues h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: .8rem; letter-spacing: .04em; text-transform: uppercase; color: #746f66; }
+.system-queue-list { list-style: none; margin: 0 0 6px; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 4px 12px; font-size: .82rem; }
+.system-queue-list li { display: flex; justify-content: space-between; gap: 6px; } .system-queue-list em { font-style: normal; color: #746f66; }
+.system-queue-alerts { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; font-size: .82rem; }
+.system-queue-alerts li { padding: 6px 8px; border-radius: 6px; background: #fbf2df; color: #7a5410; } .system-queue-alerts li.error { background: #fbeceb; color: #8f3029; }
 .system-health-error { margin:0; padding:12px 18px 0; color:#b0473e; font-size:11px; }
 .system-health-list { margin:0; padding:4px 18px; list-style:none; display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); column-gap:24px; }
 .system-health-list li { display:flex; align-items:center; gap:10px; min-width:0; padding:10px 0; border-bottom:1px solid #f0f2f3; }

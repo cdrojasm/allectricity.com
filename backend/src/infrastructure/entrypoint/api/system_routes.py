@@ -135,6 +135,97 @@ def system_health(request: Request, actor=Depends(require())):
             "checked_at": int(time()), "components": components}
 
 
+# ---- BL-26 (minimal): queue metrics and basic alerts -------------------------------------------------------------
+
+# Every Celery queue a worker listens on (tasks.py routes) and the worker time limit of its longest task.
+QUEUES = (("agent", 600), ("documents", None), ("calculations", 600), ("optimizer", 3300), ("render", None),
+          ("mail", None), ("default", None))
+QUEUE_DEPTH_WARN = int(os.getenv("QUEUE_DEPTH_WARN", "20"))          # messages waiting in one queue
+QUEUE_WAIT_WARN_S = int(os.getenv("QUEUE_WAIT_WARN_S", "600"))       # oldest pending job age before it is a problem
+
+
+def _queue_depths() -> dict[str, int | None]:
+    """Messages waiting per queue (Celery keeps one Redis list per queue); None when Redis cannot be read."""
+    import redis
+
+    client = redis.Redis.from_url(os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0"),
+                                  socket_timeout=2, socket_connect_timeout=2)
+    try:
+        return {name: int(client.llen(name)) for name, _ in QUEUES}
+    except Exception:
+        return {name: None for name, _ in QUEUES}
+    finally:
+        client.close()
+
+
+def _work_in_progress(db, now: int) -> dict[str, dict]:
+    """Queued and running jobs recorded in the database, with the age of the oldest of each."""
+    def summarize(rows, waiting_states, running_states):
+        waiting = [r for r in rows if r["status"] in waiting_states]
+        running = [r for r in rows if r["status"] in running_states]
+        return {"waiting": len(waiting), "running": len(running),
+                "oldest_waiting_s": max((now - int(r["created_at"]) for r in waiting), default=None),
+                "oldest_running_s": max((now - int(r["updated_at"]) for r in running), default=None)}
+
+    calculations = [r for status in ("pending", "running") for r in db.many("calculos_potencial_tierras", status=status)]
+    runs = [r for status in ("queued", "running") for r in db.many("optimizer_runs", status=status)]
+    return {"calculations": summarize(calculations, ("pending",), ("running",)),
+            "optimizer": summarize(runs, ("queued",), ("running",))}
+
+
+def queue_report(request: Request) -> dict:
+    now = int(time())
+    depths = _queue_depths()
+    with request.app.state.services.store.transaction() as db:
+        work = _work_in_progress(db, now)
+    limits = dict(QUEUES)
+    alerts = []
+    if all(depth is None for depth in depths.values()):
+        alerts.append({"severity": "error", "queue": None, "message": "No se pudo leer el broker (Redis); se desconoce la profundidad de las colas."})
+    for name, depth in depths.items():
+        if depth is not None and depth > QUEUE_DEPTH_WARN:
+            alerts.append({"severity": "warning", "queue": name,
+                           "message": f"La cola «{name}» tiene {depth} tareas en espera (umbral {QUEUE_DEPTH_WARN})."})
+    for kind, queue, label in (("calculations", "calculations", "cálculos de potencial"), ("optimizer", "optimizer", "corridas del optimizador")):
+        summary = work[kind]
+        if summary["oldest_waiting_s"] is not None and summary["oldest_waiting_s"] > QUEUE_WAIT_WARN_S:
+            alerts.append({"severity": "warning", "queue": queue,
+                           "message": f"Hay {label} esperando desde hace {summary['oldest_waiting_s'] // 60} min "
+                                      f"(umbral {QUEUE_WAIT_WARN_S // 60} min); revisa el worker de «{queue}»."})
+        limit = limits.get(queue)
+        if limit and summary["oldest_running_s"] is not None and summary["oldest_running_s"] > limit:
+            alerts.append({"severity": "error", "queue": queue,
+                           "message": f"Hay {label} marcados «en ejecución» desde hace {summary['oldest_running_s'] // 60} min, más que el "
+                                      f"límite del worker ({limit // 60} min): el worker murió o el estado quedó huérfano."})
+    status = "error" if any(a["severity"] == "error" for a in alerts) else "warning" if alerts else "ok"
+    return {"status": status, "checked_at": now, "thresholds": {"depth": QUEUE_DEPTH_WARN, "wait_s": QUEUE_WAIT_WARN_S},
+            "queues": [{"name": name, "depth": depths[name], "time_limit_s": limit} for name, limit in QUEUES],
+            "work": work, "alerts": alerts}
+
+
+@router.get("/system/queues")
+def system_queues(request: Request, actor=Depends(require())):
+    """Depth of every work queue, jobs waiting or running per kind, and the alerts the thresholds raise."""
+    return queue_report(request)
+
+
+@router.get("/system/metrics")
+def system_metrics(request: Request, actor=Depends(require())):
+    """The same report in Prometheus text format, for an external scraper or alert rule."""
+    from fastapi.responses import PlainTextResponse
+
+    report = queue_report(request)
+    lines = ["# HELP spat_queue_depth Messages waiting in a Celery queue.", "# TYPE spat_queue_depth gauge"]
+    lines += [f'spat_queue_depth{{queue="{q["name"]}"}} {q["depth"]}' for q in report["queues"] if q["depth"] is not None]
+    for metric, key in (("spat_jobs_waiting", "waiting"), ("spat_jobs_running", "running"),
+                        ("spat_jobs_oldest_waiting_seconds", "oldest_waiting_s"), ("spat_jobs_oldest_running_seconds", "oldest_running_s")):
+        lines += [f"# TYPE {metric} gauge"]
+        lines += [f'{metric}{{kind="{kind}"}} {summary[key]}' for kind, summary in report["work"].items() if summary[key] is not None]
+    lines += ["# TYPE spat_queue_alerts gauge", f"spat_queue_alerts {len(report['alerts'])}",
+              "# TYPE spat_queue_status gauge", f'spat_queue_status{{status="{report["status"]}"}} 1', ""]
+    return PlainTextResponse("\n".join(lines), media_type="text/plain; version=0.0.4")
+
+
 def _template_catalog():
     storage = storage_client()
     try:
