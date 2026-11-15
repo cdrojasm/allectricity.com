@@ -175,13 +175,21 @@ function ProjectChatWorkspace({ project, token, userId, onBack, onNotice, onOpen
     let live = true;
     (async () => {
       try {
-        const [existingFiles, convs, memory] = await Promise.all([
+        // PR-05: each list is loaded on its own. One failing request (memory, for example) used to leave the files at
+        // 0 and the conversation unopened while the rest of the page showed a project with documents.
+        const [filesResult, convsResult, memoryResult] = await Promise.allSettled([
           request(`/api/v1/projects/${project.id}/files`),
           request(`/api/v1/projects/${project.id}/conversations`),
           request(`/api/v1/projects/${project.id}/memory`),
         ]);
         if (!live) return;
-        setFiles(existingFiles); setConversations(convs); setProjectMemory(memory);
+        if (filesResult.status === "fulfilled") setFiles(filesResult.value);
+        if (memoryResult.status === "fulfilled") setProjectMemory(memoryResult.value);
+        const failed = [filesResult, memoryResult].filter((result) => result.status === "rejected");
+        if (failed.length) setError(failed.map((result) => result.reason?.message || "No se pudo cargar parte del proyecto.").join(" "));
+        if (convsResult.status === "rejected") throw convsResult.reason;
+        const convs = convsResult.value;
+        setConversations(convs);
         const current = convs[0] || await request(`/api/v1/projects/${project.id}/conversations`, { method: "POST", body: JSON.stringify({ title: `Diseño · ${project.name}` }) });
         if (!live) return;
         if (!convs.length) setConversations([current]);

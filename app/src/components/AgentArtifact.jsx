@@ -233,7 +233,14 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
     if (!conversation) return undefined;
     let live = true;
     const auth = { Authorization: `Bearer ${token}` };
-    const get = (url) => fetch(url, { headers: auth }).then((r) => (r.ok ? r.json() : null));
+    // PR-05: a failed request is an error, never an empty list. Treating a 5xx or an expired token as "no artifact"
+    // made this panel say "Sin cálculo" while the plan and the version list showed a design.
+    const get = async (url) => {
+      const response = await fetch(url, { headers: auth });
+      if (response.status === 404) return null;
+      if (!response.ok) throw new Error(`HTTP ${response.status} ${url}`);
+      return response.json();
+    };
     (async () => {
       try {
         const root = `/api/v1/projects/${project.id}/artefactos-diseno-tierras`;
