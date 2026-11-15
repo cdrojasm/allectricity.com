@@ -32,6 +32,7 @@ make smoke-ui ARGS='01-solo-lectura'     # solo los checks de lectura (no crea n
    abre su espacio, verifica que "Cancelar" no borra, lo borra y exige que el listado final sea idéntico al inicial.
 3. **Aislamiento** (`03`): un proyecto del `designer` no aparece al `viewer`.
 4. **Estudio público** (`04`): el estudio publicado concluye lo mismo que el panel Resultados.
+5. **Optimizador de topologías** (`05`, solo local): siembra un perfil normativo de prueba `zz-smoke-*` (necesita `super_admin`; `make smoke-ui-seed` lo crea) y recorre precarga desde el artefacto, tarifas, corrida real, vista previa, aplicar versión e historial tras recargar. Retira el perfil al terminar.
 
 ## Seguridad en producción
 

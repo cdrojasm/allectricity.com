@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Cable, CircleDot, Download, Maximize2, Minus, Plus, Square, Undo2, Redo2, X, Image, Upload, SlidersHorizontal } from "lucide-react";
+import TopologyOptimizerPanel from "./TopologyOptimizerPanel.jsx";
 
 const VIEW = { x: 70, y: 55, width: 860, height: 530 };
 const emptyPlan = { length: 40, width: 30, spacing: 5, items: [], areas: [], background: null };
@@ -64,6 +65,7 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
   const [runForm, setRunForm] = useState({ soilModel: "", rho: "", upperRho: "", lowerRho: "", upperThickness: "", injection: "", clearingTime: "", bodyWeight: "", surfaceRho: "", surfaceThickness: "", exposureClass: "", surfaceLayerPresent: "", standards: [], currency: "", quantities: {} });
   const [optimizerRun, setOptimizerRun] = useState(null);
   const [optimizerRunBusy, setOptimizerRunBusy] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);   // bumped when a new version is created outside the editor
   const artifactRef = useRef(null);
   const dirtyRef = useRef(false);
   const planRef = useRef(plan);
@@ -88,11 +90,12 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
         artifactRef.current = artifact || null;
         snapshotRef.current = artifact?.snapshot || null;
         setArtifact(artifact || null);
+        prefillRunForm(artifact?.snapshot);
         if (!geometry) { setHydrated(true); return; }
         const spacing = geometry.conductor_spacing_m || geometry.conductor_spacing_x_m || 5;
         const items = [
           ...(geometry.conductors || []).map((line) => ({ id: crypto.randomUUID(), type: "conductor", from: { x: line.start.x, y: line.start.y }, to: { x: line.end.x, y: line.end.y } })),
-          ...(geometry.rods || []).map((rod) => ({ id: crypto.randomUUID(), type: "electrode", x: rod.x, y: rod.y })),
+          ...(geometry.rods || []).map((rod) => ({ id: crypto.randomUUID(), type: "electrode", x: rod.x, y: rod.y, ...(rod.length_m ? { length_m: rod.length_m } : {}) })),
           ...(geometry.structures || []).map((item) => ({ id: crypto.randomUUID(), type: "structure", x: item.x, y: item.y, width: item.width, height: item.height, label: item.label || "" })),
         ];
         const next = { length: geometry.length_m || emptyPlan.length, width: geometry.width_m || emptyPlan.width, spacing, items,
@@ -122,7 +125,7 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
       } catch { /* Keep the editable default if the artifact is unavailable. */ }
     })();
     return () => { live = false; };
-  }, [conversation?.id, projectId, token]);
+  }, [conversation?.id, projectId, token, reloadKey]);
   const [opened, setOpened] = useState(false);
   const [tool, setTool] = useState("select");
   const [anchor, setAnchor] = useState(null);
@@ -186,7 +189,8 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
       conductors: value.items.filter((item) => item.type === "conductor").map((item) => ({ start: item.from, end: item.to })),
       rods_count: value.items.filter((item) => item.type === "electrode").length,
       rod_length_m: snapshotRef.current?.geometry?.rod_length_m || 2.4,
-      rods: value.items.filter((item) => item.type === "electrode").map((item) => ({ x: item.x, y: item.y })),
+      // A rod keeps its own length (the optimizer sizes each one); a new rod uses the common rod_length_m.
+      rods: value.items.filter((item) => item.type === "electrode").map((item) => ({ x: item.x, y: item.y, ...(item.length_m ? { length_m: item.length_m } : {}) })),
       structures: value.items.filter((item) => item.type === "structure").map((item) => ({ x: item.x, y: item.y, width: item.width, height: item.height, label: item.label || null })),
       areas: value.areas || [],
       snap_m: value.snap || null,
@@ -217,6 +221,23 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
     const currencies = new Set((domain.options || []).filter((option) => domain.candidate_option_ids?.includes(option.option_id)).map((option) => option.provenance?.quote?.currency).filter(Boolean));
     return currencies.size === 1 ? currencies : new Set();
   }).reduce((common, current) => new Set([...common].filter((currency) => current.has(currency))))].sort() : [];
+  // Soil and fault already live in the artifact: fill only the empty fields so a typed value is never overwritten.
+  function prefillRunForm(snapshot) {
+    if (!snapshot) return;
+    const layers = snapshot.soil_layers || [];
+    const fault = snapshot.fault || {};
+    const known = {};
+    if (layers.length === 1 && layers[0].resistivity_ohm_m != null) Object.assign(known, { soilModel: "homogeneous", rho: layers[0].resistivity_ohm_m });
+    else if (layers.length === 2 && layers.every((layer) => layer.resistivity_ohm_m != null) && layers[0].depth_m != null)
+      Object.assign(known, { soilModel: "two-layer", upperRho: layers[0].resistivity_ohm_m, lowerRho: layers[1].resistivity_ohm_m, upperThickness: layers[0].depth_m });
+    for (const [key, value] of Object.entries({ injection: fault.current_a, clearingTime: fault.clearing_time_s, bodyWeight: fault.body_weight_kg, surfaceRho: fault.surface_resistivity_ohm_m, surfaceThickness: fault.surface_thickness_m }))
+      if (value != null && Number.isFinite(Number(value))) known[key] = value;
+    setRunForm((current) => {
+      const next = { ...current };
+      for (const [key, value] of Object.entries(known)) if (current[key] === "" || current[key] == null) next[key] = String(value);
+      return next;
+    });
+  }
   function updateRunForm(key, value) { setRunForm((current) => ({ ...current, [key]: value })); }
   async function submitOptimizerRun(event) {
     event.preventDefault(); setOptimizerRunBusy(true); setOptimizerError("");
@@ -701,11 +722,8 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
             {optimizerContext.discrete_optimizable_variables?.length>0&&<small>Variables discretas habilitadas: {optimizerContext.discrete_optimizable_variables.join(", ")}</small>}
             {optimizerContext.site_geometry_sha256&&<small>Huella de geometría: {optimizerContext.site_geometry_sha256.slice(0,16)}…</small>}
           </div>}
-          <form className="optimizer-run-form" onSubmit={submitOptimizerRun}>
-            <h4>Iniciar corrida</h4>
-            {!artifactRef.current||saveState!=="saved"||dirtyRef.current?<small>Guarda primero una versión del plano.</small>:null}
-            {optimizerContext?.status!=="ready"?<small>La corrida se habilita cuando OP-05 resuelva un perfil revisado y dominios aplicables.</small>:<>
-              <fieldset><legend>Variables discretas de OP-05</legend>{(optimizerContext.discrete_optimizable_variables||[]).map((name)=><label className="optimizer-run-check" key={name}><input type="checkbox" checked={optimizerVariablesSelected.includes(name)} onChange={(event)=>setOptimizerVariablesSelected((current)=>event.target.checked?[...current,name]:current.filter((item)=>item!==name))}/>{name}</label>)}{!optimizerContext.discrete_optimizable_variables?.length&&<small>El catálogo no ofrece variables discretas aplicables.</small>}</fieldset>
+          <fieldset className="optimizer-shared-inputs"><legend>Datos de la corrida (suelo, falla, exposición)</legend>
+            <small>Se precargan con el suelo y la falla del plano guardado; los dos optimizadores usan estos mismos valores.</small>
               <label>Modelo de suelo<select value={runForm.soilModel} onChange={(event)=>updateRunForm("soilModel",event.target.value)}><option value="">Seleccionar…</option><option value="homogeneous">Homogéneo</option><option value="two-layer">Dos capas</option></select></label>
               {runForm.soilModel==="homogeneous"&&<label>Resistividad de suelo (Ω·m)<input required type="number" min="0.001" step="any" value={runForm.rho} onChange={(event)=>updateRunForm("rho",event.target.value)}/></label>}
               {runForm.soilModel==="two-layer"&&<><label>Resistividad capa superior (Ω·m)<input required type="number" min="0.001" step="any" value={runForm.upperRho} onChange={(event)=>updateRunForm("upperRho",event.target.value)}/></label><label>Resistividad capa inferior (Ω·m)<input required type="number" min="0.001" step="any" value={runForm.lowerRho} onChange={(event)=>updateRunForm("lowerRho",event.target.value)}/></label><label>Espesor superior (m)<input required type="number" min="0.01" step="any" value={runForm.upperThickness} onChange={(event)=>updateRunForm("upperThickness",event.target.value)}/></label></>}
@@ -717,6 +735,12 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
               <label>Resistividad superficial (Ω·m)<input required type="number" min="0.001" step="any" value={runForm.surfaceRho} onChange={(event)=>updateRunForm("surfaceRho",event.target.value)}/></label>
               <label>Espesor superficial (m)<input required type="number" min="0" step="any" value={runForm.surfaceThickness} onChange={(event)=>updateRunForm("surfaceThickness",event.target.value)}/></label>
               <fieldset><legend>Estándares a evaluar</legend>{["IEEE 80-2013","RETIE 2026 (Resolución 40284)"].map((standard)=><label className="optimizer-run-check" key={standard}><input type="checkbox" checked={runForm.standards.includes(standard)} onChange={(event)=>updateRunForm("standards",event.target.checked?[...runForm.standards,standard]:runForm.standards.filter((item)=>item!==standard))}/>{standard}</label>)}</fieldset>
+          </fieldset>
+          <form className="optimizer-run-form" onSubmit={submitOptimizerRun}>
+            <h4>Iniciar corrida</h4>
+            {!artifactRef.current||saveState!=="saved"||dirtyRef.current?<small>Guarda primero una versión del plano.</small>:null}
+            {optimizerContext?.status!=="ready"?<small>La corrida se habilita cuando OP-05 resuelva un perfil revisado y dominios aplicables.</small>:<>
+              <fieldset><legend>Variables discretas de OP-05</legend>{(optimizerContext.discrete_optimizable_variables||[]).map((name)=><label className="optimizer-run-check" key={name}><input type="checkbox" checked={optimizerVariablesSelected.includes(name)} onChange={(event)=>setOptimizerVariablesSelected((current)=>event.target.checked?[...current,name]:current.filter((item)=>item!==name))}/>{name}</label>)}{!optimizerContext.discrete_optimizable_variables?.length&&<small>El catálogo no ofrece variables discretas aplicables.</small>}</fieldset>
               {optimizerCandidateDomains.length>0&&<fieldset><legend>Cantidades explícitas por opción candidata</legend>{optimizerCandidateDomains.flatMap((domain)=>(domain.options||[]).filter((option)=>domain.candidate_option_ids?.includes(option.option_id)).map((option)=><label key={option.option_id}>{option.provenance?.product_name||option.option_id} · {option.value} {option.unit}<input required type="number" min="0" step="any" placeholder={`Cantidad (${option.provenance?.quote?.price_unit||"unidad de cotización"})`} value={runForm.quantities[option.option_id]||""} onChange={(event)=>setRunForm((current)=>({...current,quantities:{...current.quantities,[option.option_id]:event.target.value}}))}/><small>{option.provenance?.quote?.unit_price||"Precio pendiente"} {option.provenance?.quote?.currency||""} / {option.provenance?.quote?.price_unit||"unidad"}</small></label>))}</fieldset>}
               <label>Moneda objetivo<select required value={runForm.currency} onChange={(event)=>updateRunForm("currency",event.target.value)}><option value="">Seleccionar moneda…</option>{optimizerCurrencyChoices.map((currency)=><option key={currency} value={currency}>{currency}</option>)}</select></label>
               {!optimizerCurrencyChoices.length&&optimizerVariablesSelected.length>0&&<small>No hay una moneda común con cotización para todas las variables seleccionadas; no se permite conversión.</small>}
@@ -724,6 +748,7 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
             </>}
           </form>
           {optimizerRun&&<div className="optimizer-run-result" id={`optimizer-run-${optimizerRun.run?.id}`}><strong>Corrida {optimizerRun.run?.status||"recuperada"}</strong><a href={`#optimizer-run-${optimizerRun.run?.id}`}>run_id: {optimizerRun.run?.id}</a><button type="button" className="button" onClick={async()=>{try{const response=await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/optimizer-runs/${encodeURIComponent(optimizerRun.run.id)}`,{headers:{Authorization:`Bearer ${token}`}});const body=await response.json();if(!response.ok)throw new Error(body.detail||"No se pudo consultar la corrida.");setOptimizerRun(body);}catch(error){setOptimizerError(error.message);}}}>Actualizar resultado</button>{optimizerRun.run?.error&&<small className="optimizer-context-error">{optimizerRun.run.error}</small>}{optimizerRun.alternatives?.length?<>{optimizerRun.alternatives.map((alternative)=><div className="optimizer-context-row" key={alternative.id}><span>Alternativa {alternative.rank||"—"}{alternative.recommended?" · recomendada":""}</span><small>{(alternative.evaluation_snapshot?.cost_detail?.currency_totals||[]).map((total)=>`${total.currency} ${total.amount}`).join(" · ")||"Costo no disponible"}</small><small>{Object.entries(alternative.candidate_snapshot||{}).map(([key,value])=>`${key}: ${value}`).join(" · ")}</small></div>)}</>:<small>No se generaron alternativas factibles.</small>}</div>}
+          <TopologyOptimizerPanel projectId={projectId} token={token} artifact={artifact} canRun={Boolean(artifactRef.current)&&saveState==="saved"&&!dirtyRef.current} runForm={runForm} onApplied={()=>setReloadKey((key)=>key+1)}/>
         </details>
         <p className="ground-plan-shortcuts">Ctrl/Cmd+Z deshacer · Ctrl/Cmd+Y rehacer</p></aside></div>
       {contextMenu&&<div className="ground-plan-context-menu" style={{left:contextMenu.x,top:contextMenu.y}} onClick={(event)=>event.stopPropagation()}><button disabled={!history.past.length} onClick={undo}><Undo2 size={14}/>Deshacer</button><button disabled={!history.future.length} onClick={redo}><Redo2 size={14}/>Rehacer</button><button onClick={()=>{activateTool("select");setContextMenu(null);}}><Maximize2 size={14}/>Seleccionar</button><details open={contextAddOpen} onMouseEnter={()=>setContextAddOpen(true)} onMouseLeave={()=>setContextAddOpen(false)}><summary onClick={(event)=>{event.preventDefault();setContextAddOpen(true);}}><Square size={14}/>Añadir</summary><div><button onClick={()=>{activateTool("conductor");setContextMenu(null);setContextAddOpen(false);}}><Cable size={14}/>Conductor</button><button disabled={selectedItem?.type === "electrode"} title={selectedItem?.type === "electrode" ? "Ya hay un electrodo seleccionado" : undefined} onClick={()=>{activateTool("electrode");setContextMenu(null);setContextAddOpen(false);}}><CircleDot size={14}/>Electrodo</button><button onClick={()=>{activateTool("structure");setContextMenu(null);setContextAddOpen(false);}}><Square size={14}/>Elemento constructivo</button></div></details></div>}

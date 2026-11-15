@@ -7,7 +7,7 @@ import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const COMPOSE = ["compose", "--env-file", path.join(ROOT, ".env"), "-f", path.join(ROOT, "deploy/local/docker/docker-compose.yml")];
-const ROLES = ["designer", "viewer", "user_admin"];
+const ROLES = ["designer", "viewer", "user_admin", "super_admin"];
 const script = `
 import os
 from src.application.use_cases.identity import assign, new_user
