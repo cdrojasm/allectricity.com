@@ -1,0 +1,331 @@
+{
+ "schema_version": "spat.frozen-results/1.0",
+ "rule": "Records are added only with a change of kSolverVersion (recorded in PE-04); a record of the same version is replaced only with --force and a reason. Any difference the test reports must be explained.",
+ "records": [
+  {
+   "solver_version": "3.6.0",
+   "cases": {
+    "single_rod": {
+     "values": [
+      {
+       "quantity": "resistance_ohm",
+       "label": null,
+       "value": 33.287083729624094
+      }
+     ],
+     "segment_count": 12,
+     "point_count": 0,
+     "backward_error": 7.836504001948446e-18
+    },
+    "horizontal_wire": {
+     "values": [
+      {
+       "quantity": "resistance_ohm",
+       "label": null,
+       "value": 8.473932165839653
+      }
+     ],
+     "segment_count": 40,
+     "point_count": 0,
+     "backward_error": 1.3280099459669265e-17
+    },
+    "two_rods_bonded": {
+     "values": [
+      {
+       "quantity": "resistance_ohm",
+       "label": null,
+       "value": 17.435414566872524
+      }
+     ],
+     "segment_count": 12,
+     "point_count": 0,
+     "backward_error": 1.3930308807225997e-17
+    },
+    "two_rods_coupled_groups": {
+     "values": [
+      {
+       "quantity": "group_potential_v",
+       "label": null,
+       "value": 32.552735000457574
+      },
+      {
+       "quantity": "group_potential_v",
+       "label": null,
+       "value": -15.117320433585048
+      }
+     ],
+     "segment_count": 12,
+     "point_count": 0,
+     "backward_error": 7.515888969972416e-18
+    },
+    "floating_rod": {
+     "values": [
+      {
+       "quantity": "group_potential_v",
+       "label": null,
+       "value": 1.5453960888583198
+      },
+      {
+       "quantity": "group_potential_v",
+       "label": null,
+       "value": 33.32543304488673
+      }
+     ],
+     "segment_count": 12,
+     "point_count": 0,
+     "backward_error": 1.4686126090406018e-17
+    },
+    "ieee80_annex_h_grid1": {
+     "values": [
+      {
+       "quantity": "resistance_ohm",
+       "label": null,
+       "value": 1.000290694558438
+      },
+      {
+       "quantity": "touch_v",
+       "label": "T1 corner-mesh centre",
+       "value": 195.7922125022469
+      },
+      {
+       "quantity": "max_touch_v",
+       "label": "T3 worst touch inside the grid",
+       "value": 203.68207749979092
+      },
+      {
+       "quantity": "step_v",
+       "label": "S1 grid corner, 1 m outward diagonal",
+       "value": 91.2502718004007
+      },
+      {
+       "quantity": "step_v",
+       "label": "S1 regression against converged value",
+       "value": 91.2502718004007
+      }
+     ],
+     "segment_count": 452,
+     "point_count": 19886,
+     "backward_error": 2.099198581398395e-17
+    },
+    "ieee80_annex_h_grid2": {
+     "values": [
+      {
+       "quantity": "resistance_ohm",
+       "label": null,
+       "value": 0.917183634569953
+      },
+      {
+       "quantity": "touch_v",
+       "label": "T1 corner-mesh centre",
+       "value": 145.73207949755636
+      },
+      {
+       "quantity": "max_touch_v",
+       "label": "T3 worst touch inside the grid",
+       "value": 149.97717322974427
+      },
+      {
+       "quantity": "step_v",
+       "label": "S1 grid corner, 1 m outward diagonal",
+       "value": 69.95464102902304
+      },
+      {
+       "quantity": "step_v",
+       "label": "S1 regression against converged value",
+       "value": 69.95464102902304
+      }
+     ],
+     "segment_count": 612,
+     "point_count": 19886,
+     "backward_error": 5.4663286184153895e-17
+    },
+    "ieee80_annex_b_example1": {
+     "values": [
+      {
+       "quantity": "resistance_ohm",
+       "label": null,
+       "value": 2.647623469391876
+      },
+      {
+       "quantity": "max_touch_v",
+       "label": "worst touch inside the grid",
+       "value": 969.3012462585361
+      }
+     ],
+     "segment_count": 880,
+     "point_count": 19881,
+     "backward_error": 8.658029094244005e-18
+    },
+    "ieee80_annex_h_grid3": {
+     "values": [
+      {
+       "quantity": "resistance_ohm",
+       "label": null,
+       "value": 0.9662990297433063
+      },
+      {
+       "quantity": "touch_v",
+       "label": "T1 corner-mesh centre",
+       "value": 261.45544116636626
+      },
+      {
+       "quantity": "max_touch_v",
+       "label": "T3 worst touch inside the grid",
+       "value": 262.83906328259144
+      },
+      {
+       "quantity": "step_v",
+       "label": "S1 grid corner, 1 m outward diagonal",
+       "value": 100.74905522735526
+      },
+      {
+       "quantity": "step_v",
+       "label": "S1 regression against converged value",
+       "value": 100.74905522735526
+      }
+     ],
+     "segment_count": 692,
+     "point_count": 19886,
+     "backward_error": 4.82189175931899e-17
+    },
+    "ieee80_annex_h_grid4": {
+     "values": [
+      {
+       "quantity": "resistance_ohm",
+       "label": null,
+       "value": 0.9652535869477472
+      },
+      {
+       "quantity": "group_difference_v",
+       "label": "transferred voltage grid to fence",
+       "value": 310.04102498703475
+      },
+      {
+       "quantity": "touch_v",
+       "label": "T1 corner-mesh centre",
+       "value": 260.6692303630889
+      },
+      {
+       "quantity": "touch_v",
+       "label": "T2 grid corner",
+       "value": 129.13147479315535
+      },
+      {
+       "quantity": "max_touch_v",
+       "label": "T3 worst touch inside the grid",
+       "value": 261.8837447263254
+      },
+      {
+       "quantity": "touch_v",
+       "label": "T4 fence conductor corner",
+       "value": 49.21089733767019
+      },
+      {
+       "quantity": "step_v",
+       "label": "S1 grid corner, 1 m outward diagonal",
+       "value": 95.72471657058486
+      },
+      {
+       "quantity": "step_v",
+       "label": "S2 fence corner, 1 m outward diagonal",
+       "value": 39.573621692082156
+      }
+     ],
+     "segment_count": 1404,
+     "point_count": 19888,
+     "backward_error": 2.414804179324213e-17
+    },
+    "ieee80_annex_h_grid4_fence_alone": {
+     "values": [
+      {
+       "quantity": "resistance_ohm",
+       "label": null,
+       "value": 1.6788421165768757
+      }
+     ],
+     "segment_count": 404,
+     "point_count": 0,
+     "backward_error": 6.175521085757988e-17
+    },
+    "ieee80_annex_h_grid5": {
+     "values": [
+      {
+       "quantity": "resistance_ohm",
+       "label": null,
+       "value": 0.8074685034953836
+      },
+      {
+       "quantity": "group_potential_v",
+       "label": "GPR",
+       "value": 601.4025414033616
+      },
+      {
+       "quantity": "max_touch_v",
+       "label": "worst touch inside the outline",
+       "value": 128.5191529367662
+      },
+      {
+       "quantity": "max_step_v",
+       "label": "worst step within 1 m outside the outline",
+       "value": 90.04232529390845
+      }
+     ],
+     "segment_count": 1154,
+     "point_count": 51835,
+     "backward_error": 3.954472562780699e-17
+    },
+    "ieee80_annex_h_grid6": {
+     "values": [
+      {
+       "quantity": "resistance_ohm",
+       "label": null,
+       "value": 1.4267408043413135
+      },
+      {
+       "quantity": "group_potential_v",
+       "label": "GPR",
+       "value": 1062.6365510734101
+      },
+      {
+       "quantity": "max_touch_v",
+       "label": "worst touch inside the outline",
+       "value": 136.43700970063514
+      },
+      {
+       "quantity": "max_step_v",
+       "label": "worst step within 1 m outside the outline",
+       "value": 85.42095185316236
+      }
+     ],
+     "segment_count": 805,
+     "point_count": 52508,
+     "backward_error": 9.680571714758225e-18
+    },
+    "ieee80_annex_b_exhibit1": {
+     "values": [
+      {
+       "quantity": "resistance_ohm",
+       "label": null,
+       "value": 1.1373056737702942
+      },
+      {
+       "quantity": "touch_v",
+       "label": "mesh voltage, % of GPR",
+       "value": 43.64747821813334
+      },
+      {
+       "quantity": "step_v",
+       "label": "corner step voltage, % of GPR",
+       "value": 14.807537168516143
+      }
+     ],
+     "segment_count": 739,
+     "point_count": 3,
+     "backward_error": 5.126721667423497e-18
+    }
+   },
+   "frozen_on": "2026-11-15",
+   "reason": "Primera congelación SV-27 de los 14 casos de referencia"
+  }
+ ]
+}

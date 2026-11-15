@@ -49,6 +49,9 @@ COPY services/potential_engine/validation/axisymmetric_fv.py ./services/potentia
 COPY services/potential_engine/validation/free_geometry_generator.py ./services/potential_engine/validation/free_geometry_generator.py
 COPY services/potential_engine/validation/free_geometry_benchmark.py ./services/potential_engine/validation/free_geometry_benchmark.py
 COPY services/potential_engine/validation/topology_optimizer_benchmark.py ./services/potential_engine/validation/topology_optimizer_benchmark.py
+# SV-27: frozen reference results and the script that computes and compares them.
+COPY services/potential_engine/validation/freeze_results.py ./services/potential_engine/validation/freeze_results.py
+COPY services/potential_engine/validation/frozen_results.json ./services/potential_engine/validation/frozen_results.json
 COPY pytest.ini ./pytest.ini
 COPY docs/documentos_prueba ./docs/documentos_prueba
 COPY evaluation ./evaluation
