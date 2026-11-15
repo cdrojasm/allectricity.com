@@ -4,27 +4,42 @@ COPY services/potential_engine/src/main.cpp ./main.cpp
 RUN g++ -std=c++17 -O3 -Wall -Wextra -Wpedantic main.cpp -o /spat-potential-engine \
     && strip --strip-unneeded /spat-potential-engine
 
-FROM python:3.12-slim AS runtime
-
+FROM python:3.12-slim AS base
 RUN apt-get update && apt-get install -y --no-install-recommends libmagic1 && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY dependencies/pyproject.toml ./
+
+# Third-party dependencies depend only on pyproject.toml, so a source change does not reinstall them.
+# The stub package lets pip resolve the project's extras; the project itself is installed after its sources.
+FROM base AS runtime-deps
+RUN mkdir src && touch src/__init__.py \
+    && pip install --no-cache-dir '.[api,agent]' && pip uninstall -y spat-design-agent \
+    && rm -rf src build ./*.egg-info
+
+FROM runtime-deps AS runtime
 COPY backend/src ./src
 COPY backend/migrations ./migrations
 COPY backend/alembic.ini ./alembic.ini
 # smoke_local.py runs `python -m scripts.smoke_session` inside this container.
 COPY scripts/smoke_session.py ./scripts/smoke_session.py
-RUN pip install --no-cache-dir '.[api,agent]'
+RUN pip install --no-cache-dir --no-deps . && rm -rf build ./*.egg-info
 RUN useradd --create-home --uid 10001 spat
 USER spat
 EXPOSE 8000
 CMD ["uvicorn", "src.infrastructure.entrypoint.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
-FROM runtime AS test
-USER root
-RUN pip install --no-cache-dir '.[api,documents,dev]'
+FROM runtime-deps AS test-deps
+RUN mkdir src && touch src/__init__.py \
+    && pip install --no-cache-dir '.[api,documents,dev]' && pip uninstall -y spat-design-agent \
+    && rm -rf src build ./*.egg-info
+
+FROM test-deps AS test
+COPY backend/src ./src
+COPY backend/migrations ./migrations
+COPY backend/alembic.ini ./alembic.ini
+COPY scripts/smoke_session.py ./scripts/smoke_session.py
+RUN pip install --no-cache-dir --no-deps . && rm -rf build ./*.egg-info && useradd --create-home --uid 10001 spat
 COPY --from=potential-builder /spat-potential-engine /usr/local/bin/spat-potential-engine
 ENV SPAT_POTENTIAL_ENGINE=/usr/local/bin/spat-potential-engine
 COPY tests ./tests

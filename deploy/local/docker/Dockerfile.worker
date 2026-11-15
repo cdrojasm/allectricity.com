@@ -6,40 +6,69 @@ RUN apt-get update && apt-get install -y --no-install-recommends libmagic1 \
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY dependencies/pyproject.toml ./
-COPY backend/src ./src
-COPY backend/migrations ./migrations
-COPY backend/alembic.ini ./alembic.ini
-COPY prompts ./prompts
-COPY scripts/sync_langfuse_prompts.py ./scripts/sync_langfuse_prompts.py
 RUN useradd --create-home --uid 10001 spat
 
-FROM base AS agent-worker
-RUN pip install --no-cache-dir '.[agent]'
+# Application files, copied into each worker after its dependencies so a source change never reinstalls them.
+FROM scratch AS sources
+COPY backend/src /app/src
+COPY backend/migrations /app/migrations
+COPY backend/alembic.ini /app/alembic.ini
+COPY prompts /app/prompts
+COPY scripts/sync_langfuse_prompts.py /app/scripts/sync_langfuse_prompts.py
+
+# Each *-deps stage installs only third-party packages: the stub package lets pip resolve the extras,
+# then the project itself is installed from the real sources with --no-deps.
+FROM base AS agent-deps
+RUN mkdir src && touch src/__init__.py && pip install --no-cache-dir '.[agent]' \
+    && pip uninstall -y spat-design-agent && rm -rf src build ./*.egg-info
+
+FROM agent-deps AS agent-worker
+COPY --from=sources /app /app
+RUN pip install --no-cache-dir --no-deps . && rm -rf build ./*.egg-info
 USER spat
 CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "agent"]
 
-FROM base AS document-worker
-RUN pip install --no-cache-dir '.[documents]'
+FROM base AS document-deps
+RUN mkdir src && touch src/__init__.py && pip install --no-cache-dir '.[documents]' \
+    && pip uninstall -y spat-design-agent && rm -rf src build ./*.egg-info
+
+FROM document-deps AS document-worker
+COPY --from=sources /app /app
+RUN pip install --no-cache-dir --no-deps . && rm -rf build ./*.egg-info
 USER spat
 CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "documents"]
 
-FROM base AS calculation-worker
-RUN pip install --no-cache-dir '.[calculations]'
+FROM base AS calculation-deps
+RUN mkdir src && touch src/__init__.py && pip install --no-cache-dir '.[calculations]' \
+    && pip uninstall -y spat-design-agent && rm -rf src build ./*.egg-info
+
+FROM calculation-deps AS calculation-worker
+COPY --from=sources /app /app
+RUN pip install --no-cache-dir --no-deps . && rm -rf build ./*.egg-info
 USER spat
 CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "calculations"]
 
-FROM base AS mail-worker
-RUN pip install --no-cache-dir .
+FROM base AS mail-deps
+RUN mkdir src && touch src/__init__.py && pip install --no-cache-dir . \
+    && pip uninstall -y spat-design-agent && rm -rf src build ./*.egg-info
+
+FROM mail-deps AS mail-worker
+COPY --from=sources /app /app
+RUN pip install --no-cache-dir --no-deps . && rm -rf build ./*.egg-info
 USER spat
 CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "-Q", "mail"]
 
-FROM base AS render-worker
-USER root
+FROM base AS render-deps
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # libatomic1 is required by Playwright's bundled node driver on python-slim.
 RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir '.[render]' \
+    && mkdir src && touch src/__init__.py && pip install --no-cache-dir '.[render]' \
+    && pip uninstall -y spat-design-agent && rm -rf src build ./*.egg-info \
     && playwright install --with-deps chromium
+
+FROM render-deps AS render-worker
+COPY --from=sources /app /app
+RUN pip install --no-cache-dir --no-deps . && rm -rf build ./*.egg-info
 USER spat
 CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "-Q", "render"]
