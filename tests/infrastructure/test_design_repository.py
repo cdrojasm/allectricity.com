@@ -241,3 +241,16 @@ def test_migration_0013_versions_legacy_snapshots_and_calculation_documents(data
         assert migrated_calculation["trace"] == {**legacy_trace, "schema_version": "0.legacy"}
     finally:
         store.engine.dispose()
+
+
+def test_rods_of_different_lengths_are_stored_as_given(unit_of_work):
+    """SV-28: the optimizer and the plan editor write a length per rod; `None` means "inherit rod_length_m"."""
+    snapshot = {**SNAPSHOT, "geometry": {**SNAPSHOT["geometry"], "burial_depth_m": 0.5, "rod_length_m": 2.4,
+                                         "conductors": [{"start": {"x": 0, "y": 0}, "end": {"x": 20, "y": 0}}],
+                                         "rods": [{"x": 0, "y": 0, "length_m": 1.5}, {"x": 10, "y": 0, "length_m": None},
+                                                  {"x": 20, "y": 0, "length_m": 6.0}]}}
+    with unit_of_work() as designs:
+        created = designs.create("project-1", "Malla", snapshot, "user-1", {"kind": "user"})
+    with unit_of_work() as designs:
+        stored = designs.get_version("project-1", created["artifact_id"], 1)
+    assert stored["snapshot"]["geometry"]["rods"] == snapshot["geometry"]["rods"]

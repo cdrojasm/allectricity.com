@@ -211,3 +211,22 @@ def test_random_operator_sequences_stay_valid_and_are_fully_reversible(generated
         for inverse in reversed(undo):
             graph = ops.apply_operator(graph, inverse, ops.OperatorConstraints(min_segment_m=0.0), DOMAIN).graph
         assert gg.canonical_hash(graph) == gg.canonical_hash(start)
+
+
+# ---- SV-28: rods of different lengths survive the graph, the takeoff and the hash --------------------------------
+
+def test_rods_of_different_lengths_keep_their_own_length_through_the_graph():
+    mixed = {**CROSS, "rod_length_m": 2.4, "rods": [
+        {"x": 0, "y": 5, "length_m": 1.5}, {"x": 10, "y": 5, "length_m": 6.0}, {"x": 20, "y": 5}, {"x": 10, "y": 0, "length_m": None}]}
+    graph = gg.from_geometry(mixed)
+    assert sorted(length for _, length, _ in graph.rods) == [1.5, 2.4, 2.4, 6.0]
+    back = gg.to_geometry(graph, mixed)
+    assert {(r["x"], r["y"]): r["length_m"] for r in back["rods"]} == {(0, 5): 1.5, (10, 5): 6.0, (20, 5): 2.4, (10, 0): 2.4}
+    assert gg.from_geometry(back) == graph                                      # the plain form round-trips
+    takeoff = geometry_cost.takeoff(mixed)["rods"][gg.DEFAULT_MATERIAL]
+    assert takeoff == {"count": 4, "length_m": pytest.approx(12.3)}
+    longer = {**mixed, "rods": [{**mixed["rods"][0], "length_m": 1.6}, *mixed["rods"][1:]]}
+    assert gg.geometry_hash(longer) != gg.geometry_hash(mixed)                  # one rod 10 cm longer is a different design
+    cost = geometry_cost.evaluate_geometry_cost(mixed, RATES)
+    rod_material = next(line for line in cost["lines"] if line["rate_key"] == "material.rod.unspecified")
+    assert float(rod_material["amount"]) == pytest.approx(12.3 * 25000)

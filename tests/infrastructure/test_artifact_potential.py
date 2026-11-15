@@ -384,3 +384,73 @@ def test_the_conductor_standard_chosen_by_the_artifact_reaches_result_trace_and_
                                                     "maximum_temperature_c": 200.0, "ambient_temperature_c": 30.0}},
                     PARAMETERS, engine)["result"]["conductor_thermal"]
     assert iec["profile"] == "IEC 60364-5-54:2011" and iec["k_factor"] == pytest.approx(159, abs=0.6)
+
+
+# ---- SV-28: rods of different lengths in one network ------------------------------------------------------------
+
+SQUARE = {"length_m": 20, "width_m": 20, "burial_depth_m": 0.5, "rod_length_m": 2.4, "conductors": [
+    {"start": {"x": 0, "y": 0}, "end": {"x": 20, "y": 0}}, {"start": {"x": 0, "y": 20}, "end": {"x": 20, "y": 20}},
+    {"start": {"x": 0, "y": 0}, "end": {"x": 0, "y": 20}}, {"start": {"x": 20, "y": 0}, "end": {"x": 20, "y": 20}},
+    {"start": {"x": 10, "y": 0}, "end": {"x": 10, "y": 20}}, {"start": {"x": 0, "y": 10}, "end": {"x": 20, "y": 10}}]}
+CORNERS = [(0, 0), (20, 0), (0, 20), (20, 20)]
+
+
+def _square(lengths, **soil):
+    rods = [{"x": x, "y": y, **({} if length is None else {"length_m": length})} for (x, y), length in zip(CORNERS, lengths)]
+    return {**ANNEX_H_GRID1, "geometry": {**SQUARE, "rods": rods}, **soil}
+
+
+def _resistance(engine, snapshot):
+    return calculate(snapshot, PARAMETERS, engine)["result"]["grid_resistance_ohm"]
+
+
+def _trace_rod_lengths(trace):
+    totals: dict[tuple[float, float], float] = {}
+    for s in trace["segments"]:
+        if s["kind"] == "rod":
+            key = (round(s["start_m"][0], 6), round(s["start_m"][1], 6))
+            totals[key] = totals.get(key, 0.0) + abs(s["start_m"][2] - s["end_m"][2])
+    return {key: round(value, 6) for key, value in totals.items()}
+
+
+def test_rods_of_different_lengths_are_solved_with_their_own_length(engine):
+    short, long = _resistance(engine, _square([2.4] * 4)), _resistance(engine, _square([6.0] * 4))
+    assert long < short
+    mixed = calculate(_square([2.4, 2.4, 6.0, 6.0]), PARAMETERS, engine)
+    assert long < mixed["result"]["grid_resistance_ohm"] < short
+    # Which corners carry the long rods does not matter when the layout is a mirror image.
+    mirrored = _resistance(engine, _square([6.0, 6.0, 2.4, 2.4]))
+    assert math.isclose(mirrored, mixed["result"]["grid_resistance_ohm"], rel_tol=1e-6)
+    # Rods without their own length inherit the artifact default; a different length is a different request.
+    inherited = calculate(_square([2.4, None, 6.0, 6.0]), PARAMETERS, engine)
+    assert inherited["trace"]["request_sha256_batches"] == mixed["trace"]["request_sha256_batches"]
+    assert calculate(_square([2.4, 2.5, 6.0, 6.0]), PARAMETERS, engine)["trace"]["request_sha256_batches"] != mixed["trace"]["request_sha256_batches"]
+    # The trace lets a reviewer read the effective length of every rod (network centred on the outline).
+    assert _trace_rod_lengths(mixed["trace"]) == {(-10.0, -10.0): 2.4, (10.0, -10.0): 2.4, (-10.0, 10.0): 6.0, (10.0, 10.0): 6.0}
+
+
+def test_mixed_rod_lengths_crossing_a_soil_interface_are_cut_only_where_they_cross(engine):
+    # Interface at 3 m: the 2.4 m rods end at -2.9 m above it; the 6 m rods go through to -6.5 m.
+    soil = {"soil_layers": [{"resistivity_ohm_m": 300, "depth_m": 3.0}, {"resistivity_ohm_m": 100}]}
+    outcome = calculate(_square([2.4, 2.4, 6.0, 6.0], **soil), PARAMETERS, engine)
+    assert _trace_rod_lengths(outcome["trace"]) == {(-10.0, -10.0): 2.4, (10.0, -10.0): 2.4, (-10.0, 10.0): 6.0, (10.0, 10.0): 6.0}
+    rods = [s for s in outcome["trace"]["segments"] if s["kind"] == "rod"]
+    at_interface = {(round(s["start_m"][0], 6), round(s["start_m"][1], 6)) for s in rods
+                    if any(abs(z + 3.0) < 1e-9 for z in (s["start_m"][2], s["end_m"][2]))}
+    assert at_interface == {(-10.0, 10.0), (10.0, 10.0)}
+    assert not any(min(s["start_m"][2], s["end_m"][2]) < -3.0 < max(s["start_m"][2], s["end_m"][2]) for s in rods)
+    # Long rods reaching the better soil lower the resistance more than in homogeneous 300 ohm-m soil.
+    homogeneous = _resistance(engine, _square([2.4, 2.4, 6.0, 6.0], soil_layers=[{"resistivity_ohm_m": 300}]))
+    assert outcome["result"]["grid_resistance_ohm"] < homogeneous
+    assert outcome["result"]["diagnostics"]["backward_error"] < 1e-9
+
+
+def test_a_rod_with_a_non_positive_length_is_rejected_by_the_api_and_the_plan_check(env):
+    _, _, client, _, tokens, _ = env
+    project = client.post("/api/v1/projects", json={"name": "Varillas"}, headers=headers(tokens)).json()
+    base = f"/api/v1/projects/{project['id']}/artefactos-diseno-tierras"
+    bad = _square([2.4, 0, 6.0, 6.0])
+    assert client.post(base, json=bad, headers=headers(tokens)).status_code == 422
+    checked = client.post(f"{base}/geometria/validar", json={"geometry": _square([2.4, 2.4, 6.0, 6.0])["geometry"]},
+                          headers=headers(tokens)).json()
+    assert checked["conflicts"] == []

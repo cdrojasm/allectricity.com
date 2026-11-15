@@ -212,3 +212,72 @@ def test_non_intervenible_areas_block_the_grid_and_areas_stay_in_the_site():
     outside = {**SITE, "conductors": [{"start": {"x": 0, "y": 0}, "end": {"x": 2, "y": 0}}],
                "areas": [{"type": "intervenible", "x_min": 20, "x_max": 30, "y_min": 0, "y_max": 10}]}
     assert geometry_problems(outside) == ["geometry.areas[0] leaves the site (0..27 x 0..10 m)"]
+
+
+# ---- SV-28: rods of different lengths in one network -------------------------------------------------------------
+
+MIXED_RODS = {"length_m": 20, "width_m": 20, "burial_depth_m": 0.5, "rod_length_m": 2.4, "conductors": [
+    {"start": {"x": 0, "y": 0}, "end": {"x": 20, "y": 0}}, {"start": {"x": 0, "y": 20}, "end": {"x": 20, "y": 20}},
+    {"start": {"x": 0, "y": 0}, "end": {"x": 0, "y": 20}}, {"start": {"x": 20, "y": 0}, "end": {"x": 20, "y": 20}},
+], "rods": [{"x": 0, "y": 0, "length_m": 1.0}, {"x": 20, "y": 0, "length_m": 3.0},
+            {"x": 0, "y": 20, "length_m": None}, {"x": 20, "y": 20}]}
+
+
+def test_rod_points_use_each_rods_own_length_and_inherit_the_default_otherwise():
+    assert rod_points(MIXED_RODS) == [(0, 0, 1.0), (20, 0, 3.0), (0, 20, 2.4), (20, 20, 2.4)]
+    assert rod_points({**MIXED_RODS, "rod_length_m": None})[2:] == [(0, 20, 2.4), (20, 20, 2.4)]  # built-in default
+    assert geometry_problems(MIXED_RODS) == []
+
+
+@pytest.mark.parametrize("rods, expected", [
+    ([{"x": 0, "y": 0, "length_m": 0}], {("rod", 0, "length")}),
+    ([{"x": 0, "y": 0, "length_m": -2.4}, {"x": 20, "y": 0, "length_m": "3"}], {("rod", 0, "length"), ("rod", 1, "length")}),
+    ([{"x": 0, "y": 0, "length_m": float("inf")}], {("rod", 0, "length")}),
+    ([{"x": 0, "y": 0, "length_m": True}], {("rod", 0, "length")}),
+])
+def test_rod_lengths_must_be_positive_finite_numbers(rods, expected):
+    conflicts = geometry_conflicts({**MIXED_RODS, "rods": rods})
+    assert {(c["element"], c["index"], c["kind"]) for c in conflicts} == expected
+    assert all("positive number" in c["message"] for c in conflicts)
+
+
+def test_rods_that_inherit_an_unusable_default_length_are_reported():
+    inherited = geometry_conflicts({**MIXED_RODS, "rod_length_m": -1})
+    assert [(c["element"], c["index"], c["kind"]) for c in inherited] == [("rod", 2, "length"), ("rod", 3, "length")]
+    regular = geometry_conflicts({**REGULAR, "rod_length_m": 0})
+    assert [(c["element"], c["kind"]) for c in regular] == [("geometry", "rod_length")]
+    assert geometry_problems({**REGULAR, "rods_count": 0, "rod_length_m": 0}) == []  # no rods: the default is unused
+
+
+def _rod_lengths_by_position(segments):
+    """Plan position -> total length of the rod pieces the solver receives there."""
+    totals: dict[tuple[float, float], float] = {}
+    for s in segments:
+        if s.kind == "rod":
+            key = (round(s.start_m[0], 6), round(s.start_m[1], 6))
+            totals[key] = totals.get(key, 0.0) + abs(s.start_m[2] - s.end_m[2])
+    return {key: round(value, 6) for key, value in totals.items()}
+
+
+@pytest.mark.parametrize("segmentation", ["uniform", "graded"])
+def test_every_rod_reaches_the_solver_with_its_own_length(segmentation):
+    parameters = {"discretization_m": 1.0, "conductor_radius_m": 0.005, "segmentation": segmentation}
+    segments = _segments(MIXED_RODS, parameters, HomogeneousSoil(100.0))
+    # The network is centred on the outline, so the plan positions are shifted by half the site.
+    assert _rod_lengths_by_position(segments) == {(-10.0, -10.0): 1.0, (10.0, -10.0): 3.0, (-10.0, 10.0): 2.4, (10.0, 10.0): 2.4}
+    tops = {(round(s.start_m[0], 6), round(s.start_m[1], 6)) for s in segments if s.kind == "rod"}
+    assert all(any(abs(s.start_m[2] + 0.5) < 1e-9 for s in segments if s.kind == "rod" and
+                   (round(s.start_m[0], 6), round(s.start_m[1], 6)) == top) for top in tops)  # every rod starts at the grid
+
+
+def test_only_the_rods_that_cross_a_soil_interface_are_cut_there():
+    soil = TwoLayerSoil(300.0, 100.0, 2.0)  # interface at z = -2.0: the 1.0 m rod ends at -1.5, the others go through
+    segments = _segments(MIXED_RODS, {"discretization_m": 1.0, "conductor_radius_m": 0.005, "segmentation": "graded"}, soil)
+    assert _rod_lengths_by_position(segments) == {(-10.0, -10.0): 1.0, (10.0, -10.0): 3.0, (-10.0, 10.0): 2.4, (10.0, 10.0): 2.4}
+    rods = [s for s in segments if s.kind == "rod"]
+    at_interface = {(round(s.start_m[0], 6), round(s.start_m[1], 6)) for s in rods
+                    if any(abs(z + 2.0) < 1e-9 for z in (s.start_m[2], s.end_m[2]))}
+    assert at_interface == {(10.0, -10.0), (-10.0, 10.0), (10.0, 10.0)}
+    assert not any(min(s.start_m[2], s.end_m[2]) < -2.0 < max(s.start_m[2], s.end_m[2]) for s in rods)
+    short = [s for s in rods if (round(s.start_m[0], 6), round(s.start_m[1], 6)) == (-10.0, -10.0)]
+    assert min(min(s.start_m[2], s.end_m[2]) for s in short) == pytest.approx(-1.5)

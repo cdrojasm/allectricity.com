@@ -11,7 +11,7 @@ along the perimeter (`rods_count`) or placed explicitly (`rods`), and must touch
 """
 
 from collections import defaultdict
-from math import ceil, floor, hypot
+from math import ceil, floor, hypot, isfinite
 
 TOLERANCE_M = 1e-3
 DEFAULT_SNAP_M = 0.5  # construction step for generated lines when geometry.snap_m is not set
@@ -69,7 +69,30 @@ def perimeter_rods(count: int, length: float, width: float) -> list[tuple[float,
     return points
 
 
+def _positive_length(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value) and value > 0
+
+
+def rod_length_conflicts(geometry: dict) -> list[dict]:
+    """Rods whose effective length cannot be used: a non-positive or non-numeric `length_m`, or a
+    rod without its own length when `rod_length_m` is unusable. `None` means "inherit"."""
+    conflicts = []
+    default = geometry.get("rod_length_m")
+    default_ok = default is None or _positive_length(default)
+    for index, rod in enumerate(geometry.get("rods") or []):
+        length = rod.get("length_m") if isinstance(rod, dict) else None
+        if length is None and not default_ok:
+            conflicts.append(_conflict("rod", index, "length",
+                                       f"geometry.rods[{index}] inherits geometry.rod_length_m, which must be a positive number"))
+        elif length is not None and not _positive_length(length):
+            conflicts.append(_conflict("rod", index, "length", f"geometry.rods[{index}].length_m must be a positive number"))
+    if not geometry.get("rods") and (geometry.get("rods_count") or 0) > 0 and not default_ok:
+        conflicts.append(_conflict("geometry", None, "rod_length", "geometry.rod_length_m must be a positive number"))
+    return conflicts
+
+
 def rod_points(geometry: dict) -> list[tuple[float, float, float]]:
+    """(x, y, effective length) of every rod: its own `length_m`, else `rod_length_m`, else 2.4 m."""
     default_length = float(geometry.get("rod_length_m") or 2.4)
     if geometry.get("rods"):
         return [(r["x"], r["y"], float(r.get("length_m") or default_length)) for r in geometry["rods"]]
@@ -601,6 +624,11 @@ def geometry_conflicts(geometry: dict) -> list[dict]:
                 if hypot(a[1][0] - a[0][0], a[1][1] - a[0][1]) >= TOLERANCE_M and _collinear_overlap(a, lines[j]):
                     conflicts.append(_conflict("conductor", i, "overlap", f"geometry.conductors[{i}] and [{j}] overlap",
                                                other=j))
+    # Each rod may carry its own `length_m`; the rest inherit `rod_length_m`. The solver uses the
+    # effective length of every rod, so an unusable one must be reported before anything is built.
+    length_conflicts = rod_length_conflicts(geometry)
+    if length_conflicts:
+        return conflicts + length_conflicts
     rods = rod_points(geometry)
     if len(rods) > MAX_RODS:
         conflicts.append(_conflict("geometry", None, "limit", f"the grid has {len(rods)} rods; the limit is {MAX_RODS}"))
