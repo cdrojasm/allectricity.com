@@ -137,3 +137,26 @@ def test_regressions_block_drops_against_the_baseline_and_absolute_limits():
            "invariants": {"accepted": 2}}
     failures = regressions(bad, thresholds, baseline)
     assert len(failures) == 3 and any("overall.f1" in failure for failure in failures)
+
+
+# ---- EG-12: variance across repetitions ---------------------------------------------------------------------------
+
+def test_variance_and_mean_metrics_summarise_repetitions_and_max_std_guards_the_comparison():
+    from src.domain.knowledge_graph.evaluation import mean_metrics, regressions, variance
+
+    runs = [{"overall": {"f1": 0.80}, "entities": {"recall": 0.9, "tp": 9}, "cost": {"llm_tokens": 1000, "llm_cost_usd": None}},
+            {"overall": {"f1": 0.84}, "entities": {"recall": 0.9, "tp": 9}, "cost": {"llm_tokens": 1200, "llm_cost_usd": None}},
+            {"overall": {"f1": 0.76}, "entities": {"recall": 0.9, "tp": 9}, "cost": {"llm_tokens": 800, "llm_cost_usd": None}}]
+    spread = variance(runs)
+    assert spread["overall.f1"] == {"mean": 0.8, "std": pytest.approx(0.032660, abs=1e-6), "min": 0.76, "max": 0.84, "n": 3}
+    assert spread["entities.recall"]["std"] == 0.0 and spread["cost.llm_tokens"]["mean"] == 1000.0
+    assert "cost.llm_cost_usd" not in spread                                             # None is not a number
+    mean = mean_metrics(runs)
+    assert mean == {"overall": {"f1": 0.8}, "entities": {"recall": 0.9, "tp": 9.0}, "cost": {"llm_tokens": 1000.0, "llm_cost_usd": None}}
+
+    thresholds = {"max_std": {"overall.f1": 0.02, "entities.recall": 0.01}, "max_drop": {"overall.f1": 0.02}}
+    failures = regressions(mean, thresholds, baseline={"overall": {"f1": 0.81}}, spread=spread)
+    assert len(failures) == 1 and failures[0].startswith("overall.f1 varía ±0.03266 entre 3 repeticiones")
+    assert regressions(mean, thresholds, baseline=None, spread=None) == []                # no spread known: not judged
+    single = regressions(runs[0], thresholds, spread=variance(runs[:1]))
+    assert any("una sola repetición" in f for f in single)

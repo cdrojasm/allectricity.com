@@ -7,6 +7,11 @@
   "min": {
     "abstention": 1.0
   },
+  "max_std": {
+    "overall.f1": 0.02,
+    "attributes.recall": 0.03,
+    "relations.recall": 0.05
+  },
   "max_drop": {
     "overall.f1": 0.02,
     "entities.recall": 0.03,

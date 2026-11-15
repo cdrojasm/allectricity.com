@@ -298,13 +298,64 @@ def metric(report: dict, path: str):
     return value
 
 
-def regressions(metrics: dict, thresholds: dict, baseline: dict | None = None) -> list:
+def _numeric_paths(value, prefix=""):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield from _numeric_paths(item, f"{prefix}{key}.")
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        yield prefix[:-1], float(value)
+
+
+def variance(runs: list[dict]) -> dict:
+    """Dispersión de cada métrica numérica entre repeticiones del mismo informe (EG-12).
+
+    Devuelve, por ruta de métrica, `mean`, `std` (poblacional), `min`, `max` y `n`. Una métrica que
+    falta en alguna repetición se promedia sobre las que la tienen. Con una sola repetición la
+    desviación es 0 y no dice nada sobre la varianza real: la clave `n` deja constancia.
+    """
+    samples: dict[str, list[float]] = defaultdict(list)
+    for run in runs:
+        for path, value in _numeric_paths(run):
+            samples[path].append(value)
+    out = {}
+    for path, values in sorted(samples.items()):
+        mean = sum(values) / len(values)
+        std = (sum((v - mean) ** 2 for v in values) / len(values)) ** 0.5
+        out[path] = {"mean": round(mean, 6), "std": round(std, 6), "min": min(values), "max": max(values), "n": len(values)}
+    return out
+
+
+def mean_metrics(runs: list[dict]) -> dict:
+    """Las métricas promedio de varias repeticiones, con la misma forma anidada que una sola."""
+    def merge(values):
+        if all(isinstance(v, dict) for v in values):
+            keys = {k for v in values for k in v}
+            return {k: merge([v[k] for v in values if k in v]) for k in sorted(keys)}
+        numbers = [float(v) for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        if numbers and len(numbers) == len(values):
+            return round(sum(numbers) / len(numbers), 6)
+        return values[0]
+    return merge(runs)
+
+
+def regressions(metrics: dict, thresholds: dict, baseline: dict | None = None, spread: dict | None = None) -> list:
     """Motivos por los que un informe no puede promoverse; lista vacía si cumple.
 
     `thresholds` admite `min` y `max` (valores absolutos) y `max_drop` (caída permitida
-    frente a la línea base) por ruta de métrica, p. ej. `"attributes.f1"`.
+    frente a la línea base) por ruta de métrica, p. ej. `"attributes.f1"`, y `max_std`
+    (desviación máxima entre repeticiones, ver `variance`): una comparación con una línea base
+    solo vale si la dispersión propia es menor que la caída que se quiere detectar.
     """
     failures = []
+    for path, limit in thresholds.get("max_std", {}).items():
+        stats = (spread or {}).get(path)
+        if stats is None:
+            continue
+        if stats["n"] < 2:
+            failures.append(f"{path}: una sola repetición; se necesitan al menos 2 para medir la varianza (max_std {limit})")
+        elif stats["std"] > limit:
+            failures.append(f"{path} varía ±{stats['std']} entre {stats['n']} repeticiones (máximo {limit}); "
+                            "la comparación con la línea base no es concluyente")
     for path, limit in thresholds.get("min", {}).items():
         value = metric(metrics, path)
         if value is None or value < limit:

@@ -132,6 +132,43 @@ def _report(manifest: dict, config: dict, documents: list) -> dict:
     }
 
 
+def repeated(reports: list[dict]) -> dict:
+    """Un informe a partir de N repeticiones de la misma evaluación (EG-12, varianza).
+
+    `metrics` y `by_doc_type` son el promedio; `variance` guarda media, desviación, mínimo y máximo de cada
+    métrica entre repeticiones; `runs` conserva las métricas de cada repetición; `documents` son los de la
+    primera (los claims extraídos no se promedian). Con un solo informe lo devuelve tal cual.
+    """
+    from src.domain.knowledge_graph.evaluation import mean_metrics, variance
+
+    if len(reports) == 1:
+        return reports[0]
+    first = reports[0]
+    return {
+        **first,
+        "metrics": mean_metrics([r["metrics"] for r in reports]),
+        "by_doc_type": mean_metrics([r["by_doc_type"] for r in reports]),
+        "variance": variance([r["metrics"] for r in reports]),
+        "runs": [{"created_at": r["created_at"], "metrics": r["metrics"]} for r in reports],
+        "repetitions": len(reports),
+    }
+
+
+def variance_table(report: dict, paths=("overall.f1", "entities.recall", "attributes.precision", "attributes.recall",
+                                        "relations.precision", "relations.recall", "evidence_accuracy", "question_recall",
+                                        "cost.llm_tokens", "cost.llm_cost_usd")) -> str:
+    """Dispersión entre repeticiones de las métricas que vigilan los umbrales."""
+    spread = report.get("variance")
+    if not spread:
+        return ""
+    lines = [f"Varianza entre {report.get('repetitions')} repeticiones", "", "| Métrica | Media | Desv. | Mín. | Máx. |", "|---|---|---|---|---|"]
+    for path in paths:
+        stats = spread.get(path)
+        if stats:
+            lines.append(f"| {path} | {stats['mean']:.4g} | {stats['std']:.4g} | {stats['min']:.4g} | {stats['max']:.4g} |")
+    return "\n".join(lines)
+
+
 def summary_table(report: dict) -> str:
     """Resumen legible del informe para la terminal."""
     def pct(value):

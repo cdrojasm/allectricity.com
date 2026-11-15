@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 from src.domain.knowledge_graph.evaluation import regressions  # noqa: E402
 from src.infrastructure.processing import document_agents  # noqa: E402
 from src.infrastructure.processing.extraction_evaluation import (  # noqa: E402
-    RULES_ONLY, evaluate, rescore, summary_table,
+    RULES_ONLY, evaluate, repeated, rescore, summary_table, variance_table,
 )
 
 EVALUATION = ROOT / "evaluation" / "extraction"
@@ -37,6 +37,9 @@ def main() -> int:
     parser.add_argument("--output", type=Path, help="guarda el informe completo en JSON")
     parser.add_argument("--baseline", type=Path, help="línea base contra la que comparar")
     parser.add_argument("--thresholds", type=Path, default=EVALUATION / "thresholds.json")
+    parser.add_argument("--repeat", type=int, default=1,
+                        help="repeticiones de la evaluación para medir la varianza del LLM; el informe guarda la "
+                             "media, la dispersión por métrica y cada corrida (thresholds.json puede fijar max_std)")
     args = parser.parse_args()
 
     agents = RULES_ONLY if args.rules_only else document_agents
@@ -47,15 +50,20 @@ def main() -> int:
               "LLM_API_KEY y Langfuse.", file=sys.stderr)
         return 2
     else:
-        report = evaluate(args.dataset, ROOT, agents=agents, only=args.only)
+        if args.repeat < 1:
+            print("--repeat debe ser al menos 1", file=sys.stderr)
+            return 2
+        report = repeated([evaluate(args.dataset, ROOT, agents=agents, only=args.only) for _ in range(args.repeat)])
     print(summary_table(report))
+    if report.get("variance"):
+        print("\n" + variance_table(report))
     if args.output:
         args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n",
                                encoding="utf-8")
     thresholds = json.loads(args.thresholds.read_text(encoding="utf-8"))
     baseline = (json.loads(args.baseline.read_text(encoding="utf-8"))["metrics"]
                 if args.baseline else None)
-    failures = regressions(report["metrics"], thresholds, baseline)
+    failures = regressions(report["metrics"], thresholds, baseline, spread=report.get("variance"))
     for failure in failures:
         print(f"REGRESIÓN: {failure}", file=sys.stderr)
     return 1 if failures else 0
