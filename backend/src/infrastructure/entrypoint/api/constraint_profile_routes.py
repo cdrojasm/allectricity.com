@@ -197,7 +197,7 @@ def _selected_context(project, selected, requested_variables):
 
     composite = {
         "profile_id": f"project:{project['id']}",
-        "version": "+".join(f"{item['profile_id']}@{item['version']}" for item in selected),
+        "version": "+".join(f"{item['profile_id']}@{item['profile_version']}" for item in selected),
         "jurisdiction": country or "unconfirmed",
         "installation_type": definitions[0]["installation_type"],
         "required_mandatory_criteria": list(dict.fromkeys(required)),
