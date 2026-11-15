@@ -23,7 +23,7 @@ function baseStatus(electrical) {
 }
 const detailText = (body, fallback) => (typeof body?.detail === "string" ? body.detail : fallback);
 
-// The run form (soil, exposure, standards) is shared with the discrete optimizer in GroundingPlanDrawer.
+// The run form (exposure, standards) is shared with the discrete optimizer in GroundingPlanDrawer.
 function TopologyOptimizerPanel({ projectId, token, artifact, canRun, runForm, onApplied }) {
   const [rates, setRates] = useState(() => Object.fromEntries(RATE_FIELDS.map(([key]) => [key, ""])));
   const [rateSource, setRateSource] = useState("");
@@ -31,6 +31,10 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, runForm, o
   const [trenchWidth, setTrenchWidth] = useState("");
   const [trenchSource, setTrenchSource] = useState("");
   const [budget, setBudget] = useState("150");
+  const [orthogonal, setOrthogonal] = useState(true);
+  // Approved catalog items offered per cost line (the server applies the same tests as the run), and the line's pick.
+  const [catalogOptions, setCatalogOptions] = useState({});
+  const [picks, setPicks] = useState({});
   const [run, setRun] = useState(null);
   const [comparison, setComparison] = useState(null);
   const [error, setError] = useState("");
@@ -52,7 +56,8 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, runForm, o
   function rememberRates(request) {
     if (!request?.rates) return;
     setRates((current) => Object.fromEntries(Object.keys(current).map((key) => [key, request.rates[key]?.amount != null ? String(request.rates[key].amount) : current[key]])));
-    setRateSource(Object.values(request.rates)[0]?.source || "");
+    setRateSource(Object.values(request.rates).find((rate) => rate.source)?.source || "");
+    setPicks(Object.fromEntries(Object.entries(request.rates).filter(([, rate]) => rate.catalog_item_id).map(([key, rate]) => [key, rate.catalog_item_id])));
     if (request.cost_currency) setCurrency(request.cost_currency);
     if (request.trench_width_m) setTrenchWidth(String(request.trench_width_m));
     if (request.trench_width_source) setTrenchSource(request.trench_width_source);
@@ -71,6 +76,22 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, runForm, o
     } catch { /* El historial es una ayuda; el panel funciona sin él. */ }
   }
   useEffect(() => { if (token) loadHistory(true); }, [projectId, token]);
+
+  useEffect(() => {
+    setCatalogOptions({});
+    if (!token || !/^[A-Z]{3}$/.test(currency)) return undefined;
+    let live = true;
+    fetch(`${root}/rate-options?currency=${currency}`, { headers: auth })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => {
+        if (!live || !body) return;
+        setCatalogOptions(body.options || {});
+        // A remembered pick that is no longer offered (expired, retired) falls back to a typed amount.
+        setPicks((current) => Object.fromEntries(Object.entries(current).filter(([key, id]) => (body.options?.[key] || []).some((item) => item.id === id))));
+      })
+      .catch(() => { /* Sin catálogo se escriben a mano, como siempre. */ });
+    return () => { live = false; };
+  }, [projectId, token, currency]);
 
   function openRun(row) { setError(""); setComparison(null); setApplied(null); setRun(row); poll(row.id); }
 
@@ -94,27 +115,24 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, runForm, o
 
   function payload() {
     if (!artifact || !canRun) throw new Error("Guarda primero una versión del plano.");
-    let soil;
-    if (runForm.soilModel === "homogeneous") soil = { model: "homogeneous", resistivity_ohm_m: Number(runForm.rho) };
-    else if (runForm.soilModel === "two-layer") soil = { model: "two-layer", upper_resistivity_ohm_m: Number(runForm.upperRho), lower_resistivity_ohm_m: Number(runForm.lowerRho), upper_thickness_m: Number(runForm.upperThickness) };
-    else throw new Error("Completa el modelo de suelo en el formulario de la corrida.");
     for (const [label, value] of [["corriente de falla", runForm.injection], ["tiempo de despeje", runForm.clearingTime], ["peso corporal", runForm.bodyWeight], ["resistividad superficial", runForm.surfaceRho], ["espesor superficial", runForm.surfaceThickness]])
       if (value === "" || !Number.isFinite(Number(value))) throw new Error(`Ingresa ${label} en el formulario de la corrida.`);
     if (!runForm.exposureClass || runForm.surfaceLayerPresent === "") throw new Error("Indica clase de exposición y presencia de capa superficial.");
     if (!runForm.standards.length) throw new Error("Selecciona al menos un estándar.");
     if (!/^[A-Z]{3}$/.test(currency)) throw new Error("La moneda debe ser un código de tres letras, por ejemplo COP.");
-    if (!rateSource.trim()) throw new Error("Indica la fuente de las tarifas (cotización, lista de precios…).");
+    if (RATE_FIELDS.some(([key]) => !picks[key]) && !rateSource.trim()) throw new Error("Indica la fuente de las tarifas (cotización, lista de precios…).");
     const rateBody = {};
     for (const [key, label] of RATE_FIELDS) {
+      if (picks[key]) { rateBody[key] = { catalog_item_id: picks[key] }; continue; }
       if (rates[key] === "" || !Number.isFinite(Number(rates[key])) || Number(rates[key]) < 0) throw new Error(`Ingresa la tarifa de ${label.toLowerCase()}.`);
       rateBody[key] = { amount: Number(rates[key]), source: rateSource.trim() };
     }
     if (!(Number(trenchWidth) > 0) || !trenchSource.trim()) throw new Error("Indica el ancho de zanja y su fuente.");
     return {
-      artifact_id: artifact.artifact_id, artifact_version: artifact.version, soil, injection_a: Number(runForm.injection),
+      artifact_id: artifact.artifact_id, artifact_version: artifact.version, injection_a: Number(runForm.injection),
       exposure: { clearing_time_s: Number(runForm.clearingTime), body_weight_kg: Number(runForm.bodyWeight), surface_resistivity_ohm_m: Number(runForm.surfaceRho), surface_thickness_m: Number(runForm.surfaceThickness), exposure_class: runForm.exposureClass, surface_layer_present: runForm.surfaceLayerPresent === "true" },
       standards: runForm.standards, cost_currency: currency, rates: rateBody,
-      trench_width_m: Number(trenchWidth), trench_width_source: trenchSource.trim(), seed: 0, max_solver_calls: Number(budget),
+      trench_width_m: Number(trenchWidth), trench_width_source: trenchSource.trim(), seed: 0, max_solver_calls: Number(budget), orthogonal_only: orthogonal,
     };
   }
 
@@ -159,17 +177,30 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, runForm, o
     <fieldset><legend>Tarifas ({currency || "moneda"})</legend>
       {remembered && <small>Precargadas con la tarifa de la última corrida de este proyecto; revísalas antes de buscar.</small>}
       <label>Moneda<input value={currency} maxLength={3} onChange={(e) => setCurrency(e.target.value.toUpperCase())}/></label>
-      {RATE_FIELDS.map(([key, label, unit]) => <label key={key}>{label} <small>{unit}</small><input required type="number" min="0" step="any" value={rates[key]} onChange={(e) => setRates((current) => ({ ...current, [key]: e.target.value }))}/></label>)}
-      <label>Fuente de las tarifas<input required value={rateSource} placeholder="Cotización, lista de precios o APU" onChange={(e) => setRateSource(e.target.value)}/></label>
+      {RATE_FIELDS.map(([key, label, unit]) => {
+        const options = catalogOptions[key] || [];
+        const picked = options.find((item) => item.id === picks[key]);
+        return <div className="rate-line" key={key}>
+          {options.length > 0 && <label>{label}: origen<select value={picks[key] || ""} onChange={(e) => setPicks((current) => ({ ...current, [key]: e.target.value }))}>
+            <option value="">Escribir a mano</option>
+            {options.map((item) => <option key={item.id} value={item.id}>{item.name}{item.supplier ? ` · ${item.supplier}` : ""} · {number(Number(item.price_per_unit), 0)} {currency}/{item.quantity_unit}</option>)}
+          </select></label>}
+          {picked
+            ? <small data-testid={`rate-catalog-${key}`}>{label}: {number(Number(picked.price_per_unit), 0)} {currency} {unit} · catálogo aprobado{picked.expires_at ? ` · vigente hasta ${new Date(picked.expires_at * 1000).toLocaleDateString("es-CO")}` : ""}</small>
+            : <label>{label} <small>{unit}</small><input required type="number" min="0" step="any" value={rates[key]} onChange={(e) => setRates((current) => ({ ...current, [key]: e.target.value }))}/></label>}
+        </div>;
+      })}
+      <label>Fuente de las tarifas escritas a mano<input required={RATE_FIELDS.some(([key]) => !picks[key])} value={rateSource} placeholder="Cotización, lista de precios o APU" onChange={(e) => setRateSource(e.target.value)}/></label>
       <label>Ancho de zanja (m)<input required type="number" min="0.01" step="any" value={trenchWidth} onChange={(e) => setTrenchWidth(e.target.value)}/></label>
       <label>Fuente del ancho de zanja<input required value={trenchSource} onChange={(e) => setTrenchSource(e.target.value)}/></label>
     </fieldset>
+    <label className="checkbox-row"><input type="checkbox" checked={orthogonal} onChange={(e) => setOrthogonal(e.target.checked)}/> Solo trazados ortogonales (sin diagonales nuevas)</label>
     <label>Presupuesto de llamadas al solver<select value={budget} onChange={(e) => setBudget(e.target.value)}><option value="60">60 · rápido</option><option value="150">150 · recomendado</option><option value="300">300 · exhaustivo</option></select></label>
     <button className="button primary" type="submit" disabled={busy || active || !canRun}>{busy ? "Enviando…" : "Buscar topologías"}</button>
     {error && <p className="optimizer-context-error" role="alert">{error}</p>}
     {run && <div className="optimizer-run-result" aria-live="polite">
       <strong>{STATUS_TEXT[run.status] || run.status}</strong>
-      {active && <small>{progress?.verdicts ? `${progress.verdicts} evaluaciones eléctricas de ${progress.budget || budget}` : "Esperando al worker de cálculo…"}</small>}
+      {active && <small>{progress?.verdicts ? `${progress.verdicts} evaluaciones eléctricas de ${progress.budget || budget}` : "Esperando al worker del optimizador…"}</small>}
       {active && <button type="button" className="button" onClick={cancel}>Cancelar</button>}
       {run.error && <small className="optimizer-context-error">{run.error}</small>}
     </div>}

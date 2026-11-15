@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from time import time
 from typing import Annotated, Any, Literal
 from uuid import uuid4
@@ -13,13 +14,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.application.use_cases.optimizer_run import run_discrete_optimizer
 from src.domain.spat.artifact_contract import validate_artifact
-from src.infrastructure.calculations import safety_criteria
+from src.infrastructure.calculations import artifact_potential, safety_criteria
 from src.infrastructure.calculations.conductor_thermal import equivalent_radius_m
 from src.infrastructure.calculations.potential_engine_client import (
     HomogeneousSoil,
     LayerStackSoil,
     PotentialEngineClient,
     TwoLayerSoil,
+    soil_record,
 )
 from src.infrastructure.entrypoint.api.constraint_profile_routes import (
     _attach_site_domain,
@@ -45,6 +47,18 @@ def list_optimizer_runs(project_id: str, request: Request,
         _owned_project(db, project_id, actor)
         rows = OptimizerRunRepository(db.connection).list_runs(project_id, limit=limit)
     return {"runs": rows}
+
+
+@router.get("/rate-options")
+def rate_options(project_id: str, request: Request, currency: str = Query(pattern=r"^[A-Z]{3}$"),
+                 actor=Depends(require("designs:read"))):
+    """Approved catalog items the project can price each cost line with, in the run currency."""
+    from src.application.use_cases import optimizer_topology_job as job
+
+    with request.app.state.services.store.transaction() as db:
+        _owned_project(db, project_id, actor)
+        rows = MaterialCatalogRepository(db.connection).list(project_id, "approved")
+    return {"currency": currency, "options": job.catalog_rate_options(rows, currency=currency, now_epoch_s=int(time()))}
 
 
 @router.get("/{run_id}")
@@ -415,7 +429,6 @@ class RateInput(StrictModel):
 class TopologyRunRequest(StrictModel):
     artifact_id: str = Field(min_length=36, max_length=36)
     artifact_version: int = Field(ge=1)
-    soil: SoilInput
     injection_a: float = Field(gt=0, le=1_000_000)
     exposure: ExposureInput
     standards: list[str] = Field(min_length=1, max_length=5)
@@ -427,6 +440,7 @@ class TopologyRunRequest(StrictModel):
     seed: int = Field(ge=0, le=2_147_483_647)
     max_solver_calls: int = Field(default=150, ge=20, le=400)
     seed_count: int = Field(default=4, ge=1, le=6)
+    orthogonal_only: bool = True           # diagonals are hard to build; the search adds only horizontal and vertical runs
 
     @model_validator(mode="after")
     def known_standards(self):
@@ -444,6 +458,14 @@ def dispatch_topology_run(run_id: str) -> None:
     optimize_topology.apply_async(args=[run_id], task_id=f"optimizer-topology:{run_id}")
 
 
+def max_runs_per_project() -> int:
+    """Topological runs a project may have queued or running at once (OPTIMIZER_MAX_RUNS_PER_PROJECT, default 1)."""
+    try:
+        return max(1, int(os.getenv("OPTIMIZER_MAX_RUNS_PER_PROJECT", "1")))
+    except ValueError:
+        return 1
+
+
 SITE_KEYS = ("length_m", "width_m", "burial_depth_m", "areas", "structures")
 
 
@@ -455,6 +477,9 @@ def create_topology_run(project_id: str, payload: TopologyRunRequest, request: R
     request_data = payload.model_dump(mode="json")
     with request.app.state.services.store.transaction(write=True) as db:
         project = _owned_project(db, project_id, actor)
+        repository = OptimizerRunRepository(db.connection)
+        if repository.count_active_runs(project_id, topology_job.TOPOLOGY_ALGORITHM) >= max_runs_per_project():
+            raise HTTPException(409, "This project already has an optimizer run in progress; wait for it or cancel it")
         artifact_row = db.designs.get_version(project_id, payload.artifact_id, payload.artifact_version)
         if not artifact_row:
             raise HTTPException(404, "Artifact version not found in this project")
@@ -467,6 +492,12 @@ def create_topology_run(project_id: str, payload: TopologyRunRequest, request: R
         geometry = snapshot["geometry"]
         if any(geometry.get(key) is None for key in ("length_m", "width_m")):
             raise HTTPException(422, "The artifact geometry must define the site length and width")
+        # The soil is the artifact's own (1 to 8 layers), never a separate form value, so the search
+        # optimizes over the same soil as the plan.
+        try:
+            request_data["soil"] = soil_record(artifact_potential.soil_model(snapshot["soil_layers"]))
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(422, f"The artifact soil cannot be used by the optimizer: {exc}") from exc
         selected = ConstraintProfileRepository(db.connection).selected(project_id)
         if any(row["status"] != "reviewed" for row in selected):
             raise HTTPException(409, "A selected profile is no longer reviewed; select a reviewed version")
@@ -487,7 +518,7 @@ def create_topology_run(project_id: str, payload: TopologyRunRequest, request: R
             missing = topology_job.check_rate_card_covers(built["rate_card"], [geometry])
             if missing:
                 raise HTTPException(422, "The rate card leaves cost lines unpriced: " + ", ".join(missing))
-            _, applied = topology_job.operator_constraints(context)
+            _, applied = topology_job.operator_constraints(context, orthogonal=payload.orthogonal_only, geometry=geometry)
             base_cost = evaluate_geometry_cost(geometry, built["rate_card"])
         except topology_job.RateCardError as exc:
             raise HTTPException(422, str(exc)) from exc
@@ -516,7 +547,7 @@ def create_topology_run(project_id: str, payload: TopologyRunRequest, request: R
             "artifact_snapshot_sha256": hashlib.sha256(json.dumps(
                 snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest(),
         }
-        run = OptimizerRunRepository(db.connection).create_run({
+        run = repository.create_run({
             "id": run_id, "project_id": project_id, "artifact_id": payload.artifact_id,
             "artifact_version": payload.artifact_version, "status": "queued",
             "request_snapshot": request_snapshot, "result_summary": {"progress": {"verdicts": 0}}, "error": None,

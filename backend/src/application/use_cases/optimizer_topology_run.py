@@ -12,7 +12,7 @@ import json
 import os
 import uuid
 from dataclasses import dataclass
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -34,6 +34,14 @@ DEFAULT_STRATEGY = "alns"     # the official policy: pure ALNS, no parametric re
 # not recommended and not part of the product flow. See docs/EXPERIMENTO_OPT014_REFINAMIENTO.md.
 EXPERIMENTAL_STRATEGIES = ("alns_refined", "alns_opportunistic", "alns_checkpoint")
 REFINE_SHARE = 0.25     # of the budget left after the finalists' reserve; what the refined strategy holds back for the parametric step
+
+
+def _seed_constraints(constraints: OperatorConstraints) -> geometry_seeds.SeedConstraints:
+    """Seeds follow the operators' limits: horizontal and vertical runs only when asked, and rods within the allowed length."""
+    low, high = constraints.rod_length_range_m
+    defaults = geometry_seeds.SeedConstraints()
+    lengths = tuple(length for length in defaults.rod_length_choices_m if low <= length <= high) or (round((low + high) / 2, 3),)
+    return replace(defaults, orthogonal=constraints.orthogonal, rod_length_choices_m=lengths)
 
 
 def strategy_options(strategy: str, domain: dict[str, Any], constraints: OperatorConstraints,
@@ -199,7 +207,8 @@ def run_topology_optimizer(
     # A seed can pass the geometry rules and still be refused by the solver (a piece shorter than five radii once it
     # is discretised). Ask for a few extra and keep the first `seed_count` the solver accepts, so every strategy
     # starts from the same valid seeds.
-    candidates = geometry_seeds.generate_seeds(domain, seed=seed, count=seed_count + 3, initial=initial_geometry)
+    candidates = geometry_seeds.generate_seeds(domain, seed=seed, count=seed_count + 3, initial=initial_geometry,
+                                               constraints=_seed_constraints(constraints))
     elite_context = problem_fingerprint(domain=domain, rate_card=rate_card, soil=soil_record(as_soil(soil)),
                                        injection_a=injection_a, exposure=asdict(exposure), standards=standards, settings=settings,
                                        engine=[getattr(client, "quadrature_tolerance", None),

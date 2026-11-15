@@ -117,4 +117,54 @@ test.describe.serial("optimizador de topologías", () => {
     await expect(page.locator(".topology-optimizer .optimizer-run-result")).toContainText("Completada");
     await expect(page.locator(".topology-card.base")).toBeVisible();
   });
+
+  test("ofrece las tarifas del catálogo aprobado y la corrida conserva su procedencia", async () => {
+    test.setTimeout(240_000);
+    const item = await post(page, `/api/v1/projects/${seed.projectId}/material-catalog`, {
+      name: "Cable de cobre desnudo 2/0 (prueba)", category: "conductor", specification: "Cobre desnudo 2/0 AWG, cotización de prueba",
+      quantity_unit: "m", price_per_unit: "21000", price_currency: "COP", supplier: "Proveedor de prueba", notes: "Cotización de prueba smoke-ui" });
+    expect(item.status, JSON.stringify(item.body)).toBe(201);
+    expect((await post(page, `/api/v1/projects/${seed.projectId}/material-catalog/${item.body.id}/approval`, { approved: true })).status).toBe(200);
+
+    await openOptimizer(page, seed.projectId);
+    await page.getByLabel("Clase de exposición").selectOption("public");
+    await page.getByLabel("¿Existe capa superficial?").selectOption("true");
+    await page.getByLabel("IEEE 80-2013").check();
+    await page.getByLabel("Conductor (material): origen").selectOption(item.body.id);
+    await expect(page.getByTestId("rate-catalog-material.conductor.unspecified")).toContainText("21.000 COP");
+    await expect(page.getByLabel("Conductor (material)", { exact: true })).toHaveCount(0);   // ya no se escribe a mano
+    await page.getByLabel("Presupuesto de llamadas al solver").selectOption("60");
+    await page.getByRole("button", { name: "Buscar topologías" }).click();
+    const result = page.locator(".topology-optimizer .optimizer-run-result");
+    await expect(result).toContainText(/Completada|Falló|Rechazada/, { timeout: 200_000 });
+    await expect(result).toContainText("Completada");
+
+    const runs = await api(page, `/api/v1/projects/${seed.projectId}/optimizer-runs`);
+    const latest = runs.body.runs.find((row) => row.request_snapshot?.request?.rates?.["material.conductor.unspecified"]?.catalog_item_id);
+    expect(latest.request_snapshot.rate_provenance["material.conductor.unspecified"]).toMatchObject({ source_type: "catalog", catalog_item_id: item.body.id });
+    expect(Number(latest.request_snapshot.rate_card.rates["material.conductor.unspecified"])).toBe(21000);
+    expect(latest.request_snapshot.request.orthogonal_only).toBe(true);
+    for (const alt of (await api(page, `/api/v1/projects/${seed.projectId}/optimizer-runs/${latest.id}`)).body.alternatives) {
+      const diagonal = (alt.evaluation_snapshot.geometry.conductors || []).filter((c) => Math.abs(c.start.x - c.end.x) > 1e-6 && Math.abs(c.start.y - c.end.y) > 1e-6);
+      expect(diagonal).toEqual([]);
+    }
+  });
+
+  test("el estudio publicado muestra la alternativa aplicada, las tarifas y la advertencia de sin certificar", async () => {
+    const list = await api(page, `/api/v1/projects/${seed.projectId}/artefactos-diseno-tierras`);
+    const latest = list.body.reduce((a, b) => (b.version > a.version ? b : a));
+    expect(latest.version).toBe(2);
+    const study = await post(page, `/api/v1/projects/${seed.projectId}/studies`, { artifact_id: latest.artifact_id, artifact_version: 2, title: `${runId()} estudio`, access: "link" });
+    expect(study.status, JSON.stringify(study.body)).toBe(201);
+    let published = await post(page, `/api/v1/projects/${seed.projectId}/studies/${study.body.id}/publish`, { status: "published" });
+    if (published.status === 409) published = await post(page, `/api/v1/projects/${seed.projectId}/studies/${study.body.id}/publish`, { status: "published", confirm_non_compliant: true });
+    expect(published.status, JSON.stringify(published.body)).toBe(200);
+    await page.goto(`/e/${study.body.slug}`);
+    const section = page.getByTestId("study-optimization");
+    await expect(section).toContainText("Borrador sin certificar");
+    await expect(section.getByRole("table")).toContainText("Diseño base");
+    await expect(page.getByTestId("study-optimization-rates")).toContainText("cotización de prueba");
+    await expect(page.getByTestId("study-optimization-warnings")).toContainText("Ninguna alternativa está certificada");
+    await page.screenshot({ path: "../test-results/smoke-ui/study-optimization.png", fullPage: true });
+  });
 });

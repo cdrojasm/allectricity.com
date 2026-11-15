@@ -27,7 +27,7 @@ from uuid import uuid4
 
 from src.domain.spat import geometry_graph as gg
 from src.domain.spat.geometry_cost import evaluate_geometry_cost, takeoff
-from src.domain.spat.geometry_operators import OperatorConstraints
+from src.domain.spat.geometry_operators import OperatorConstraints, diagonals_of
 
 TOPOLOGY_ALGORITHM = "topology_alns"
 TOPOLOGY_STRATEGY = "alns"   # the official policy (OPT-017); the experimental refinements stay out of the product
@@ -64,6 +64,29 @@ def _amount(value: Any) -> Decimal | None:
     except (InvalidOperation, TypeError, ValueError):
         return None
     return number if number.is_finite() and number >= 0 else None
+
+
+RATE_KEYS = ("material.conductor.unspecified", "material.rod.unspecified", "excavation.trench",
+             "installation.conductor", "installation.rod", "installation.connection")
+
+
+def catalog_rate_options(catalog_rows: list[dict[str, Any]], *, currency: str, now_epoch_s: int) -> dict[str, list[dict[str, Any]]]:
+    """For each rate line, the approved catalog items `build_rate_card` would accept: unexpired, priced in `currency`
+    and quoted in the unit the takeoff measures that line in. The same tests, so a choice offered is a choice accepted."""
+    options: dict[str, list[dict[str, Any]]] = {key: [] for key in RATE_KEYS}
+    for row in catalog_rows:
+        expires_at = row.get("expires_at")
+        if (row.get("status") != "approved" or row.get("price_currency") != currency or _amount(row.get("price_per_unit")) is None
+                or (isinstance(expires_at, (int, float)) and expires_at <= now_epoch_s)):
+            continue
+        unit = str(row.get("quantity_unit") or "").strip().casefold()
+        for key in RATE_KEYS:
+            if unit in RATE_UNITS[_rate_family(key)][1]:
+                options[key].append({"id": row["id"], "name": row.get("name"), "supplier": row.get("supplier"),
+                                     "price_per_unit": format(_amount(row["price_per_unit"]), "f"), "currency": currency,
+                                     "quantity_unit": row.get("quantity_unit"), "version": row.get("version"),
+                                     "quoted_at": row.get("quoted_at"), "expires_at": expires_at})
+    return options
 
 
 def build_rate_card(rates: dict[str, dict[str, Any]], *, currency: str, trench_width_m: float | None,
@@ -141,7 +164,8 @@ def check_rate_card_covers(rate_card: dict[str, Any], geometries: list[dict[str,
     return sorted(missing)
 
 
-def operator_constraints(context: dict[str, Any]) -> tuple[OperatorConstraints, dict[str, Any]]:
+def operator_constraints(context: dict[str, Any], *, orthogonal: bool = False,
+                         geometry: dict[str, Any] | None = None) -> tuple[OperatorConstraints, dict[str, Any]]:
     """Operator limits from the resolved OP-05 context: a sourced rod-length bound narrows the default range."""
     base = OperatorConstraints()
     low, high = base.rod_length_range_m
@@ -153,7 +177,10 @@ def operator_constraints(context: dict[str, Any]) -> tuple[OperatorConstraints, 
             raise ValueError("the profile's rod length bounds leave no admissible rod")
         applied["rod_length_range_m"] = {"min": low, "max": high, "source": "constraint_profile",
                                          "provenance": (context.get("bound_provenance") or {}).get("rod_length_m")}
-    return OperatorConstraints(rod_length_range_m=(low, high)), applied
+    # Diagonals the design already has stay allowed; the search only adds horizontal and vertical runs.
+    inherited = diagonals_of(geometry) if orthogonal and geometry else ()
+    applied["orthogonal"] = orthogonal
+    return OperatorConstraints(rod_length_range_m=(low, high), orthogonal=orthogonal, inherited_diagonals=inherited), applied
 
 
 def checkpoint_dir() -> Path:

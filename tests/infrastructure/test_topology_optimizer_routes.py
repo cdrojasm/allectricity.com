@@ -41,7 +41,6 @@ RATES = {key: {"amount": amount, "source": "cotización de prueba"} for key, amo
 
 def request_body(artifact, **overrides):
     body = {"artifact_id": artifact["artifact_id"], "artifact_version": artifact["version"],
-            "soil": {"model": "homogeneous", "resistivity_ohm_m": 100},
             "injection_a": 1000, "standards": ["IEEE 80-2013"],
             "exposure": {"clearing_time_s": 0.5, "body_weight_kg": 70, "surface_resistivity_ohm_m": 3000,
                          "surface_thickness_m": 0.1, "surface_layer_present": True},
@@ -101,6 +100,8 @@ def test_a_queued_run_is_executed_by_the_worker_with_the_real_solver_and_applied
     assert snapshot["operator_constraints"]["rod_length_range_m"]["max"] == 3.0
     assert snapshot["rate_provenance"]["installation.rod"]["source"] == "cotización de prueba"
     assert snapshot["base"]["cost_status"] == "complete" and snapshot["base"]["cost"] > 0
+    assert snapshot["request"]["orthogonal_only"] is True and snapshot["operator_constraints"]["orthogonal"] is True
+    assert snapshot["request"]["soil"] == {"model": "homogeneous", "resistivity_ohm_m": 100.0}
 
     assert job.execute_topology_run(deps(services, run_topology_optimizer, PotentialEngineClient, evaluate_base), run["id"]) == "completed"
     detail = client.get(f"{root}/{run['id']}", headers=h).json()
@@ -114,6 +115,8 @@ def test_a_queued_run_is_executed_by_the_worker_with_the_real_solver_and_applied
         assert evaluation["validated_at_level"] == "L3" and evaluation["certified"] is False
         assert evaluation["utilization_ratio"] <= 1.0 and evaluation["metrics"]["Rg_ohm"] > 0
         rods = evaluation["geometry"].get("rods") or []
+        assert not [c for c in evaluation["geometry"]["conductors"]
+                    if abs(c["start"]["x"] - c["end"]["x"]) > 1e-6 and abs(c["start"]["y"] - c["end"]["y"]) > 1e-6]
         assert all(1.5 - 1e-9 <= rod["length_m"] <= 3.0 + 1e-9 for rod in rods if rod not in LOT["rods"])
 
     comparison = client.get(f"{root}/{run['id']}/comparison", headers=h).json()
@@ -227,3 +230,95 @@ def test_catalog_rates_need_the_run_currency_and_the_takeoff_unit():
     with pytest.raises(job.RateCardError, match="material suffix"):
         job.build_rate_card({"material.rod": {"amount": 1, "source": "x"}}, currency="COP", trench_width_m=None,
                             trench_width_source=None, catalog_rows=[], now_epoch_s=10)
+
+
+def test_the_soil_comes_from_the_artifact_not_from_the_request(site):
+    services, client, h, project, artifact, root, queued = site
+    refused = client.post(f"{root}/topology", json=request_body(artifact, soil={"model": "homogeneous", "resistivity_ohm_m": 5}), headers=h)
+    assert refused.status_code == 422                       # a soil in the request is no longer accepted
+    layers = [{"resistivity_ohm_m": 300, "depth_m": 1.0}, {"resistivity_ohm_m": 80, "depth_m": 2.0},
+              {"resistivity_ohm_m": 500, "depth_m": None}]
+    layered = client.post(f"/api/v1/projects/{project['id']}/artefactos-diseno-tierras",
+                          json={"name": "Malla 3 capas", "geometry": LOT, "soil_layers": layers,
+                                "fault": {"current_a": 1000, "clearing_time_s": 0.5}}, headers=h)
+    assert layered.status_code == 201, layered.text
+    created = client.post(f"{root}/topology", json=request_body(layered.json()), headers=h)
+    assert created.status_code == 202, created.text
+    soil = created.json()["run"]["request_snapshot"]["request"]["soil"]
+    assert soil["model"] == "n-layer" and [layer["resistivity_ohm_m"] for layer in soil["layers"]] == [300, 80, 500]
+
+
+def test_a_project_runs_one_search_at_a_time(site, monkeypatch):
+    services, client, h, project, artifact, root, queued = site
+    first = client.post(f"{root}/topology", json=request_body(artifact), headers=h)
+    assert first.status_code == 202, first.text
+    second = client.post(f"{root}/topology", json=request_body(artifact), headers=h)
+    assert second.status_code == 409 and len(queued) == 1
+    cancelled = client.post(f"{root}/{first.json()['run']['id']}/cancel", headers=h)
+    assert cancelled.status_code == 200, cancelled.text
+    assert client.post(f"{root}/topology", json=request_body(artifact), headers=h).status_code == 202
+    monkeypatch.setenv("OPTIMIZER_MAX_RUNS_PER_PROJECT", "2")
+    assert client.post(f"{root}/topology", json=request_body(artifact), headers=h).status_code == 202
+
+
+def test_the_optimizer_has_its_own_queue():
+    from src.infrastructure.entrypoint.worker.tasks import celery_app
+    assert celery_app.conf.task_routes["spat.optimize_topology"] == {"queue": "optimizer"}
+
+
+def test_the_public_study_shows_the_applied_alternative_against_the_base_with_rates_and_warnings(site):
+    services, client, h, project, artifact, root, _ = site
+    run = client.post(f"{root}/topology", json=request_body(artifact), headers=h).json()["run"]
+    geometry = {**LOT, "rods": LOT["rods"][:1]}
+    evaluation = {"feasible": True, "cost": 800000.0, "geometry": geometry, "validated_at_level": "L3", "certified": False,
+                  "utilization_ratio": 0.8, "metrics": {"Rg_ohm": 2.5, "Vs_v": 400.0, "Vt_v": 700.0}}
+    with services.store.transaction(write=True) as db:
+        repo = OptimizerRunRepository(db.connection)
+        repo.add_alternatives(project["id"], run["id"], [{
+            "id": "11111111-1111-1111-1111-111111111111", "candidate_sha256": "a" * 64, "rank": 1, "recommended": True,
+            "candidate_snapshot": {"geometry": geometry}, "evaluation_snapshot": evaluation, "created_at": 1}])
+        repo.transition(project["id"], run["id"], ("queued",), {
+            "status": "completed", "updated_at": 2, "result_summary": {
+                "cost_currency": "COP", "solver_calls_total": 40,
+                "base": {"cost": 1000000.0, "cost_status": "complete",
+                         "electrical": {"status": "VIOLATED", "feasible": False, "ratio": 1.2}}}})
+    applied = client.post(f"{root}/{run['id']}/alternatives/11111111-1111-1111-1111-111111111111/apply", headers=h)
+    assert applied.status_code == 201, applied.text
+    base_path = f"/api/v1/projects/{project['id']}/studies"
+    study = client.post(base_path, json={"artifact_id": artifact["artifact_id"], "artifact_version": applied.json()["version"],
+                                         "title": "Estudio optimizado", "access": "public"}, headers=h).json()
+    assert client.post(f"{base_path}/{study['id']}/publish", json={"status": "published"}, headers=h).status_code == 200
+    data = client.get(f"/api/v1/public/studies/{study['slug']}").json()
+    optimization = data["optimization"]
+    assert optimization["certified"] is False and optimization["currency"] == "COP"
+    assert optimization["alternative"]["cost"] == 800000.0 and optimization["alternative"]["Rg_ohm"] == 2.5
+    assert optimization["base"]["cost"] == 1000000.0 and optimization["base"]["status"] == "VIOLATED"
+    assert optimization["saving"]["kind"] == "difference"                      # the base violates: not a saving
+    assert {rate["item"]: rate["source"] for rate in optimization["rates"]}["excavation.trench"] == "cotización de prueba"
+    assert any("certificada" in warning for warning in optimization["warnings"])
+    assert "request_snapshot" not in optimization and "run_id" in optimization
+
+    plain = client.post(base_path, json={"artifact_id": artifact["artifact_id"], "artifact_version": 1, "title": "Base", "access": "public"}, headers=h).json()
+    client.post(f"{base_path}/{plain['id']}/publish", json={"status": "published"}, headers=h)
+    assert client.get(f"/api/v1/public/studies/{plain['slug']}").json()["optimization"] is None
+
+
+def test_rate_options_offer_only_what_the_run_would_accept(site):
+    services, client, h, project, artifact, root, _ = site
+    now = 1_000_000
+    rows = [{"id": "a", "status": "approved", "name": "Cable 2/0", "supplier": "X", "price_currency": "COP", "price_per_unit": "21000", "quantity_unit": "m", "version": 1},
+            {"id": "b", "status": "approved", "name": "Cable USD", "price_currency": "USD", "price_per_unit": "9", "quantity_unit": "m"},
+            {"id": "c", "status": "approved", "name": "Vencido", "price_currency": "COP", "price_per_unit": "1", "quantity_unit": "m", "expires_at": now - 1},
+            {"id": "d", "status": "candidate", "name": "Sin aprobar", "price_currency": "COP", "price_per_unit": "1", "quantity_unit": "m"},
+            {"id": "e", "status": "approved", "name": "Varilla", "price_currency": "COP", "price_per_unit": "55000", "quantity_unit": "und"}]
+    options = job.catalog_rate_options(rows, currency="COP", now_epoch_s=now)
+    assert [o["id"] for o in options["material.conductor.unspecified"]] == ["a"]
+    assert [o["id"] for o in options["installation.rod"]] == ["e"] and options["excavation.trench"] == []
+    for key, items in options.items():                      # every offer builds a rate card without error
+        for item in items:
+            built = job.build_rate_card({key: {"catalog_item_id": item["id"]}}, currency="COP", trench_width_m=None,
+                                        trench_width_source=None, catalog_rows=rows, now_epoch_s=now)
+            assert built["provenance"][key]["source_type"] == "catalog"
+    response = client.get(f"{root}/rate-options", params={"currency": "COP"}, headers=h)
+    assert response.status_code == 200 and set(response.json()["options"]) == set(job.RATE_KEYS)
+    assert client.get(f"{root}/rate-options", params={"currency": "cop"}, headers=h).status_code == 422

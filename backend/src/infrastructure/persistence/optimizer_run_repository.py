@@ -46,6 +46,14 @@ class OptimizerRunRepository:
         ).rowcount
         return self.get_run(project_id, run_id) if moved else None
 
+    def count_active_runs(self, project_id, algorithm):
+        """Queued or running runs of one algorithm in the project."""
+        rows = self.connection.execute(
+            select(optimizer_runs.c.request_snapshot).where(
+                optimizer_runs.c.project_id == project_id,
+                optimizer_runs.c.status.in_(("queued", "running")))).all()
+        return sum(1 for (snapshot,) in rows if (snapshot or {}).get("algorithm") == algorithm)
+
     def list_runs(self, project_id, limit=50):
         rows = self.connection.execute(
             select(optimizer_runs)
