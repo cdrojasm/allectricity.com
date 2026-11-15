@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="es">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{margin:0}img{max-width:100%}</style>
+<title>Mapa de flujos Terra</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: una columna de lectura; arriba el veredicto y la línea del recorrido (cada parada enlaza a su paso);
+   cada paso = intención, lo que pasa, pantallazos y hallazgos; al final la lista priorizada. */
+:root{
+  --bg:#f5f7f6; --surface:#ffffff; --fg:#17231f; --muted:#5b6b66; --line:#d9e1de;
+  --accent:#1f6f62; --accent-soft:#e2f0ec;
+  --ok:#1f7a4d; --ok-soft:#e1f2e8; --warn:#9a6200; --warn-soft:#fbefd6; --bad:#b3362b; --bad-soft:#fae4e1;
+  --display:"Space Grotesk","Inter",system-ui,sans-serif; --body:"Inter",system-ui,-apple-system,sans-serif; --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#101715; --surface:#18211e; --fg:#e7efec; --muted:#9bb0a9; --line:#2b3a35;
+  --accent:#6cc7b5; --accent-soft:#1c332e;
+  --ok:#6fd09a; --ok-soft:#173326; --warn:#e8b65a; --warn-soft:#3a2c10; --bad:#f08b80; --bad-soft:#40201c; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#101715; --surface:#18211e; --fg:#e7efec; --muted:#9bb0a9; --line:#2b3a35;
+  --accent:#6cc7b5; --accent-soft:#1c332e;
+  --ok:#6fd09a; --ok-soft:#173326; --warn:#e8b65a; --warn-soft:#3a2c10; --bad:#f08b80; --bad-soft:#40201c; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:15px/1.6 var(--body);padding-block:40px 80px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1040px;margin:0 auto;display:flex;flex-direction:column;gap:56px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:clamp(30px,5vw,44px);font-weight:600;letter-spacing:-.02em}
+h2{font-size:24px;font-weight:600}
+h3{font-size:19px;font-weight:600}
+p{margin:0;max-width:68ch}
+.eyebrow{font:500 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+header{display:flex;flex-direction:column;gap:14px}
+.lede{font-size:17px;color:var(--muted)}
+.verdict{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:24px;border-top:2px solid var(--fg);padding-top:20px}
+.verdict > div{display:flex;flex-direction:column;gap:8px;min-width:0}
+.verdict ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px}
+.pill{display:inline-flex;align-items:center;gap:6px;font:500 11px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:5px 8px;border-radius:3px;white-space:nowrap}
+.pill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.s-ok{color:var(--ok);background:var(--ok-soft)} .s-warn{color:var(--warn);background:var(--warn-soft)} .s-bad{color:var(--bad);background:var(--bad-soft)}
+section{display:flex;flex-direction:column;gap:20px}
+/* línea del recorrido */
+.line{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.line a{display:flex;flex-direction:column;gap:8px;height:100%;box-sizing:border-box;padding:12px;background:var(--surface);border:1px solid var(--line);border-top:3px solid var(--line);color:inherit;text-decoration:none}
+.line a:hover,.line a:focus-visible{border-color:var(--accent);outline:none}
+.line .n{font:500 11px/1 var(--mono);color:var(--muted)}
+.line .t{font:600 14px/1.25 var(--display)}
+.line .ok{border-top-color:var(--ok)} .line .warn{border-top-color:var(--warn)} .line .bad{border-top-color:var(--bad)}
+.legend{display:flex;flex-wrap:wrap;gap:10px;color:var(--muted);font-size:13px;align-items:center}
+/* pasos */
+.step{display:flex;flex-direction:column;gap:16px;padding-top:24px;border-top:1px solid var(--line);scroll-margin-top:16px}
+.step-head{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:baseline}
+.step-head .n{font:500 13px/1 var(--mono);color:var(--muted)}
+.io{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px 28px}
+.io > div{min-width:0;display:flex;flex-direction:column;gap:4px}
+.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+figure{margin:0;display:flex;flex-direction:column;gap:6px;min-width:0}
+figure button{all:unset;cursor:zoom-in;display:block;border:1px solid var(--line);background:var(--surface)}
+figure button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+figure img{display:block;width:100%;height:auto}
+figcaption{font-size:12.5px;color:var(--muted);line-height:1.4}
+.finds{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.finds li{display:grid;grid-template-columns:86px 1fr;gap:12px;align-items:start}
+.finds li > span:last-child{min-width:0}
+.good{color:var(--muted)} .good b{color:var(--ok);font-weight:600}
+/* tabla */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:860px;font-size:14px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:500 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+tr:last-child td{border-bottom:0}
+td:first-child{white-space:nowrap}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:24px}
+.cols > div{display:flex;flex-direction:column;gap:8px;min-width:0}
+.cols ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px}
+code{font:13px var(--mono);background:var(--accent-soft);padding:1px 5px;border-radius:3px;overflow-wrap:anywhere}
+dialog{border:0;padding:0;background:transparent;max-width:96vw;max-height:94vh}
+dialog::backdrop{background:rgba(0,0,0,.8)}
+dialog img{display:block;max-width:96vw;max-height:90vh;cursor:zoom-out}
+footer{color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:16px}
+.strat{display:grid;grid-template-columns:minmax(200px,280px) 1fr;gap:10px 28px;padding-top:18px;border-top:1px solid var(--line)}
+.strat > div{min-width:0;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.strat ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;max-width:72ch}
+.strat h3{font-size:17px}
+ol.order{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;max-width:72ch}
+@media (max-width:640px){.strat{grid-template-columns:1fr}}
+.board{overflow-x:auto;border:1px solid var(--line);background:var(--surface)}
+.board svg{display:block}
+.board text{font-family:var(--body);fill:var(--fg)}
+.board .ttl{font:600 14px var(--display)}
+.board .clk{font-size:12px;fill:var(--accent)}
+.board .frame{fill:none;stroke:var(--line);stroke-width:1.5}
+.board .frame.warn{stroke:var(--warn)} .board .frame.bad{stroke:var(--bad);stroke-width:2.5} .board .frame.ok{stroke:var(--ok)}
+.board .wire{fill:none;stroke:var(--accent);stroke-width:2.5}
+.board .head{fill:var(--accent)}
+.board .hot{fill:var(--accent);fill-opacity:.25;stroke:var(--accent);stroke-width:2.5}
+.board image{cursor:zoom-in}
+@media (max-width:520px){.finds li{grid-template-columns:1fr;gap:4px}}
+</style>
+
+<div class="wrap">
+<header>
+  <span class="eyebrow">Recorrido de producto · 14 nov 2026 · perfil diseñador · stack local · estado actualizado 15 nov 2026</span>
+  <h1>Mapa de flujos Terra</h1>
+  <p class="lede">Recorrí la app como lo haría un ingeniero que llega por primera vez: crear un proyecto, pedirle al agente una malla de 40 × 30 m, llevarla a cumplir IEEE 80 y compartir el estudio con un cliente. Cada paso tiene su pantallazo y lo que encontré.</p>
+  <p class="lede">Pantallazos y hallazgos son del recorrido del 14 nov. La columna «Estado» y la sección <a href="#estado">Estado de resolución</a> recogen lo que se hizo después, revisado contra el código y los commits del 15 nov. Todavía no se ha vuelto a recorrer la app.</p>
+  <div class="verdict">
+    <div>
+      <span class="eyebrow">Veredicto</span>
+      <p><strong>El tramo chat → malla → resultado tiene sentido y es rápido. El producto se rompe en dos puntos: el diseño nunca llega a «Cumple» y las vistas se contradicen entre sí.</strong></p>
+    </div>
+    <div>
+      <span class="eyebrow">Lo que funciona</span>
+      <ul>
+        <li>De proyecto vacío a malla dibujada en unos 30 segundos.</li>
+        <li>El agente declara supuestos y pide confirmar los datos críticos.</li>
+        <li>Cada cambio queda como versión con «Deshacer».</li>
+        <li>El resultado explica la restricción dominante y por qué.</li>
+      </ul>
+    </div>
+    <div>
+      <span class="eyebrow">Lo que impide usarlo de verdad</span>
+      <ul>
+        <li>Tres iteraciones con el agente y sigue en «No cumple» (−119,6 %).</li>
+        <li>Parámetros y Suelo dicen «Falta» aunque el artefacto ya tiene esos datos.</li>
+        <li>Se puede publicar un estudio que no cumple, sin aviso, con un resumen que contradice el resultado.</li>
+      </ul>
+    </div>
+  </div>
+</header>
+
+<section>
+  <h2>El recorrido</h2>
+  <div class="legend"><span class="pill s-ok">Fluye</span><span class="pill s-warn">Con fricción</span><span class="pill s-bad">Se rompe</span><span>Cada parada lleva a su detalle.</span></div>
+  <ol class="line" id="line"></ol>
+</section>
+
+<section>
+  <h2>Pantallas conectadas</h2>
+  <p>Cada flecha sale del control que se pulsa y llega a la pantalla que abre. El borde de cada pantalla indica su estado. Abajo, las tres pestañas donde el diseño del agente no coincide con lo que se ve. Desliza hacia la derecha para seguir el camino.</p>
+  <div class="board" id="board" tabindex="0" aria-label="Tablero de pantallas conectadas"></div>
+</section>
+
+<section id="steps"><h2>Paso a paso</h2><p>Estado de la app el 14 nov, antes de los cambios. Lo que ya se resolvió está en la columna «Estado» de los hallazgos.</p></section>
+
+<section>
+  <h2>Hallazgos priorizados</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Prioridad</th><th>Hallazgo</th><th>Qué haría</th><th>Estado · 15 nov</th></tr></thead>
+    <tbody id="prio"></tbody>
+  </table></div>
+</section>
+
+<section id="estrategia">
+  <h2>Estrategia por hallazgo</h2>
+  <p>Propuesta del 14 nov 2026; buena parte ya se implementó (ver <a href="#estado">Estado de resolución</a>). Casi todo lo que falló figura como «Implementada» en <code>docs/BACKLOG_PRODUCTO.md</code>: las piezas existen, pero no se validan de punta a punta. Por eso la mayoría de las estrategias consiste en conectar y cerrar lo que ya hay.</p>
+  <div id="strat" style="display:flex;flex-direction:column;gap:18px"></div>
+  <h3 id="estado">Estado de resolución · 15 nov 2026</h3>
+  <p>Revisado contra el código y los commits <code>04f1e5c</code>, <code>f920359</code>, <code>27f923f</code>, <code>04f4ee9</code> (14 nov) y <code>0f883c1</code>, <code>8038481</code>, <code>1b88d64</code>, <code>1fd1516</code> (15 nov).</p>
+  <ul class="order" style="list-style:disc">
+    <li><strong>1 · Cumplir · parcial:</strong> ya está el botón «Optimizar hasta cumplir» en Resultado (modo autónomo, 3 intentos). La búsqueda de topologías corre como trabajo en cola y se puede cancelar; el editor de plano tiene un panel que compara alternativas por costo, Rg, contacto y paso, muestra cada una sobre el diseño base y la aplica como versión nueva. <em>Pendiente:</em> un diagnóstico antes de iterar (¿se puede llegar a «Cumple»?), cerrar siempre con una conclusión, acciones sugeridas que recuerden lo que ya se aplicó y pedir la optimización desde el chat.</li>
+    <li><strong>2 · Una sola verdad · parcial:</strong> Parámetros, Suelo y Mediciones se llenan desde la última versión guardada y guardan versiones del mismo diseño. Los formularios leen los límites de contacto y paso y no aceptan duraciones por encima del límite de la norma. El editor de plano conserva la longitud de cada varilla. <em>Pendiente:</em> el editor de plano solo dibuja conductores explícitos (<code>geometry.conductors</code>), así que una retícula del agente sin convertir sigue sin aparecer. Las reglas de conflicto del editor y del generador siguen siendo distintas.</li>
+    <li><strong>3 · Chat vs panel · pendiente:</strong> lo único que cambió es que una justificación corta ya no impide calcular. Ningún cambio hace que el estado del cálculo tenga un solo dueño ni impide que el agente diga si el cálculo corrió.</li>
+    <li><strong>4 · Estudio público · casi resuelto:</strong> el resumen sale del resultado fijado y, si niega resultados que existen, se usa el veredicto guardado. El resultado se lee igual que en el panel del espacio de trabajo (sin JSON crudo) e indica el material del conductor y la norma de dimensionamiento. Publicar un «No cumple» exige confirmación (409 <code>non_compliant</code>) y el estudio lleva la banda «Diseño no conforme». Las referencias están en lenguaje de ingeniería, con un detalle plegado para auditoría. <em>Pendiente:</em> poner el plano de la malla en el estudio y tratar como supuestos los valores predeterminados.</li>
+    <li><strong>5 · Veredicto · resuelto:</strong> el proyecto tiene un estado de diseño (sin diseño, borrador, no cumple, cumple, publicado) que se ve como insignia en Inicio, Proyectos y la cabecera del espacio. El Resumen muestra el veredicto del cálculo.</li>
+    <li><strong>6 · Editor de estudio · casi resuelto:</strong> «Publicar estudio» es la acción principal y hay «Ver estudio», enlace visible, estado del PDF (en cola, generando, listo, falló) con «Descargar» y estados en español. <em>Pendiente:</em> el guardado sigue siendo manual («Guardar borrador»).</li>
+    <li><strong>7 · Vocabulario · casi resuelto:</strong> login en español, glosario de campos en <code>labels.js</code>, «editor de plano» en lugar de «drawer» y el rótulo «OP-03 / Abastecimiento» retirado. <em>Pendiente:</em> etiquetas para materiales y tipos de unión, y «artefacto» todavía aparece en el editor de estudio.</li>
+    <li><strong>8 · Formato del agente · parcial:</strong> las burbujas muestran listas y negritas (<code>RichText</code>). <em>Pendiente:</em> usar en el chat la misma tarjeta de interpretación del panel.</li>
+    <li><strong>9 · Detalles · casi resuelto:</strong> Esc cierra la vista 3D, las flechas de pestañas solo aparecen si hay desborde, «Cargar mensajes anteriores» aparece solo con 30 mensajes o más, la ciudad escrita se respeta, la actividad ya no muestra proyectos borrados y se retiró la ayuda de una línea. <em>Pendiente:</em> «Tokens consumidos» y «Estado del sistema» se siguen mostrando a todos los perfiles.</li>
+    <li><strong>10 · Catálogo y borrado · parcial:</strong> el diálogo de borrado avisa cuántos estudios publicados dejarán de funcionar. <em>Pendiente:</em> al catálogo solo se entra desde el menú lateral y sin proyecto elegido, aunque el código ya admite abrirlo con un proyecto.</li>
+  </ul>
+  <p>Esto se revisó en el código, no recorriendo la app. Según la regla de «Que no vuelva a pasar», nada se da por cerrado hasta repetir el recorrido completo.</p>
+  <h3>Orden recomendado</h3>
+  <ol class="order">
+    <li><strong>Hallazgo 3 y el plano del hallazgo 2.</strong> Son lo que queda de «una sola verdad» (H1) y casi no han avanzado.</li>
+    <li><strong>Lo que falta del hallazgo 1:</strong> diagnóstico y conclusión. El optimizador ya existe, pero el camino principal todavía no termina en «Cumple».</li>
+    <li><strong>Repetir el recorrido</strong> para confirmar los hallazgos 4 a 7 y actualizar <code>docs/BACKLOG_PRODUCTO.md</code>, que no se toca desde el 8 oct.</li>
+    <li>El resto: plano y supuestos en el estudio, catálogo, tarjeta de interpretación y guardado automático.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Sobre el método</h2>
+  <div class="cols">
+    <div>
+      <h3>No hace falta Figma</h3>
+      <p>Figma sirve para diseñar pantallas que aún no existen. Aquí la app ya corre, así que el mapa se arma sobre el producto real: recorrerlo con un usuario de prueba, capturar cada estado y anotar dónde fluye y dónde se rompe. Este mismo recorrido se puede repetir después de cada cambio grande.</p>
+    </div>
+    <div>
+      <h3>Lo que no recorrí</h3>
+      <ul>
+        <li>Perfiles <code>viewer</code> y <code>user_admin</code>.</li>
+        <li>Carga de archivos en Fuentes y mediciones de campo.</li>
+        <li>El PDF generado y el estudio con contraseña.</li>
+        <li>Ancho de teléfono.</li>
+        <li>El agente cotizador del catálogo.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Datos de la corrida</h3>
+      <ul>
+        <li>Usuario <code>designer</code> creado con <code>make smoke-ui-seed</code>.</li>
+        <li>Proyecto <code>zz-smoke-20261114-pmflow</code>, borrado al terminar.</li>
+        <li>Entrada: 40 × 30 m, retícula 5 m, 8 kA, 0,5 s, suelo 100 Ω·m.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>Pantallazos tomados en <code>127.0.0.1:3001</code> a 1456 × 830. Toca cualquiera para verlo en grande.</footer>
+</div>
+
+<dialog id="zoom"><img id="zoomimg" alt=""></dialog>
+
+<script>
+const LABEL={ok:"Fluye",warn:"Con fricción",bad:"Se rompe"};
+const SEV={bad:"Grave",warn:"Fricción",ok:"Menor"};
+const STEPS=[
+ {id:"entrar",t:"Entrar",s:"warn",
+  want:"Iniciar sesión y entender dónde estoy.",
+  got:"El login está en inglés y el resto de la app en español. No hay «olvidé mi contraseña». El inicio saluda y muestra el estado de la infraestructura.",
+  shots:[["s49","Login en inglés: «Welcome back», «Sign in with your local account»."],["s0","Inicio con cuenta nueva: 0 proyectos, pero la lista de actividad muestra proyectos que ya no existen."]],
+  finds:[["warn","Idioma mezclado: login en inglés, app en español."],["warn","«Funciones usadas recientemente» lista actividad de proyectos borrados; una cuenta sin proyectos no debería tener historial."],["ok","«Estado del sistema» (base de datos, antivirus, OCR) es información de operación, no del diseñador."],["ok","«Tokens consumidos» siguió en 0 después de usar el agente varias veces."]]},
+ {id:"crear",t:"Crear proyecto",s:"ok",
+  want:"Registrar la subestación y su ubicación.",
+  got:"Un diálogo corto con nombre, descripción y mapa. El proyecto aparece en la tabla con aviso de confirmación. Clic en el nombre abre el espacio de trabajo.",
+  shots:[["s1","Portafolio vacío con llamada clara a crear."],["s3","Diálogo de creación. Escribí «Bogotá» y el buscador lo cambió a «Bogotá ciudad»."],["s4","Proyecto creado."]],
+  finds:[["ok","El buscador del mapa reescribe lo que el usuario tecleó en Ciudad («Bogotá ciudad») y así sale luego en el estudio público."],["ok","El ícono para abrir el espacio es un globo de chat; el nombre también abre, pero no parece enlace."]]},
+ {id:"espacio",t:"Espacio vacío",s:"warn",
+  want:"Saber por dónde empezar.",
+  got:"Pantalla partida: chat a la izquierda, artefacto a la derecha con siete pestañas. El artefacto vacío da un ejemplo de qué pedir, y eso orienta. El chat, en cambio, habla de «refinamiento» cuando todavía no hay nada que refinar.",
+  shots:[["s5","Primer vistazo al espacio del proyecto."],["s7","Mediciones: dice «Valores de ejemplo: reemplázalos», pero los campos dicen «Falta»."],["s10","Plano: el botón se llama «Abrir drawer de dibujo»."]],
+  finds:[["warn","Vocabulario interno a la vista: «Refinamiento del artefacto», «artefacto», «drawer», «SPAT», «Memoria del proyecto · 0»."],["ok","«Cargar mensajes anteriores» aparece en un chat que no tiene mensajes."],["ok","Las flechas para desplazar pestañas están siempre, aunque las siete caben."],["ok","«Ayuda del espacio» solo muestra un aviso de una línea."]]},
+ {id:"pedir",t:"Pedir la malla",s:"ok",
+  want:"Describir la subestación en una frase y ver una malla.",
+  got:"El agente responde en unos 20 segundos: dibuja la malla, lista lo que registró y pregunta por la capa superficial antes de calcular. Este es el mejor momento del producto.",
+  shots:[["s13","Mensaje enviado: «Empecé a trabajar en tu solicitud…» con opción de cancelar."],["s15","Malla creada con tarjeta de cambios, «Deshacer» y pregunta de confirmación."]],
+  finds:[["ok","La tarjeta de cambios muestra exactamente qué se registró y permite deshacer. Vale la pena conservar este patrón en todo el producto."]]},
+ {id:"resultado",t:"Ver el resultado",s:"bad",
+  want:"Saber si el diseño cumple y por qué.",
+  got:"El panel de resultado es claro: «No cumple», restricción dominante, margen y dos acciones sugeridas. El chat, al mismo tiempo, dice tres cosas incompatibles.",
+  shots:[["s16","A la derecha hay resultado. A la izquierda: «Cálculo de seguridad terminado», luego «No se pudo lanzar el cálculo» y «El resultado quedó desactualizado»."],["s17","Mapa de potencial superficial y advertencias del modelo."],["s21","Vista 3D de la tensión de contacto. La tecla Esc no la cierra."]],
+  finds:[["bad","El chat contradice al panel: anuncia cálculo terminado, luego que no se pudo lanzar, mientras el resultado ya está en pantalla. El usuario no sabe a cuál creerle."],["warn","Las respuestas largas del agente salen como un párrafo corrido con guiones; se pierde el formato de lista."],["ok","Las advertencias citan el backlog interno: «(P1 del backlog)»."]]},
+ {id:"iterar",t:"Llevarlo a cumplir",s:"bad",
+  want:"Que el diseño pase la norma.",
+  got:"Probé la acción sugerida («Agrega varillas en el perímetro y recalcula») y después pedí «optimiza hasta que cumpla». La tensión de contacto bajó de 2.218 V a 1.495 V; el límite es 681 V. Tras cada intento el panel ofrece las mismas dos acciones.",
+  shots:[["s25","Versión 3, con varillas: 1.658 V, margen −143,6 %."],["s27","Versión 4, «optimizada»: 1.495 V, margen −119,6 %. El agente pregunta qué más cambiar."]],
+  finds:[["bad","El camino principal no converge. «Optimiza hasta que cumpla» hace un solo ajuste y devuelve la pregunta al usuario. No vi en la interfaz una forma de lanzar una optimización que termine en «Cumple»."],["warn","Las acciones sugeridas no cambian aunque ya se aplicaron y no bastaron."],["warn","Con un margen de −120 % el problema es de planteamiento (falta el factor de división de corriente que el propio modelo advierte). El producto debería decirlo antes de invitar a agregar varillas."]]},
+ {id:"revisar",t:"Revisar entradas",s:"bad",
+  want:"Comprobar y ajustar a mano lo que el agente puso.",
+  got:"El Resumen muestra la malla y las entradas con su estado («Confirmado», «Predeterminado»). Al abrir las pestañas de entrada, los formularios están vacíos y el plano marca conflictos sobre el diseño que hizo el propio agente.",
+  shots:[["s30","Resumen: entradas con estado de confirmación, pero sin el veredicto «No cumple»."],["s33","Parámetros: corriente y tiempo dicen «Falta» aunque el artefacto tiene 8.000 A y 0,5 s."],["s35","Suelo: «Hay 0 lecturas» aunque el cálculo usó 100 Ω·m."],["s32","Plano: 36 electrodos, ningún conductor dibujado y «7 conflictos»."]],
+  finds:[["bad","Dos verdades: los formularios manuales no leen el artefacto. Quien entre a Parámetros creerá que no hay datos y puede sobrescribirlos."],["bad","El editor de plano no dibuja los conductores de la malla y reporta 7 conflictos («Ya existe un electrodo en esta celda») en un diseño generado por el agente."],["warn","El Resumen omite lo más importante: si cumple o no."],["ok","Valores crudos a la vista: «copper_hard_drawn», «unión bolted»."]]},
+ {id:"compartir",t:"Compartir estudio",s:"warn",
+  want:"Preparar un entregable para el cliente.",
+  got:"Se crea un borrador, se puede generar texto con IA por sección y publicar. Funciona, pero el editor se ve sin terminar y publicar ocurre sin confirmación ni vista previa.",
+  shots:[["s37","Punto de partida."],["s38","Editor del estudio con controles sin estilo y estado «v4 · draft»."],["s40","Publicado: aparecen «Republicar», «Revocar», «Generar PDF» y «Copiar enlace», sin aviso ni enlace visible."],["s41","«PDF en cola. Consulta el estado en unos segundos», pero no hay dónde consultarlo."]],
+  finds:[["bad","Se publicó un diseño que no cumple sin advertencia ni confirmación."],["warn","Jerarquía invertida: «Guardar configuración» es el botón grande y «Publicar estudio» uno pequeño debajo."],["warn","No hay vista previa ni forma de abrir el estudio; solo copiar el enlace."],["warn","El editor usa controles nativos del navegador y rompe con el resto de la app. Estados en inglés («draft», «published»)."]]},
+ {id:"publico",t:"Estudio público",s:"bad",
+  want:"Que el cliente abra el enlace y confíe en lo que lee.",
+  got:"La página es limpia y la tabla de resultados se entiende. El resumen generado y la sección de referencias le restan credibilidad.",
+  shots:[["s42","Encabezado, resumen y entradas. El resumen nombra el proyecto por su id interno."],["s43","Resultado: tabla por criterio y mapa de potencial."]],
+  finds:[["bad","El resumen de IA afirma que «no se cuenta aún con resultados de tensiones de contacto, paso, GPR» y justo debajo está la tabla con esos resultados y el «No cumple»."],["bad","«Referencias y trazabilidad» muestra claves internas: «geometry.length_m · 04bc2c42-…», «schema_default». Un cliente no puede leer eso."],["warn","No vi marca de borrador aunque el conductor y otros 20 campos son valores predeterminados sin confirmar."],["ok","El estudio no incluye el plano de la malla, solo el mapa de calor."]]},
+ {id:"laterales",t:"Catálogo y cierre",s:"warn",
+  want:"Estimar costos y dejar todo ordenado.",
+  got:"El catálogo de materiales es un módulo aparte: pide elegir proyecto otra vez y no se llega a él desde el espacio del proyecto. Al borrar el proyecto, el enlace público del estudio deja de existir.",
+  shots:[["s45","Catálogo: rótulo «OPTIMIZADOR · OP-03» y migas «Terra > Abastecimiento»."],["s47","Inicio después del recorrido: el proyecto no muestra si cumple; la actividad registra «study»."],["s48","Confirmación de borrado. No avisa que hay un estudio publicado."]],
+  finds:[["warn","El catálogo no está conectado al flujo de diseño ni al estudio; tres nombres distintos para lo mismo (Catálogo, Abastecimiento, Optimizador OP-03)."],["warn","Borrar el proyecto tumba el enlace público (comprobé que responde 404) y el diálogo no lo advierte."],["ok","El inicio no muestra el estado de cada diseño (borrador, no cumple, publicado)."]]}
+];
+const PRIO=[
+ ["bad","P0","El diseño no llega a «Cumple» por el camino principal.","Conectar el optimizador al chat y a un botón «Optimizar hasta cumplir», o explicar por qué no es alcanzable y qué dato cambiar.",["warn","Parcial","Botón «Optimizar hasta cumplir» y búsqueda de topologías en el editor de plano. Faltan el diagnóstico previo y la conclusión."]],
+ ["bad","P0","Formularios de Parámetros, Suelo y Plano no reflejan el artefacto.","Que todas las pestañas lean y escriban la misma versión del artefacto. Es la misma deuda «una sola verdad» de la visión de producto.",["warn","Parcial","Parámetros, Suelo y Mediciones leen la versión guardada. El plano todavía no dibuja la retícula del agente."]],
+ ["bad","P0","El chat y el panel de resultado se contradicen.","Un solo origen para el estado del cálculo; el agente no debería opinar sobre si corrió.",["bad","Pendiente","Solo se quitó el rechazo por justificación corta."]],
+ ["bad","P0","El estudio público sale con resumen falso, claves internas y sin freno al publicar un «No cumple».","Generar el resumen desde el resultado fijado, traducir referencias a lenguaje de ingeniería, pedir confirmación y marcar borrador.",["ok","Casi resuelto","Resumen desde el resultado fijado, confirmación y banda «no conforme», referencias legibles. Faltan el plano y los supuestos."]],
+ ["warn","P1","El Resumen y el Inicio no muestran el veredicto del diseño.","Estado visible por proyecto y en la primera pestaña.",["ok","Resuelto","Insignia de estado en Inicio, Proyectos y cabecera; veredicto en Resumen."]],
+ ["warn","P1","Editor de estudio sin terminar: estilos, jerarquía de botones, vista previa, estado del PDF.","Aplicar los componentes de la app, «Publicar» como acción principal, botón «Ver estudio».",["ok","Casi resuelto","Publicar como acción principal, «Ver estudio», estado y descarga del PDF. Falta el guardado automático."]],
+ ["warn","P1","Vocabulario interno y mezcla de idiomas.","Glosario de cara al usuario: artefacto, refinamiento, drawer, SPAT, OP-03, enums en inglés, login.",["ok","Casi resuelto","Login en español y glosario. Faltan las etiquetas de materiales y tipos de unión."]],
+ ["warn","P1","Respuestas del agente sin formato y acciones sugeridas repetidas.","Renderizar listas; no ofrecer una acción que ya se aplicó sin efecto suficiente.",["warn","Parcial","Listas y negritas en el chat. Faltan la tarjeta de interpretación y las acciones con memoria."]],
+ ["ok","P2","Detalles: Esc en la vista 3D, flechas de pestañas, «Cargar mensajes anteriores», ciudad reescrita, ayuda de una línea, tokens en 0, actividad de proyectos borrados.","Agrupar en una pasada de pulido.",["ok","Casi resuelto","Esc, flechas, mensajes anteriores, ciudad, actividad, ayuda. Faltan los tokens y el estado del sistema."]],
+ ["ok","P2","Catálogo desconectado y borrado que rompe enlaces públicos sin avisar.","Entrar al catálogo desde el proyecto; advertir en el diálogo de borrado.",["warn","Parcial","El borrado ya avisa. Falta entrar al catálogo desde el proyecto."]]
+];
+const el=(tag,cls,txt)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e};
+const line=document.getElementById("line"),steps=document.getElementById("steps");
+STEPS.forEach((st,i)=>{
+  const li=el("li"),a=el("a",st.s);a.href="#"+st.id;
+  a.append(el("span","n",String(i+1).padStart(2,"0")),el("span","t",st.t));
+  const p=el("span","pill s-"+st.s,LABEL[st.s]);p.style.alignSelf="flex-start";p.style.marginTop="auto";a.append(p);li.append(a);line.append(li);
+  const art=el("article","step");art.id=st.id;
+  const head=el("div","step-head");head.append(el("span","n",String(i+1).padStart(2,"0")),el("h3",null,st.t),el("span","pill s-"+st.s,LABEL[st.s]));
+  const io=el("div","io");
+  [["Lo que quiere el usuario",st.want],["Lo que pasa",st.got]].forEach(([k,v])=>{const d=el("div");d.append(el("span","eyebrow",k),el("p",null,v));io.append(d)});
+  const shots=el("div","shots");
+  st.shots.forEach(([f,c])=>{const fig=el("figure"),b=el("button");b.type="button";b.setAttribute("aria-label","Ampliar: "+c);
+    const im=el("img");im.src="img/"+f+".jpg";im.alt=c;im.loading="lazy";b.append(im);b.addEventListener("click",()=>{zi.src=im.src;zi.alt=c;zoom.showModal()});
+    fig.append(b,el("figcaption",null,c));shots.append(fig)});
+  const ul=el("ul","finds");
+  st.finds.forEach(([sv,t])=>{const l=el("li");l.append(el("span","pill s-"+sv,SEV[sv]),el("span",null,t));ul.append(l)});
+  art.append(head,io,shots,ul);steps.append(art);
+});
+(function(){
+  const NS="http://www.w3.org/2000/svg",FW=260,FH=148,GX=110,PX=20,TOP=60,BY=TOP+FH+150;
+  const MAIN=[["s49","Login","warn",[727,587],"Sign in"],["s0","Inicio","ok",[1270,86],"Ver proyectos"],["s1","Proyectos","ok",[1276,86],"Nuevo proyecto"],["s3","Crear proyecto","ok",[918,755],"Crear proyecto"],["s4","Proyecto creado","ok",[286,284],"Nombre del proyecto"],["s5","Espacio vacío","warn",[390,730],"Enviar pedido al agente"],["s15","Malla creada","ok",[390,724],"Confirmar y calcular"],["s16","Resultado v2 · no cumple","bad",[835,515],"Agrega varillas y recalcula"],["s27","Resultado v4 · no cumple","bad",[1211,8],"Compartir estudio"],["s37","Compartir","ok",[1134,321],"Crear borrador"],["s38","Editor del estudio","warn",[412,815],"Publicar estudio"],["s40","Publicado","warn",[730,742],"Copiar enlace"],["s42","Estudio público","bad",null,null]];
+  const BR=[["s30","Resumen · sin veredicto","warn",[770,154]],["s33","Parámetros · dice «Falta»","bad",[1170,154]],["s32","Plano · 7 conflictos","bad",[1250,154]]];
+  const W=PX*2+MAIN.length*FW+(MAIN.length-1)*GX,H=BY+FH+44;
+  const s=(t,a,txt)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(txt!=null)e.textContent=txt;return e};
+  const svg=s("svg",{width:W,height:H,viewBox:`0 0 ${W} ${H}`,role:"img"});
+  const defs=s("defs",{}),mk=s("marker",{id:"ah",viewBox:"0 0 10 10",refX:"9",refY:"5",markerWidth:"7",markerHeight:"7",orient:"auto"});
+  mk.append(s("path",{d:"M0 0L10 5L0 10z",class:"head"}));defs.append(mk);svg.append(defs);
+  const xOf=i=>PX+i*(FW+GX),wires=s("g",{});
+  const node=(f,x,y,st,cap)=>{const im=s("image",{href:"img/"+f+".jpg",x,y,width:FW,height:FH,preserveAspectRatio:"xMidYMid slice"});
+    im.addEventListener("click",()=>{zi.src="img/"+f+".jpg";zi.alt=cap;zoom.showModal()});svg.append(im,s("rect",{x,y,width:FW,height:FH,class:"frame "+st}))};
+  const hot=(x,y,h)=>[x+h[0]/1456*FW,y+h[1]/830*FH];
+  MAIN.forEach(([f,t,st,h,c],i)=>{const x=xOf(i);node(f,x,TOP,st,t);
+    svg.append(s("text",{x,y:TOP-30,class:"ttl"},String(i+1).padStart(2,"0")+"  "+t));
+    if(h){const [hx,hy]=hot(x,TOP,h),tx=xOf(i+1)-4,ty=TOP+FH/2;
+      svg.append(s("text",{x,y:TOP-11,class:"clk"},"clic: "+c+" →"));
+      wires.append(s("circle",{cx:hx,cy:hy,r:9,class:"hot"}),s("path",{d:`M${hx} ${hy}C${hx+90} ${hy} ${tx-80} ${ty} ${tx} ${ty}`,class:"wire","marker-end":"url(#ah)"}))}});
+  BR.forEach(([f,t,st,h],j)=>{const x=xOf(8)+(j-1)*(FW+40);node(f,x,BY,st,t);
+    svg.append(s("text",{x,y:BY+FH+22,class:"ttl"},t));
+    const [hx,hy]=hot(xOf(8),TOP,h),tx=x+FW/2,ty=BY-4;
+    wires.append(s("circle",{cx:hx,cy:hy,r:7,class:"hot"}),s("path",{d:`M${hx} ${hy}C${hx} ${hy+150} ${tx} ${ty-110} ${tx} ${ty}`,class:"wire","marker-end":"url(#ah)"}))});
+  svg.append(wires);document.getElementById("board").append(svg);
+})();
+const prio=document.getElementById("prio");
+PRIO.forEach(([sv,p,h,q,[ss,sl,st]])=>{const tr=el("tr"),td=el("td");td.append(el("span","pill s-"+sv,p));const tdS=el("td");tdS.append(el("span","pill s-"+ss,sl),el("div",null,st));tdS.lastChild.style.marginTop="6px";tr.append(td,el("td",null,h),el("td",null,q),tdS);prio.append(tr)});
+const STRAT=[
+ ["bad","P0","1. El diseño no llega a «Cumple»",[
+  "Exponer la iteración automática que ya existe (PR-33): un botón «Optimizar hasta cumplir» en Resultado y la frase equivalente en el chat activan el modo autónomo, hoy limitado a 3 intentos.",
+  "Diagnosticar antes de iterar: con margen pequeño el caso es ajustable con geometría; con margen grande es un problema de planteamiento y hay que pedir el dato que falta, como el factor de división de corriente.",
+  "Terminar siempre con una conclusión: «Cumple en la versión N» o «No es alcanzable con estas entradas; esto habría que cambiar».",
+  "Acciones sugeridas con memoria: no repetir una acción que ya se aplicó sin efecto suficiente."]],
+ ["bad","P0","2. Formularios y plano no reflejan el artefacto",[
+  "Una regla única: toda pestaña lee la versión vigente del artefacto y al guardar crea una versión nueva. Los formularios se enlazan, no se rehacen.",
+  "«Falta» solo cuando de verdad falta. Si el artefacto tiene el valor, el campo lo muestra con el chip de procedencia que ya usa el Resumen.",
+  "Plano: dibujar los conductores de la malla generada por el agente y usar las mismas reglas de conflicto en el editor y en el generador.",
+  "Orden sugerido: Parámetros, Suelo, Plano."]],
+ ["bad","P0","3. El chat contradice al panel de resultado",[
+  "Un solo dueño del estado del cálculo: el sistema. Los mensajes «calculando», «terminado» y «falló» salen del estado real del trabajo.",
+  "El agente solo interpreta un resultado ya terminado; no afirma si el cálculo corrió.",
+  "Los errores de validación se resuelven antes de encolar, con un valor válido por defecto o una pregunta previa.",
+  "«Resultado desactualizado» se retira solo cuando llega el cálculo de esa versión."]],
+ ["bad","P0","4. Estudio público poco confiable",[
+  "Resumen generado desde el resultado fijado, con una comprobación: si el texto niega resultados que existen, se rechaza.",
+  "Compuerta al publicar un «No cumple»: extender la de PR-57 con confirmación explícita y una banda visible de «Diseño no conforme».",
+  "Referencias en lenguaje de ingeniería; claves técnicas e identificadores en un detalle plegado para auditoría.",
+  "Tratar como supuestos los valores predeterminados que le importan al cliente, para que activen la marca de borrador.",
+  "Incluir el plano de la malla con el componente de vista previa existente."]],
+ ["warn","P1","5. El veredicto no se ve en Resumen ni en Inicio",[
+  "Definir un estado por proyecto: sin diseño, borrador, no cumple, cumple, publicado.",
+  "Mostrarlo como insignia en la cabecera del espacio (en lugar de «Proyecto activo»), en Resumen y en la lista del Inicio."]],
+ ["warn","P1","6. Editor de estudio sin terminar",[
+  "Aplicar los componentes de formulario del resto de la app.",
+  "«Publicar» como acción principal y guardado automático.",
+  "Botón «Ver estudio» y enlace visible una vez publicado.",
+  "Estado del PDF en la misma pantalla (en cola, listo, descargar); el backend ya entrega la URL firmada (PR-55).",
+  "Estados en español: borrador, publicado, revocado."]],
+ ["warn","P1","7. Vocabulario interno e idiomas mezclados",[
+  "Glosario de una página: término interno y término de cara al usuario (artefacto → diseño, refinamiento → conversación, drawer → editor de plano; SPAT y OP-03 fuera).",
+  "Una tabla de etiquetas para valores técnicos (material, tipo de unión, nombres de actividad) usada en todas las vistas.",
+  "Login en español.",
+  "Una pasada de textos por pantalla usando este mapa como lista de verificación."]],
+ ["warn","P1","8. Respuestas del agente sin formato",[
+  "Renderizar listas y negritas en las burbujas del chat.",
+  "Cuando el agente resume un resultado, usar la misma tarjeta de Interpretación del panel en vez de texto libre."]],
+ ["ok","P2","9. Detalles sueltos",[
+  "Una sola pasada: Esc en la vista 3D, flechas de pestañas solo con desborde, «Cargar mensajes anteriores» solo si existen, respetar la ciudad escrita, ayuda con contenido real o retirar el botón.",
+  "Inicio: decidir si «Tokens consumidos» y «Estado del sistema» son para el diseñador o solo para el administrador; limpiar la actividad de proyectos borrados."]],
+ ["ok","P2","10. Catálogo desconectado y borrado que rompe enlaces",[
+  "Catálogo: entrar desde el proyecto con el proyecto ya elegido y un solo nombre para el módulo. Decisión pendiente: ocultarlo del menú mientras no alimente los costos del estudio.",
+  "Borrado: avisar cuántos enlaces publicados dejarán de funcionar. Alternativa a evaluar: archivar en lugar de borrar."]],
+ ["warn","Proceso","Que no vuelva a pasar",[
+  "Una tarea del backlog se marca implementada solo si el recorrido completo (crear, pedir malla, cumplir, publicar, abrir estudio) pasa sin contradicciones.",
+  "Revisar las tareas marcadas como implementadas que este recorrido desmintió y devolverlas a parcial.",
+  "Repetir este mapa tras cada hito."]]
+];
+const strat=document.getElementById("strat");
+STRAT.forEach(([sv,p,t,items])=>{const a=el("article","strat"),l=el("div"),r=el("div"),ul=el("ul");
+  l.append(el("span","pill s-"+sv,p),el("h3",null,t));items.forEach(i=>ul.append(el("li",null,i)));r.append(ul);a.append(l,r);strat.append(a)});
+const zoom=document.getElementById("zoom"),zi=document.getElementById("zoomimg");
+zoom.addEventListener("click",()=>zoom.close());
+</script>
