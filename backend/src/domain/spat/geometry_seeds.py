@@ -30,6 +30,7 @@ class SeedConstraints:
     spacing_choices_m: tuple[float, ...] = (3.0, 4.0, 5.0, 6.0, 8.0)
     rod_length_choices_m: tuple[float, ...] = (1.5, 2.4, 3.0, 6.0)
     max_attempts: int = 80
+    orthogonal: bool = False       # only horizontal and vertical runs
 
 
 @dataclass(frozen=True)
@@ -100,7 +101,7 @@ def _perimeter(region: _Region, rng: random.Random, domain: dict, c: SeedConstra
         ring = [gg.point(*p) for p in ring]
         if len(ring) >= 3 and all(region.edge_ok(a, b) for a, b in zip(ring, ring[1:] + ring[:1])):
             segments = list(zip(ring, ring[1:] + ring[:1]))
-            if rng.random() < 0.5:                                    # a cross-brace through the middle when it fits
+            if not c.orthogonal and rng.random() < 0.5:               # a cross-brace through the middle when it fits
                 cx = sum(p[0] for p in ring) / len(ring)
                 cy = sum(p[1] for p in ring) / len(ring)
                 centre = gg.point(cx, cy)
@@ -158,7 +159,7 @@ def _branched(region: _Region, rng: random.Random, domain: dict, c: SeedConstrai
     root = gg.point((left + right) / 2, (bottom + top) / 2)
     if not region.usable(*root):
         return None
-    directions = [(math.cos(a * math.pi / 4), math.sin(a * math.pi / 4)) for a in range(8)]
+    directions = [(math.cos(a * math.pi / 4), math.sin(a * math.pi / 4)) for a in range(0, 8, 2 if c.orthogonal else 1)]
     nodes, segments, frontier = [root], [], [(root, None)]
     target = rng.randint(8, 20)
     attempts = 0
@@ -207,6 +208,8 @@ def _accept(domain: dict, graph: gg.GeometryGraph, c: SeedConstraints) -> dict |
         return None
     if min(gg._dist(a, b) for a, b, _ in graph.segments) < c.min_segment_m:
         return None
+    if c.orthogonal and any(abs(a[0] - b[0]) > 1e-6 and abs(a[1] - b[1]) > 1e-6 for a, b, _ in graph.segments):
+        return None
     if evaluate_optimizer_geometry(geometry)["status"] != "valid":
         return None
     return geometry
@@ -247,7 +250,7 @@ def generate_seeds(domain: dict, *, seed: int, count: int = 8, initial: dict | N
 
     if initial is not None:
         graph = gg.normalize(gg.from_geometry(initial))
-        keep("user", _accept(domain, graph, SeedConstraints(**{**constraints.__dict__, "min_segment_m": 0.0})) and gg.to_geometry(graph, initial))
+        keep("user", _accept(domain, graph, SeedConstraints(**{**constraints.__dict__, "min_segment_m": 0.0, "orthogonal": False})) and gg.to_geometry(graph, initial))
     builders = {"perimeter": _perimeter, "inscribed": _inscribed, "branched": _branched}
     order = ("perimeter", "inscribed", "branched")
     attempts = 0

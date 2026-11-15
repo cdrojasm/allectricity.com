@@ -22,7 +22,8 @@ from dataclasses import dataclass, replace
 
 from src.domain.spat import geometry_graph as gg
 from src.domain.spat.geometry_operators import (
-    AddSegment, ConnectNodes, Operator, OperatorConstraints, OperatorRejected, RemoveRod, RemoveSegment)
+    AddSegment, ConnectNodes, Operator, OperatorConstraints, OperatorRejected, RemoveRod, RemoveSegment,
+    is_diagonal)
 from src.domain.spat.geometry_seeds import SeedConstraints, _Region
 
 DESTROY = ("region", "random", "branch")
@@ -94,6 +95,13 @@ def _link_candidates(graph: gg.GeometryGraph):
     return sorted(pairs)
 
 
+def _link_l(work, a, corner, b, region, constraints, run) -> bool:
+    legs = ((a, corner), (corner, b))
+    if any(gg._dist(p, q) < constraints.min_segment_m or not region.edge_ok(p, q, sample_m=0.5) for p, q in legs):
+        return False
+    return run(AddSegment(a, corner, free=True)) and run(AddSegment(corner, b, free=True))
+
+
 def plan(graph: gg.GeometryGraph, rng: random.Random, destroy: str, repair: str, region: _Region,
          constraints: OperatorConstraints) -> CompositeOperator | None:
     """Plan one destroy-and-repair move, or None when it cannot be made valid from here."""
@@ -140,6 +148,11 @@ def plan(graph: gg.GeometryGraph, rng: random.Random, destroy: str, repair: str,
             if frozenset((a, b)) in undone:
                 continue
             tries += 1
+            if constraints.orthogonal and is_diagonal(a, b):
+                # No straight link: an L through a corner, two plumb or level runs.
+                if any(_link_l(work, a, corner, b, region, constraints, run) for corner in (gg.point(a[0], b[1]), gg.point(b[0], a[1]))):
+                    break
+                continue
             if distance >= constraints.min_segment_m and region.edge_ok(a, b, sample_m=0.5) and run(ConnectNodes(a, b)):
                 break
             if tries >= 40:

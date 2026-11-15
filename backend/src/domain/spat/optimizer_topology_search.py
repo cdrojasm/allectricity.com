@@ -50,6 +50,7 @@ search repair an infeasible seed before it tries to make it cheaper.
 
 from __future__ import annotations
 
+import functools
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -158,6 +159,11 @@ def search_topology(
     In every policy the finalists are chosen and checked at the finest level afterwards, so a refined design
     never replaces a validated one without that check.
     """
+    if constraints.orthogonal:
+        if propose_operator is random_operator:
+            propose_operator = functools.partial(random_operator, orthogonal=True)
+        if propose_repair is random_repair_operator:
+            propose_repair = functools.partial(random_repair_operator, orthogonal=True)
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise ValueError("seed must be an integer")
     if isinstance(parallel_workers, bool) or not isinstance(parallel_workers, int) or parallel_workers < 1:

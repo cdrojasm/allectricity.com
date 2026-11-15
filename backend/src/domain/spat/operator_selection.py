@@ -65,7 +65,7 @@ class AdaptiveOperatorSelector:
                 if move is not None:
                     return arm, move
             return arm, None
-        return arm, random_operator(graph, rng, kind=arm[7:])
+        return arm, random_operator(graph, rng, kind=arm[7:], orthogonal=self.constraints.orthogonal)
 
     def report(self, arm: str, outcome: str, repairing: bool) -> None:
         context = "repair" if repairing else "improve"

@@ -46,6 +46,12 @@ def _distance_to(p: Point, a: Point, b: Point) -> float:
     return gg._point_segment_distance(p, (a, b))
 
 
+def is_diagonal(a: Point, b: Point) -> bool:
+    """Neither horizontal nor vertical."""
+    tol = 2 * 10 ** -DECIMALS
+    return abs(a[0] - b[0]) > tol and abs(a[1] - b[1]) > tol
+
+
 def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 

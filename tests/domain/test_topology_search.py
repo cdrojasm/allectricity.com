@@ -635,3 +635,44 @@ def test_the_experimental_policies_account_for_every_call_in_the_one_budget():
         model = Model()
         result = run(model, calls=60, **extra)
         assert len(model.calls) == result["solver_calls_total"] <= 60
+
+
+def _diagonals(geometry):
+    return [s for s in gg.from_geometry(geometry).segments if gg.is_diagonal(s[0], s[1])] if hasattr(gg, "is_diagonal") else [
+        s for s in gg.from_geometry(geometry).segments if abs(s[0][0] - s[1][0]) > 1e-6 and abs(s[0][1] - s[1][1]) > 1e-6]
+
+
+class Recording(Model):
+    def electrical(self, level, geometry):
+        self.seen = getattr(self, "seen", []) + [geometry]
+        return super().electrical(level, geometry)
+
+
+@pytest.mark.parametrize("adaptive", [False, True])
+def test_an_orthogonal_search_never_builds_a_diagonal(adaptive):
+    from src.domain.spat.geometry_operators import OperatorConstraints
+    from src.domain.spat.operator_selection import AdaptiveOperatorSelector
+
+    constraints = OperatorConstraints(orthogonal=True)
+    start = seeds.generate_seeds(DOMAIN, seed=3, count=4, constraints=seeds.SeedConstraints(orthogonal=True))
+    assert start and not any(_diagonals(s.geometry) for s in start)
+    model = Recording()
+    options = {"operator_selector": AdaptiveOperatorSelector(DOMAIN, constraints)} if adaptive else {}
+    result = search_topology(domain=DOMAIN, seeds=start, evaluate_cost=model.cost, evaluate_electrical=model.electrical,
+                             seed=3, max_solver_calls=80, constraints=constraints, **options)
+    assert result["best"] is not None and len(model.seen) > 10
+    assert not any(_diagonals(geometry) for geometry in model.seen)
+
+
+def test_a_diagonal_of_the_base_design_is_kept_and_no_other_is_added():
+    from src.domain.spat.geometry_operators import OperatorConstraints, OperatorRejected, check, diagonals_of
+
+    base = {**DOMAIN, "conductors": [{"start": {"x": 4, "y": 4}, "end": {"x": 20, "y": 4}},
+                                      {"start": {"x": 20, "y": 4}, "end": {"x": 24, "y": 8}}]}
+    inherited = diagonals_of(base)
+    assert len(inherited) == 1
+    graph = gg.from_geometry(base)
+    check(graph, OperatorConstraints(orthogonal=True, inherited_diagonals=inherited), DOMAIN)
+    with pytest.raises(OperatorRejected, match="diagonal"):
+        check(graph, OperatorConstraints(orthogonal=True), DOMAIN)
+    check(graph, OperatorConstraints(), DOMAIN)                         # unconstrained search is unchanged

@@ -35,6 +35,19 @@ class OperatorConstraints:
     max_segments: int = MAX_CONDUCTORS
     max_rods: int = MAX_RODS
     rod_length_range_m: tuple[float, float] = (1.0, 10.0)
+    # Only horizontal and vertical runs are built (diagonals are hard to lay out on site). A diagonal the base design
+    # already had (`inherited_diagonals`, as (a, b) point pairs) is kept: the rule is about what the search adds.
+    orthogonal: bool = False
+    inherited_diagonals: tuple = ()
+
+
+is_diagonal = gg.is_diagonal
+
+
+def diagonals_of(geometry: dict) -> tuple:
+    """The diagonal runs of a geometry, to keep them allowed when the search is orthogonal."""
+    graph = gg.from_geometry(geometry)
+    return tuple((a, b) for a, b, _ in sorted(graph.segments) if is_diagonal(a, b))
 
 
 def _on_piece(p: gg.Point, a: gg.Point, b: gg.Point) -> bool:
@@ -259,6 +272,10 @@ def check(graph: gg.GeometryGraph, constraints: OperatorConstraints = OperatorCo
     low, high = constraints.rod_length_range_m
     if any(not low <= length <= high for _, length, _ in graph.rods):
         raise OperatorRejected("constructive", f"rod lengths must stay within {low}-{high} m")
+    if constraints.orthogonal:
+        for a, b, _ in graph.segments:
+            if is_diagonal(a, b) and not any(_on_piece(a, p, q) and _on_piece(b, p, q) for p, q in constraints.inherited_diagonals):
+                raise OperatorRejected("constructive", f"a diagonal run {a}-{b}; only horizontal and vertical runs are built")
     if not gg.is_connected(graph):
         raise OperatorRejected("connectivity", f"the geometry splits into {len(gg.components(graph))} parts")
     report = evaluate_optimizer_geometry(gg.to_geometry(graph, base))
@@ -282,22 +299,30 @@ KINDS = ("add", "remove", "split", "connect", "reconnect", "add_rod", "move_rod"
 REPAIR_WEIGHTS = (4.0, 0.25, 1.0, 4.0, 1.0, 4.0, 1.0, 0.25)
 
 
-def random_repair_operator(graph: gg.GeometryGraph, rng: random.Random) -> Operator:
+def random_repair_operator(graph: gg.GeometryGraph, rng: random.Random, orthogonal: bool = False) -> Operator:
     """Like `random_operator`, biased toward adding conductors and rods, for a design that violates."""
-    return random_operator(graph, rng, REPAIR_WEIGHTS)
+    return random_operator(graph, rng, REPAIR_WEIGHTS, orthogonal=orthogonal)
+
+
+def _aligned(node: gg.Point, others: list[gg.Point]) -> list[gg.Point]:
+    return [n for n in others if n != node and not is_diagonal(node, n)]
 
 
 def random_operator(graph: gg.GeometryGraph, rng: random.Random, weights: tuple[float, ...] | None = None,
-                    kind: str | None = None) -> Operator:
+                    kind: str | None = None, orthogonal: bool = False) -> Operator:
     """One plausible operator for the graph; it may still be rejected by `apply_operator`.
 
     With no weights every kind is equally likely (and the random stream is what it always was). `kind` forces one.
+    With `orthogonal`, new runs are horizontal or vertical (the random stream differs from the unconstrained one).
     """
     nodes, segments = sorted(graph.nodes()), sorted(graph.segments)
     if kind is None:
         kind = rng.choice(KINDS) if weights is None else rng.choices(KINDS, weights=weights)[0]
     if kind == "add":
         a = rng.choice(nodes)
+        if orthogonal:
+            step = rng.choice((-6, -4, -3, 3, 4, 6))
+            return AddSegment(a, gg.point(a[0] + step, a[1]) if rng.random() < 0.5 else gg.point(a[0], a[1] + step))
         return AddSegment(a, gg.point(a[0] + rng.choice((-6, -4, -3, 3, 4, 6)), a[1] + rng.choice((-6, -4, -3, 0, 3, 4, 6))))
     if kind == "remove":
         s = rng.choice(segments)
@@ -308,10 +333,18 @@ def random_operator(graph: gg.GeometryGraph, rng: random.Random, weights: tuple[
         return SplitSegment(s[0], s[1], gg.point(s[0][0] + t * (s[1][0] - s[0][0]), s[0][1] + t * (s[1][1] - s[0][1])))
     if kind == "connect":
         a, b = rng.sample(nodes, 2)
+        if orthogonal:
+            pairs = [(n, m) for n in nodes for m in _aligned(n, nodes) if n < m]
+            a, b = rng.choice(pairs) if pairs else (a, b)
         return ConnectNodes(a, b)
     if kind == "reconnect":
         s = rng.choice(segments)
-        return ReconnectSegment(s[0], s[1], rng.choice("ab"), rng.choice(nodes))
+        end = rng.choice("ab")
+        targets = nodes
+        if orthogonal:                       # the moved end must stay level or plumb with the end that stays
+            fixed = s[1] if end == "a" else s[0]
+            targets = _aligned(fixed, nodes) or nodes
+        return ReconnectSegment(s[0], s[1], end, rng.choice(targets))
     rods = sorted(graph.rods)
     if kind == "add_rod" or not rods:
         return AddRod(rng.choice(nodes), rng.choice((1.5, 2.4, 3.0, 6.0)))
