@@ -6,9 +6,11 @@ import pytest
 
 from src.application.use_cases import optimizer_topology_job as job
 from src.application.use_cases.optimizer_topology_run import run_topology_optimizer
+from src.infrastructure.calculations.artifact_potential import run_potential_calculation
 from src.infrastructure.calculations.optimizer_topology_inputs import build_inputs, evaluate_base
 from src.infrastructure.calculations.potential_engine_client import PotentialEngineClient
 from src.infrastructure.entrypoint.api import optimizer_routes
+from src.infrastructure.entrypoint.worker import tasks
 from src.infrastructure.persistence.optimizer_run_repository import OptimizerRunRepository
 from tests.infrastructure.test_identity import env, headers  # noqa: F401
 
@@ -85,7 +87,7 @@ def fake_result(geometries):
             "cost_currency": "COP", "problem_sha256": "p" * 64}
 
 
-def test_a_queued_run_is_executed_by_the_worker_with_the_real_solver_and_applied_as_a_new_version(site):
+def test_a_queued_run_is_executed_by_the_worker_with_the_real_solver_and_applied_as_a_new_version(site, monkeypatch):
     services, client, h, project, artifact, root, queued = site
     engine = PotentialEngineClient()
     if not Path(engine.executable).is_file():
@@ -129,6 +131,8 @@ def test_a_queued_run_is_executed_by_the_worker_with_the_real_solver_and_applied
     assert comparison["alternatives"][0]["recommended"] is True
     assert any("certificada" in warning for warning in comparison["warnings"])
 
+    dispatched = []
+    monkeypatch.setattr(tasks.calculate_artifact_potential, "apply_async", lambda args, task_id: dispatched.append((args, task_id)))
     applied = client.post(f"{root}/{run['id']}/alternatives/{alternatives[0]['id']}/apply", headers=h)
     assert applied.status_code == 201, applied.text
     row = applied.json()
@@ -136,6 +140,46 @@ def test_a_queued_run_is_executed_by_the_worker_with_the_real_solver_and_applied
     assert row["origin"]["optimizer"]["run_id"] == run["id"] and row["origin"]["optimizer"]["certified"] is False
     assert row["snapshot"]["geometry"]["conductors"] == alternatives[0]["evaluation_snapshot"]["geometry"]["conductors"]
     assert row["snapshot"]["soil_layers"] == artifact["snapshot"]["soil_layers"]      # only the geometry changes
+
+    # OP-07: applying queues the full calculation of the new version on the fine mesh, so the study and the
+    # workspace show the artifact's own verdict and not the one of the search.
+    revalidation = row["revalidation"]
+    assert revalidation["status"] == "pending" and revalidation["detail"] is None
+    assert dispatched == [([revalidation["calculation_id"]], revalidation["calculation_id"])]
+    artifacts = f"/api/v1/projects/{project['id']}/artefactos-diseno-tierras/{artifact['artifact_id']}"
+    [calculation] = client.get(f"{artifacts}/versions/{row['version']}/calculos-potencial", headers=h).json()
+    assert calculation["id"] == revalidation["calculation_id"] and calculation["status"] == "pending"
+    parameters = calculation["parameters"]
+    assert parameters["discretization_m"] == 1.0 and parameters["segmentation"] == "graded"
+    assert parameters["estimate_uncertainty"] is True and parameters["safety_standards"] == ["IEEE 80-2013"]
+    assert run["id"] in parameters["justification"] and alternatives[0]["id"] in parameters["justification"]
+    run_potential_calculation(services.store, calculation["id"], engine)
+    detail = client.get(f"{artifacts}/calculos-potencial/{calculation['id']}", headers=h).json()
+    assert detail["status"] == "completed", detail["error"]
+    assert detail["result"]["grid_resistance_ohm"] > 0 and detail["result"]["numerical_uncertainty"]
+    assert [entry["standard"] for entry in detail["result"]["safety"]] == ["IEEE 80-2013"]
+    assert client.get(f"{artifacts}/versions/{row['version']}", headers=h).json()["calculation_verdict"] in {"cumple", "no_cumple"}
+
+
+def test_applying_an_alternative_survives_a_blocked_revalidation(site, monkeypatch):
+    services, client, h, project, artifact, root, _ = site
+    created = client.post(f"{root}/topology", json=request_body(artifact), headers=h)
+    run = created.json()["run"]
+    assert job.execute_topology_run(deps(services, lambda *a, **k: fake_result([(5000.0, 0.8)])), run["id"]) == "completed"
+    [alternative] = client.get(f"{root}/{run['id']}", headers=h).json()["alternatives"]
+
+    def blocked(*args, **kwargs):
+        raise optimizer_routes.potential_calculations.CalculationBlocked(409, {"message": "Confirma los datos críticos antes de calcular"})
+
+    monkeypatch.setattr(optimizer_routes.potential_calculations, "create_calculation", blocked)
+    applied = client.post(f"{root}/{run['id']}/alternatives/{alternative['id']}/apply", headers=h)
+    assert applied.status_code == 201, applied.text
+    row = applied.json()
+    assert row["version"] == artifact["version"] + 1                                       # the version exists anyway
+    assert row["revalidation"] == {"status": "blocked", "calculation_id": None,
+                                   "detail": {"message": "Confirma los datos críticos antes de calcular"}}
+    artifacts = f"/api/v1/projects/{project['id']}/artefactos-diseno-tierras/{artifact['artifact_id']}"
+    assert client.get(f"{artifacts}/versions/{row['version']}/calculos-potencial", headers=h).json() == []
 
 
 def test_rates_must_cover_every_line_and_carry_their_source(site):

@@ -12,6 +12,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from src.application.use_cases import potential_calculations
 from src.application.use_cases.optimizer_run import run_discrete_optimizer
 from src.domain.spat.artifact_contract import validate_artifact
 from src.infrastructure.calculations import artifact_potential, safety_criteria
@@ -28,6 +29,8 @@ from src.infrastructure.entrypoint.api.constraint_profile_routes import (
     _owned_project,
     _selected_context,
 )
+from src.infrastructure.entrypoint.api.schemas import PotentialCalculationRequest
+from src.infrastructure.entrypoint.worker.tasks import calculate_artifact_potential
 from src.infrastructure.persistence.constraint_profile_repository import ConstraintProfileRepository
 from src.infrastructure.persistence.material_catalog_repository import MaterialCatalogRepository
 from src.infrastructure.persistence.optimizer_run_repository import OptimizerRunRepository
@@ -629,4 +632,37 @@ def apply_optimizer_alternative(project_id: str, run_id: str, alternative_id: st
             db, project_id, row, previous,
             f"Se aplicó la alternativa {alternative.get('rank') or ''} del optimizador (costo {cost}); "
             "es un borrador sin certificar que requiere aprobación profesional")
-    return row
+        revalidation = _queue_revalidation(db, project_id, run, alternative, row, actor.user_id)
+    if revalidation["status"] == "pending":
+        # Dispatch only after the database transaction has committed, like a manual calculation request.
+        try:
+            calculate_artifact_potential.apply_async(args=[revalidation["calculation_id"]], task_id=revalidation["calculation_id"])
+        except Exception:
+            potential_calculations.mark_dispatch_failed(request.app.state.services.store, revalidation["calculation_id"])
+            revalidation = {**revalidation, "status": "failed", "detail": "No se pudo encolar el cálculo de revalidación"}
+    return {**row, "revalidation": revalidation}
+
+
+def revalidation_parameters(run: dict[str, Any], alternative: dict[str, Any]) -> dict[str, Any]:
+    """OP-07: the applied alternative is recalculated with the full solver on the validated fine mesh (the same
+    defaults a manual calculation uses) and the standards the search was asked to satisfy. The exposure comes
+    from the artifact itself, as in any calculation of that version, so the study shows the artifact's verdict."""
+    request_snapshot = (run.get("request_snapshot") or {}).get("request") or {}
+    standards = [s for s in request_snapshot.get("standards") or [] if s in safety_criteria.SUPPORTED_STANDARDS]
+    evaluation = alternative.get("evaluation_snapshot") or {}
+    justification = (f"Revalidación OP-07 de la alternativa {alternative['id']} de la corrida {run['id']} con el solver "
+                     f"completo y malla fina; la búsqueda la validó en {evaluation.get('validated_at_level') or 'malla gruesa'}.")
+    payload = PotentialCalculationRequest(justification=justification[:500], estimate_uncertainty=True,
+                                          **({"safety_standards": standards} if standards else {}))
+    return payload.model_dump()
+
+
+def _queue_revalidation(db, project_id: str, run: dict[str, Any], alternative: dict[str, Any], version_row: dict[str, Any],
+                        actor_id: str) -> dict[str, Any]:
+    """Insert the pending OP-07 calculation for the new version; a blocked artifact never undoes the apply."""
+    try:
+        calculation = potential_calculations.create_calculation(
+            db, project_id, version_row["artifact_id"], version_row["version"], revalidation_parameters(run, alternative), actor_id)
+    except potential_calculations.CalculationBlocked as exc:
+        return {"status": "blocked", "calculation_id": None, "detail": exc.detail}
+    return {"status": "pending", "calculation_id": calculation["id"], "detail": None}

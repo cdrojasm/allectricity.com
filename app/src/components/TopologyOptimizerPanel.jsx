@@ -164,7 +164,7 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, runForm, o
       const response = await fetch(`${root}/${encodeURIComponent(run.id)}/alternatives/${encodeURIComponent(alternativeId)}/apply`, { method: "POST", headers: auth });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(detailText(body, "No se pudo aplicar la alternativa."));
-      setApplied(body.version);
+      setApplied(body);
       onApplied?.(body);
     } catch (failure) { setError(failure.message); }
   }
@@ -228,7 +228,14 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, runForm, o
       </div>)
         : <small>Ninguna topología pasó la verificación más fina con este presupuesto.</small>}
       {comparison.alternatives.some((row) => row.pareto) && <small>◆ Frente de Pareto costo–utilización entre las alternativas validadas.</small>}
-      {applied && <small>Se creó la versión {applied} del plano con la alternativa elegida.</small>}
+      {applied && <small data-testid="topology-applied">Se creó la versión {applied.version} del plano con la alternativa elegida.{" "}
+        {applied.revalidation?.status === "pending"
+          ? "Se encoló su cálculo completo con malla fina; el veredicto del estudio será el de ese cálculo, no el de la búsqueda."
+          : applied.revalidation?.status === "blocked"
+            ? `No se pudo encolar la revalidación: ${applied.revalidation.detail?.message || "el artefacto no está listo para calcular"}. Calcula la versión cuando lo esté.`
+            : applied.revalidation?.status === "failed"
+              ? "No se pudo encolar la revalidación; calcula la versión manualmente."
+              : ""}</small>}
       <ul>{comparison.warnings.map((warning) => <li key={warning}><small>{warning}</small></li>)}</ul>
     </div>}
   </form>;
