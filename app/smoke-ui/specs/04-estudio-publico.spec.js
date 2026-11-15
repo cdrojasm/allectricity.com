@@ -45,7 +45,12 @@ test.describe.serial("estudio publicado", () => {
     await expect.poll(async () => (await api(page, `${root}/${artifactId}/calculos-potencial/${calc.body.id}`)).body.status, { timeout: 150_000, intervals: [2000] }).toBe("completed");
     const study = await post(page, `/api/v1/projects/${seed.projectId}/studies`, { artifact_id: artifactId, artifact_version: version, title: "Estudio de prueba", access: "public" });
     expect(study.status).toBe(201);
-    expect((await post(page, `/api/v1/projects/${seed.projectId}/studies/${study.body.id}/publish`, { status: "published" })).status).toBe(200);
+    const publishUrl = `/api/v1/projects/${seed.projectId}/studies/${study.body.id}/publish`;
+    const gate = await post(page, publishUrl, { status: "published" });
+    if (gate.status === 409) { // un diseño que no cumple exige confirmación explícita
+      expect(gate.body.detail.code).toBe("non_compliant");
+      expect((await post(page, publishUrl, { status: "published", confirm_non_compliant: true })).status).toBe(200);
+    } else expect(gate.status).toBe(200);
     seed.slug = study.body.slug;
   });
 

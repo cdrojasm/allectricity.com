@@ -27,9 +27,9 @@ export async function login(page, role) {
   const c = creds(role);
   if (!c) throw new Error(`Faltan credenciales del perfil ${role}`);
   await page.goto("/login");
-  await page.getByLabel("Email address").fill(c.email);
-  await page.getByLabel("Password").fill(c.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByLabel("Correo electrónico").fill(c.email);
+  await page.getByLabel("Contraseña").fill(c.password);
+  await page.getByRole("button", { name: "Iniciar sesión" }).click();
   await expect(page).not.toHaveURL(/login/);
   await expect(page.getByRole("button", { name: "Proyectos", exact: true })).toBeVisible();
 }

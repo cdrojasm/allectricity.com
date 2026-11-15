@@ -7,14 +7,14 @@ const ROLES = ["designer", "viewer", "user_admin", "super_admin"].filter((r) => 
 test("sin sesión, las rutas privadas redirigen al login", async ({ page }) => {
   await page.goto("/projects");
   await expect(page).toHaveURL(/login/);
-  await expect(page.getByLabel("Email address")).toBeVisible();
+  await expect(page.getByLabel("Correo electrónico")).toBeVisible();
 });
 
 test("credenciales inválidas no entran", async ({ page }) => {
   await page.goto("/login");
-  await page.getByLabel("Email address").fill("no-existe@example.com");
-  await page.getByLabel("Password").fill("incorrecta-" + Date.now());
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByLabel("Correo electrónico").fill("no-existe@example.com");
+  await page.getByLabel("Contraseña").fill("incorrecta-" + Date.now());
+  await page.getByRole("button", { name: "Iniciar sesión" }).click();
   await expect(page).toHaveURL(/login/);
 });
 
@@ -42,7 +42,7 @@ const LOGOUT_ROLE = ROLES[0];
 test(`login y cierre de sesión reales (${LOGOUT_ROLE})`, async ({ page }) => {
   test.skip(!LOGOUT_ROLE, "sin perfiles");
   await login(page, LOGOUT_ROLE);
-  await page.getByTitle(/Sign out/).click();
+  await page.getByTitle(/Cerrar sesión/).click();
   await expect(page).toHaveURL(/login/);
   await page.goto("/projects");
   await expect(page).toHaveURL(/login/); // la sesión quedó cerrada de verdad

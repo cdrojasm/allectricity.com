@@ -108,8 +108,10 @@ function App() {
     setActiveProject(null);
     setTab("dashboard");
   }
-  function showCatalog() {
+  const [catalogProjectId, setCatalogProjectId] = useState(null);
+  function showCatalog(projectId) {
     window.history.pushState({}, "", "/catalog");
+    setCatalogProjectId(typeof projectId === "string" ? projectId : null);
     setActiveProject(null);
     setTab("catalog");
   }
@@ -155,14 +157,14 @@ function App() {
         <div className="rail-top">
           <IconButton title="Dashboard" className={`rail-button ${tab === "dashboard" ? "active" : ""}`} onClick={showDashboard}><LayoutGrid size={21} /></IconButton>
           <IconButton title="Proyectos" aria-label="Proyectos" className={`rail-button ${tab === "projects" ? "active" : ""}`} onClick={showProjects}><Layers size={21} /></IconButton>
-          <IconButton title="Catálogo de materiales" aria-label="Catálogo de materiales" className={`rail-button ${tab === "catalog" ? "active" : ""}`} onClick={showCatalog}><PackageSearch size={21} /></IconButton>
+          <IconButton title="Catálogo de materiales" aria-label="Catálogo de materiales" className={`rail-button ${tab === "catalog" ? "active" : ""}`} onClick={() => showCatalog()}><PackageSearch size={21} /></IconButton>
         </div>
         <div className="rail-bottom">
           <IconButton title="Ayuda del espacio" onClick={() => setNotice("Abre un proyecto para revisar sus archivos, mediciones, plano y seguridad.")}><CircleHelp size={20} /></IconButton>
-          <button className="avatar" title={`${user.email} · ${user.roles.join(", ")}. Sign out`} onClick={logout}>{`${user.first_name?.[0] || "U"}${user.last_name?.[0] || ""}`.toUpperCase()}</button>
+          <button className="avatar" title={`${user.email} · ${user.roles.join(", ")}. Cerrar sesión`} onClick={logout}>{`${user.first_name?.[0] || "U"}${user.last_name?.[0] || ""}`.toUpperCase()}</button>
         </div>
       </nav>
-      {tab === "projects" ? <ProjectsPage token={token} onNotice={setNotice} onOpen={openProject} /> : tab === "catalog" ? <MaterialCatalogSuite token={token} userId={user.id} onNotice={setNotice} /> : activeProject ? <ProjectChatWorkspace project={activeProject} token={token} userId={user.id} onBack={showProjects} onNotice={setNotice} /> : <DashboardPage token={token} user={user} lastVisit={lastVisit} onOpen={openProject} onShowProjects={showProjects} />}
+      {tab === "projects" ? <ProjectsPage token={token} onNotice={setNotice} onOpen={openProject} /> : tab === "catalog" ? <MaterialCatalogSuite token={token} userId={user.id} initialProjectId={catalogProjectId} onNotice={setNotice} /> : activeProject ? <ProjectChatWorkspace onOpenCatalog={showCatalog} project={activeProject} token={token} userId={user.id} onBack={showProjects} onNotice={setNotice} /> : <DashboardPage token={token} user={user} lastVisit={lastVisit} onOpen={openProject} onShowProjects={showProjects} />}
       {notice && (
         <div className="toast" role="status">
           <CircleHelp size={18} />

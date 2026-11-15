@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Activity, ArrowDownToLine, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, Check, ChevronDown, ChevronRight, CircleHelp, File, FileImage, FileSpreadsheet, FolderOpen, GitBranch, History, Layers, LayoutGrid, MapPin, MessageCircle, Minus, Maximize2, Mic, Network, Paperclip, Plus, Pencil, RotateCcw, Search, Settings2, ShieldCheck, Sparkles, Square, X, Trash2, Zap } from "lucide-react";
-import { mimeByExtension, uploadableMimeTypes, uploadStatusLabels } from "../shared.jsx";
+import { DesignStatusBadge, mimeByExtension, uploadableMimeTypes, uploadStatusLabels } from "../shared.jsx";
 function Login({ onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -17,10 +17,10 @@ function Login({ onLogin }) {
         body: JSON.stringify({ email, password }),
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.detail || "Unable to sign in.");
+      if (!response.ok) throw new Error(typeof result.detail === "string" && /[áéíóúñ]/i.test(result.detail) ? result.detail : "Correo o contraseña incorrectos.");
       onLogin(result);
     } catch (err) {
-      setError(err.message || "Unable to reach the authentication service.");
+      setError(err.message || "No se pudo contactar el servicio de autenticación.");
     } finally {
       setBusy(false);
     }
@@ -30,12 +30,12 @@ function Login({ onLogin }) {
       <form className="login-card" onSubmit={submit}>
         <div className="login-brand"><Zap size={22} fill="currentColor" /></div>
         <div className="eyebrow">TERRA WORKSPACE</div>
-        <h1>Welcome back</h1>
-        <p>Sign in with your local account to continue.</p>
-        <label>Email address<input autoComplete="username" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-        <label>Password<input autoComplete="current-password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+        <h1>Bienvenido de nuevo</h1>
+        <p>Inicia sesión con tu cuenta para continuar.</p>
+        <label>Correo electrónico<input autoComplete="username" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
+        <label>Contraseña<input autoComplete="current-password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} /></label>
         {error && <div className="login-error" role="alert">{error}</div>}
-        <button className="button primary login-submit" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+        <button className="button primary login-submit" type="submit" disabled={busy}>{busy ? "Entrando…" : "Iniciar sesión"}</button>
       </form>
     </main>
   );
@@ -170,7 +170,7 @@ function ProjectsPage({ token, onNotice, onOpen }) {
     finally { setSearching(false); }
   }
   function chooseLocation(location) {
-    setForm((f) => ({ ...f, country: location.country || f.country, city: location.city || f.city, latitude: Number(Number(location.latitude).toFixed(6)), longitude: Number(Number(location.longitude).toFixed(6)) }));
+    setForm((f) => ({ ...f, country: location.country || f.country, city: f.city.trim() || location.city || "", latitude: Number(Number(location.latitude).toFixed(6)), longitude: Number(Number(location.longitude).toFixed(6)) }));
   }
   async function save(event) {
     event.preventDefault(); setBusy(true); setError("");
@@ -217,7 +217,7 @@ function ProjectsPage({ token, onNotice, onOpen }) {
     <div className="project-summary"><span><Layers size={17}/><strong>{projects.length}</strong> proyectos</span><span>Tipo disponible: <strong>Tierras</strong></span></div>
     {error && <div className="project-error" role="alert">{error}<button onClick={() => setError("")}><X size={14}/></button></div>}
     <div className="projects-table-wrap"><table className="projects-table"><thead><tr><th>PROYECTO</th><th>TIPO</th><th>UBICACIÓN</th><th>ARCHIVOS</th><th>ACTUALIZADO</th><th></th></tr></thead><tbody>
-      {projects.length ? projects.map((p) => <tr key={p.id}><td><button className="project-open-link" onClick={() => onOpen(p)}><strong>{p.name}</strong><small>{p.description || "Sin descripción"}</small></button></td><td><span className="land-tag">Tierras</span></td><td>{[p.city, p.country].filter(Boolean).join(", ") || (p.latitude != null && p.longitude != null ? `${Number(p.latitude).toFixed(4)}, ${Number(p.longitude).toFixed(4)}` : "Sin ubicación")}</td><td>{p.attachments?.length || 0} archivos</td><td>{new Date(p.updated_at * 1000).toLocaleDateString("es-CO")}</td><td className="row-actions"><button title="Abrir espacio del proyecto" onClick={() => onOpen(p)}><MessageCircle size={15}/></button><button title="Editar proyecto" onClick={() => start(p)}><Pencil size={15}/></button><button title="Borrar proyecto" onClick={() => askToDelete(p)}><Trash2 size={15}/></button></td></tr>) : <tr><td colSpan="6" className="projects-empty"><FolderOpen size={28}/><strong>Aún no hay proyectos</strong><span>Crea tu primer proyecto para empezar a organizar la información del sitio.</span><button className="button" onClick={() => start()}><Plus size={14}/> Crear proyecto</button></td></tr>}
+      {projects.length ? projects.map((p) => <tr key={p.id}><td><button className="project-open-link" onClick={() => onOpen(p)}><strong>{p.name} <DesignStatusBadge status={p.design_status}/></strong><small>{p.description || "Sin descripción"}</small></button></td><td><span className="land-tag">Tierras</span></td><td>{[p.city, p.country].filter(Boolean).join(", ") || (p.latitude != null && p.longitude != null ? `${Number(p.latitude).toFixed(4)}, ${Number(p.longitude).toFixed(4)}` : "Sin ubicación")}</td><td>{p.attachments?.length || 0} archivos</td><td>{new Date(p.updated_at * 1000).toLocaleDateString("es-CO")}</td><td className="row-actions"><button title="Abrir espacio del proyecto" onClick={() => onOpen(p)}><MessageCircle size={15}/></button><button title="Editar proyecto" onClick={() => start(p)}><Pencil size={15}/></button><button title="Borrar proyecto" onClick={() => askToDelete(p)}><Trash2 size={15}/></button></td></tr>) : <tr><td colSpan="6" className="projects-empty"><FolderOpen size={28}/><strong>Aún no hay proyectos</strong><span>Crea tu primer proyecto para empezar a organizar la información del sitio.</span><button className="button" onClick={() => start()}><Plus size={14}/> Crear proyecto</button></td></tr>}
     </tbody></table></div>
     {open && <div className="modal-backdrop project-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false); }}><form className="project-modal" onSubmit={save}>
       <div className="project-modal-head"><div><div className="eyebrow">DETALLES DEL PROYECTO</div><h2>{editing ? "Editar proyecto" : "Crear proyecto"}</h2></div><button type="button" className="icon-button" aria-label="Cerrar" onClick={() => setOpen(false)}><X size={19}/></button></div>
@@ -236,7 +236,7 @@ function ProjectsPage({ token, onNotice, onOpen }) {
       </div>
       {error && <div className="project-modal-error" role="alert">{error}</div>}<div className="project-modal-actions"><button className="button" type="button" onClick={() => setOpen(false)}>Cancelar</button><button className="button primary" disabled={busy || form.attachments.some((a) => a.status === "uploading")}><Check size={14}/>{busy ? "Guardando…" : editing ? "Guardar cambios" : "Crear proyecto"}</button></div>
     </form></div>}
-    {deleteProject && <div className="modal-backdrop project-modal-backdrop delete-project-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !deleting) setDeleteProject(null); }}><section className="delete-project-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-project-title" aria-describedby="delete-project-description" onKeyDown={(e) => { if (e.key === "Escape" && !deleting) setDeleteProject(null); }}><div className="delete-project-icon"><Trash2 size={20}/></div><h2 id="delete-project-title">¿Borrar este proyecto?</h2><p id="delete-project-description">Se eliminará <strong>{deleteProject.name}</strong> y ya no podrás acceder a sus archivos ni a su espacio de trabajo. Esta acción no se puede deshacer.</p>{error && <div className="project-modal-error" role="alert">{error}</div>}<div className="delete-project-actions"><button className="button" type="button" autoFocus disabled={deleting} onClick={() => setDeleteProject(null)}>Cancelar</button><button className="button danger" type="button" disabled={deleting} onClick={removeProject}><Trash2 size={14}/>{deleting ? "Borrando…" : "Borrar proyecto"}</button></div></section></div>}
+    {deleteProject && <div className="modal-backdrop project-modal-backdrop delete-project-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !deleting) setDeleteProject(null); }}><section className="delete-project-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-project-title" aria-describedby="delete-project-description" onKeyDown={(e) => { if (e.key === "Escape" && !deleting) setDeleteProject(null); }}><div className="delete-project-icon"><Trash2 size={20}/></div><h2 id="delete-project-title">¿Borrar este proyecto?</h2><p id="delete-project-description">Se eliminará <strong>{deleteProject.name}</strong> y ya no podrás acceder a sus archivos ni a su espacio de trabajo. Esta acción no se puede deshacer.</p>{deleteProject.design_status?.published_count > 0 && <p className="project-modal-error" role="alert" data-testid="delete-published-warning">Tiene {deleteProject.design_status.published_count} {deleteProject.design_status.published_count === 1 ? "estudio publicado" : "estudios publicados"}: su enlace público dejará de funcionar.</p>}{error && <div className="project-modal-error" role="alert">{error}</div>}<div className="delete-project-actions"><button className="button" type="button" autoFocus disabled={deleting} onClick={() => setDeleteProject(null)}>Cancelar</button><button className="button danger" type="button" disabled={deleting} onClick={removeProject}><Trash2 size={14}/>{deleting ? "Borrando…" : "Borrar proyecto"}</button></div></section></div>}
   </section>;
 }
 

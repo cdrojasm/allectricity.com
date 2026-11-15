@@ -87,14 +87,14 @@ function money(value, currency) {
   catch { return `${currency} ${value}`; }
 }
 
-export function MaterialCatalogSuite({ token, userId, onNotice }) {
+export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice }) {
   const storageKey = `terra_material_catalog_project_v1:${userId || "local"}`;
   const [tab, setTab] = useState("discover");
   const [location, setLocation] = useState({ country: "Colombia", city: "", radius_km: "100", currency: "COP" });
   const [category, setCategory] = useState("Conductor");
   const [maxResults, setMaxResults] = useState(8);
   const [projects, setProjects] = useState([]);
-  const [projectId, setProjectId] = useState(() => { try { return localStorage.getItem(storageKey) || ""; } catch { return ""; } });
+  const [projectId, setProjectId] = useState(() => { if (initialProjectId) return initialProjectId; try { return localStorage.getItem(storageKey) || ""; } catch { return ""; } });
   const assistantStorageKey = `terra_material_catalog_assistant_v1:${userId || "local"}:${projectId || "sin-proyecto"}`;
   const [items, setItems] = useState([]);
   const [estimatedTotal, setEstimatedTotal] = useState(null);
@@ -364,12 +364,12 @@ export function MaterialCatalogSuite({ token, userId, onNotice }) {
 
   return <main className="catalog-suite">
     <header className="catalog-topbar">
-      <div className="catalog-breadcrumb"><span>Terra</span><ChevronRight size={14}/><strong>Abastecimiento</strong></div>
+      <div className="catalog-breadcrumb"><span>Terra</span><ChevronRight size={14}/><strong>Catálogo de materiales</strong></div>
       <div className="catalog-topbar-actions"><div className="catalog-version-wrap"><button className="catalog-version-chip" aria-expanded={historyOpen} disabled={!projectId} onClick={() => { const opening = !historyOpen; setHistoryOpen(opening); if (opening) loadHistory(); }}>Historial · {items.length} renglones</button>{historyOpen && <div className="catalog-version-popover"><strong>Historial del inventario</strong>{historyLoading ? <p>Cargando historial…</p> : historyError ? <div role="alert"><p>{historyError}</p><button className="button" onClick={() => loadHistory()}>Reintentar</button></div> : historyVersions.length ? historyVersions.map((version) => { const snapshot = version.snapshot || {}; const specification = [snapshot.material, snapshot.specification, snapshot.quantity != null ? `${snapshot.quantity} ${snapshot.quantity_unit || ""}`.trim() : ""].filter(Boolean).join(" · "); const evidence = [displayDateTime(version.created_at), specification, snapshot.price_per_unit != null ? money(snapshot.price_per_unit, snapshot.price_currency || "COP") : "Precio pendiente", snapshot.supplier].filter(Boolean).join(" · "); return <div key={version.id || `${version.item_id}-${version.version}`}><span>v{version.version} · {HISTORY_ACTIONS[version.action] || version.action} · {snapshot.name || "Material"}</span><small>{evidence}</small></div>; }) : <p>Aún no hay cambios registrados.</p>}</div>}</div><div className="catalog-scope"><Globe2 size={15}/>{location.city ? `${location.city}, ${location.country}` : location.country || "Define una ubicación"}</div></div>
     </header>
 
     <section className="catalog-heading">
-      <div><div className="eyebrow">OPTIMIZADOR · OP-03</div><h1>Catálogo de materiales</h1><p>Encuentra precios locales, valida las fuentes y crea una base trazable para estimar costos.</p></div>
+      <div><div className="eyebrow">CATÁLOGO DE MATERIALES</div><h1>Catálogo de materiales</h1><p>Encuentra precios locales, valida las fuentes y crea una base trazable para estimar costos.</p></div>
       <div className="catalog-heading-actions" style={{ display: "flex", alignItems: "end", gap: 10 }}><label className="catalog-project-select" style={{ display: "grid", gap: 5, color: "#64736f", fontSize: 10 }}>Proyecto<select style={{ minWidth: 190, height: 36, border: "1px solid #dfe5e7", borderRadius: 6, padding: "0 9px", background: "white" }} value={projectId} onChange={(event) => changeProject(event.target.value)}><option value="">Seleccionar proyecto…</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><button className="button primary" disabled={!projectId} onClick={() => { setEditingId(null); setForm(EMPTY_FORM); setFormOpen(true); }}><Plus size={15}/>Agregar cotización</button></div>
     </section>
 

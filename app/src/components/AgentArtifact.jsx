@@ -1,43 +1,17 @@
 import React, { Suspense, lazy, useEffect, useState } from "react";
-import { Activity, Box, ChevronRight, ExternalLink, Eye, FileText, PencilRuler, RefreshCw, Rotate3d, Settings2, Undo2, X } from "lucide-react";
+import { Activity, Box, ChevronRight, ExternalLink, Eye, FileText, PencilRuler, RefreshCw, Rotate3d, Settings2, Sparkles, Undo2, X } from "lucide-react";
 import { SurfacePotentialMap } from "./GroundingCalculations.jsx";
 import { evaluateResult, formatNumber, verdictLabels } from "../resultInterpretation.js";
+import { fieldLabels } from "../labels.js";
 
-const fieldLabels = {
-  name: "Nombre",
-  soil_layers: "Capas de suelo",
-  soil_measurements: "Mediciones de resistividad",
-  geometry: "Malla",
-  "geometry.length_m": "Largo (m)",
-  "geometry.width_m": "Ancho (m)",
-  "geometry.conductor_spacing_m": "Retícula (m)",
-  "geometry.conductor_spacing_x_m": "Separación en X (m)",
-  "geometry.conductor_spacing_y_m": "Separación en Y (m)",
-  "geometry.conductors": "Conductores trazados",
-  "geometry.rods": "Posición de varillas",
-  "geometry.burial_depth_m": "Profundidad (m)",
-  "geometry.rods_count": "Varillas",
-  "geometry.rod_length_m": "Longitud de varilla (m)",
-  "fault.current_a": "Corriente de falla (A)",
-  "fault.clearing_time_s": "Tiempo de despeje (s)",
-  "fault.surface_resistivity_ohm_m": "Resistividad capa superficial (Ω·m)",
-  "fault.surface_thickness_m": "Espesor capa superficial (m)",
-  "fault.body_weight_kg": "Peso corporal (kg)",
-  "conductor.material_id": "Material del conductor",
-  "conductor.cross_section_mm2": "Sección del conductor (mm²)",
-  "conductor.joint_type": "Tipo de unión",
-  "conductor.maximum_temperature_c": "Temperatura máxima (°C)",
-  "conductor.thermal_duration_s": "Duración térmica t_c (s)",
-  "conductor.ambient_temperature_c": "Temperatura ambiente (°C)",
-};
 const calculationFreshnessLabels = { al_dia: "Resultado al día", desactualizado: "Resultado desactualizado", calculando: "Cálculo en curso", sin_calculo: "Sin cálculo", error: "Cálculo con error" };
-const provenanceLabels = { claim: "Extraído", document: "Documento", user: "Confirmado", tool: "Calculado", assumption: "Supuesto", schema_default: "Predeterminado" };
+const chipLabels = { claim: "Extraído", document: "Documento", user: "Confirmado", tool: "Calculado", assumption: "Supuesto", schema_default: "Predeterminado" };
 
 function ProvenanceChip({ provenance, path, onOpen }) {
   const source = provenance?.[path] || Object.entries(provenance || {}).find(([key]) => key.startsWith(`${path}.`))?.[1];
   if (!source?.kind) return null;
   const detail = [source.ref, source.note].filter(Boolean).join(" · ");
-  const label = provenanceLabels[source.kind] || source.kind;
+  const label = chipLabels[source.kind] || source.kind;
   return <button type="button" className="provenance-chip" title={detail || `Origen: ${label}`} onClick={() => onOpen?.(source)}>{label}<ChevronRight size={11}/></button>;
 }
 
@@ -189,6 +163,7 @@ function AgentArtifactPanel({ project, conversation, token, refreshKey, onOpenGr
       {snapshot.geometry ? <div className="agent-grid-preview"><ArtifactGrid geometry={snapshot.geometry}/>{planWarnings.map((warning, i) => <p key={i} className="artifact-update-warning">{warning.kind === "disconnected" ? `La malla tiene ${warning.parts} partes separadas: el cálculo las trata como un solo conductor, lo que solo es cierto si un conductor de unión las conecta.` : warning.message}</p>)}</div> : <div className="artifact-preview-empty"><Box size={22}/><strong>Sin malla todavía</strong><span>Pídele al agente la geometría, por ejemplo: «malla de 40 × 30 m con retícula de 5 m».</span></div>}
       <div className="artifact-status"><strong>{artifact.name}</strong><span>{origin} · {new Date(artifact.created_at * 1000).toLocaleString("es-CO")}</span></div>
       {artifact.draft_watermark && <div className="artifact-status agent-fails"><strong>{artifact.draft_watermark}</strong><span>Confirma los supuestos antes de presentar el estudio como final.</span></div>}
+      {artifact.calculation_verdict && artifact.calculation_verdict !== "no_evaluado" && <div className={`agent-verdict ${artifact.calculation_verdict}`} data-testid="artifact-verdict">{verdictLabels[artifact.calculation_verdict] || artifact.calculation_verdict}{artifact.calculation_status === "desactualizado" ? " · del cálculo anterior" : ""}</div>}
       {artifact.calculation_status && <div className={`artifact-status${artifact.calculation_status === "desactualizado" ? " agent-fails" : ""}`}><strong>Vigencia</strong><span>{calculationFreshnessLabels[artifact.calculation_status] || artifact.calculation_status}{artifact.calculation_version && artifact.calculation_status === "desactualizado" ? ` · cálculo de versión ${artifact.calculation_version}` : ""}</span></div>}
       {snapshot.geometry && <div className="artifact-status"><strong>Malla <ProvenanceChip provenance={provenance} path="geometry" onOpen={openEvidence}/></strong><span>{formatValue(snapshot.geometry.length_m)} × {formatValue(snapshot.geometry.width_m)} m · {gridDescription(snapshot.geometry)} · profundidad {formatValue(snapshot.geometry.burial_depth_m)} m · {snapshot.geometry.rods_count} varillas de {formatValue(snapshot.geometry.rod_length_m)} m</span></div>}
       <div className="artifact-status"><strong>Suelo <ProvenanceChip provenance={provenance} path="soil_layers" onOpen={openEvidence}/></strong>{snapshot.soil_layers?.length ? <div className="artifact-soil-layers">{snapshot.soil_layers.map((layer, index) => <span key={index}>C{index + 1}: {formatValue(layer.resistivity_ohm_m)} Ω·m · {layer.depth_m ? `${formatValue(layer.depth_m)} m` : "semiespacio"}{layer.material ? ` · ${layer.material}` : ""}</span>)}{soilNote && <small>{soilNote}</small>}</div> : <span className="no-information">Pendiente: resistividad del suelo. Puedes pegar un sondeo Wenner o Schlumberger en el chat o subir un CSV/XLSX.</span>}</div>
@@ -202,6 +177,17 @@ function AgentArtifactPanel({ project, conversation, token, refreshKey, onOpenGr
 function ArtifactUpdateCard({ message, token, project, onView, onUndone }) {
   const update = message.payload;
   const [state, setState] = useState("");
+  const [stale, setStale] = useState(false);
+  useEffect(() => {
+    // The warning is only true while the newest version has no calculation of its own.
+    let live = true;
+    fetch(`/api/v1/projects/${project.id}/artefactos-diseno-tierras`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : [])).then((rows) => {
+        const row = rows.find((item) => item.artifact_id === update.artifact_id);
+        if (live) setStale(Boolean(row && row.version === update.version && row.calculation_status === "desactualizado"));
+      }).catch(() => {});
+    return () => { live = false; };
+  }, [project.id, token, update.artifact_id, update.version, message.id]);
   async function undo() {
     setState("busy");
     const auth = { Authorization: `Bearer ${token}` };
@@ -219,7 +205,7 @@ function ArtifactUpdateCard({ message, token, project, onView, onUndone }) {
     <div className="artifact-update-head"><PencilRuler size={15}/><strong>{created ? "Se creó el artefacto" : "Se editó el artefacto"}</strong><span>{update.name} · versión {update.version}</span></div>
     <p>{update.summary}</p>
     <div className="artifact-update-changes">{update.changes.slice(0, 8).map((change) => <div key={change.path}><span>{fieldLabels[change.path] || change.path}</span><small>{change.confirmed ? <><b>{formatValue(change.after)}</b> · confirmado</> : <>{created ? "" : `${formatValue(change.before)} → `}<b>{formatValue(change.after)}</b></>}</small></div>)}{update.changes.length > 8 && <div><span>+{update.changes.length - 8} cambios más</span></div>}</div>
-    {!created && <p className="artifact-update-warning">El resultado quedó desactualizado · recalcula para esta versión.</p>}
+    {!created && stale && <p className="artifact-update-warning">El resultado quedó desactualizado · recalcula para esta versión.</p>}
     {update.missing_for_calculation?.length > 0 && <p className="artifact-update-warning">Para el cálculo de seguridad faltan: {update.missing_for_calculation.map((path) => fieldLabels[path] || path).join(", ")}.</p>}
     <div className="artifact-update-actions">
       <button className="button" disabled={state === "busy" || state === "undone"} onClick={undo}><Undo2 size={14}/> {state === "undone" ? "Deshecho" : created ? "Deshacer (eliminar)" : `Deshacer (volver a v${update.previous_version})`}</button>
@@ -287,6 +273,16 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
     }, 1500);
     return () => clearInterval(timer);
   }, [artifact, calculation?.id, calculation?.status, project.id, token]);
+  async function optimizeUntilCompliant() {
+    // Autonomous mode (PR-33): the agent adjusts the grid and recalculates until it complies or gives a verdict.
+    if (!conversation || recalculating) return;
+    setActionError("");
+    try {
+      const response = await fetch(`/api/v1/conversations/${conversation.id}/agent-state`, { method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ mode: "autonomo" }) });
+      if (!response.ok) throw new Error("No se pudo activar la optimización automática.");
+      onSuggestion?.("Optimiza el diseño hasta que cumpla la norma; si no es alcanzable con estos datos, dime qué dato habría que cambiar.");
+    } catch (error) { setActionError(error.message); }
+  }
   async function recalculate() {
     if (!artifact || recalculating) return;
     if (solverConfig.justification.trim().length < 10) { setActionError("Escribe una justificación de al menos 10 caracteres para registrar la configuración."); return; }
@@ -312,7 +308,7 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
         {freshnessLabel && <div className="artifact-update-warning">{freshnessLabel} {recalculateButton}</div>}
         <details className="solver-config-panel"><summary><Settings2 size={14}/> Configuración del solver</summary><div className="solver-config-grid"><label>Discretización (m)<select value={solverConfig.discretization_m} onChange={(event) => setSolverConfig((current) => ({ ...current, discretization_m: event.target.value }))}>{[0.25, 0.5, 1, 2, 5].map((value) => <option value={value} key={value}>{value}</option>)}</select></label><label>Segmentación<select value={solverConfig.segmentation} onChange={(event) => setSolverConfig((current) => ({ ...current, segmentation: event.target.value }))}><option value="graded">Graduada en nodos críticos</option><option value="uniform">Uniforme</option></select></label><label>Raster de superficie<select value={solverConfig.surface_spacing_m} onChange={(event) => setSolverConfig((current) => ({ ...current, surface_spacing_m: event.target.value }))}>{[0.25, 0.5, 1].map((value) => <option value={value} key={value}>{value} m</option>)}</select></label><label title="Margen alrededor de la malla donde se busca la tensión de contacto; 0 = dentro del perímetro (IEEE 80)">Alcance de contacto<select value={solverConfig.touch_reach_m} onChange={(event) => setSolverConfig((current) => ({ ...current, touch_reach_m: event.target.value }))}>{[0, 0.5, 1, 2].map((value) => <option value={value} key={value}>{value === 0 ? "Perímetro de la malla" : `${value} m fuera de la malla`}</option>)}</select></label><label className="solver-config-check"><input type="checkbox" checked={solverConfig.estimate_uncertainty} onChange={(event) => setSolverConfig((current) => ({ ...current, estimate_uncertainty: event.target.checked }))}/> Estimar incertidumbre numérica</label><label className="solver-config-justification">Justificación registrada<textarea value={solverConfig.justification} maxLength={500} onChange={(event) => setSolverConfig((current) => ({ ...current, justification: event.target.value }))}/></label><small>Capas del modelo: {artifact?.snapshot?.soil_layers?.length || "pendientes en Entradas"}. La cantidad de capas se define en el modelador de suelo y se valida antes de calcular.</small></div></details>
         <div className={`agent-verdict ${verdict}`}>{verdictLabels[verdict]}</div>
-        <div className="result-interpretation"><div className="result-interpretation-title"><strong>Interpretación</strong><span>{interpretation.title}</span></div><div><small>Restricción dominante</small><strong>{interpretation.constraint}</strong></div><div><small>Por qué</small><span>{interpretation.explanation}</span></div><div className="result-interpretation-actions"><small>Siguiente acción</small>{interpretation.actions.map((action) => <button className="button" key={action} onClick={() => onSuggestion?.(action)}>{action}</button>)}</div></div>
+        <div className="result-interpretation"><div className="result-interpretation-title"><strong>Interpretación</strong><span>{interpretation.title}</span></div><div><small>Restricción dominante</small><strong>{interpretation.constraint}</strong></div><div><small>Por qué</small><span>{interpretation.explanation}</span></div><div className="result-interpretation-actions"><small>Siguiente acción</small>{verdict === "no_cumple" && conversation && <button className="button primary" data-testid="optimize-until-compliant" onClick={optimizeUntilCompliant}><Sparkles size={14}/> Optimizar hasta cumplir</button>}{interpretation.actions.map((action) => <button className="button" key={action} onClick={() => onSuggestion?.(action)}>{action}</button>)}</div></div>
         <div className="artifact-status"><strong>Malla</strong><span>R = {Number(result.grid_resistance_ohm).toLocaleString("es-CO", { maximumFractionDigits: 3 })} Ω · GPR = {value(result.gpr_v)} V · I = {value(result.injected_current_a)} A</span></div>
         {safety.map((standard) => <div className="artifact-status" key={standard.standard}><strong>{standard.standard}</strong>{(standard.criteria || []).map((c) => <span key={c.criterion} className={c.status === "cumple" ? "" : "agent-fails"}>{c.criterion === "touch" ? "Contacto" : "Paso"}: {value(c.actual_v)} V / {value(c.tolerable_v)} V tolerable ({(100 * c.margin_rel).toLocaleString("es-CO", { maximumFractionDigits: 1 })} %)</span>)}{standard.reason && <span className="no-information">{standard.reason}</span>}</div>)}
         {result.conductor_thermal && <div className="artifact-status"><strong>Conductor (térmico)</strong><span className={result.conductor_thermal.status === "cumple" ? "" : "agent-fails"}>Sección {value(result.conductor_thermal.selected_section_mm2)} mm² · mínima {value(result.conductor_thermal.minimum_section_mm2)} mm²</span></div>}

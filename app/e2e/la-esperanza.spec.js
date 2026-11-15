@@ -118,9 +118,9 @@ test("SE La Esperanza: carga, chat, malla, cálculo, estudio y PDF", async ({ pa
   // 1. Login con un designer nuevo
   const user = createUser();
   await page.goto("/login");
-  await page.getByLabel("Email address").fill(user.email);
-  await page.getByLabel("Password").fill(user.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByLabel("Correo electrónico").fill(user.email);
+  await page.getByLabel("Contraseña").fill(user.password);
+  await page.getByRole("button", { name: "Iniciar sesión" }).click();
   await expect(page).not.toHaveURL(/login/);
   record("01-login", { email: user.email });
 
@@ -167,7 +167,7 @@ test("SE La Esperanza: carga, chat, malla, cálculo, estudio y PDF", async ({ pa
   // 10. DXF y visualización del artefacto
   await openSection(page, "Plano");
   await shot(page, "10a-plano");
-  await page.getByRole("button", { name: "Abrir drawer de dibujo" }).click();
+  await page.getByRole("button", { name: "Abrir editor de plano" }).click();
   await page.waitForTimeout(2000);
   const dxfSelect = page.locator("label", { hasText: /^DXF/ }).locator("select");
   const option = await dxfSelect.locator("option", { hasText: "03_malla" }).getAttribute("value");
@@ -177,7 +177,7 @@ test("SE La Esperanza: carga, chat, malla, cálculo, estudio y PDF", async ({ pa
   await expect(dxfMessage).toBeVisible();
   await shot(page, "10b-importar-dxf");
   record("10-dxf", { message: await dxfMessage.innerText() });
-  await page.getByRole("button", { name: "Cerrar drawer" }).click();
+  await page.getByRole("button", { name: "Cerrar editor de plano" }).click();
   for (const [label, file] of [["Resumen", "10c-resumen"], ["Suelo", "10d-suelo"], ["Parámetros", "10e-parametros"], ["Resultado", "10f-resultado"]]) {
     await openSection(page, label);
     await page.screenshot({ path: path.join(OUT, `${file}.png`), fullPage: true });

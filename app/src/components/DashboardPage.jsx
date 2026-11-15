@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Activity, ArrowRight, Box, CalendarClock, Layers, Sparkles } from "lucide-react";
 import { SystemHealthCard } from "./SystemHealthCard.jsx";
+import { DesignStatusBadge } from "../shared.jsx";
 
 const featureNames = {
   workspace: "Espacio de trabajo",
@@ -54,6 +55,8 @@ function DashboardPage({ token, user, lastVisit, onOpen, onShowProjects }) {
     return () => { live = false; };
   }, [token, user.id]);
 
+  // Activity of projects that no longer exist is not shown.
+  const visibleFeatures = features.filter((item) => projects.some((project) => project.name === item.projectName));
   return <main className="dashboard-page">
     <header className="dashboard-heading"><div><div className="eyebrow">TERRA WORKSPACE / INICIO</div><h1>Hola, {user.first_name || ""}</h1><p>Resumen de tus proyectos y actividad reciente.</p></div><button className="button primary" onClick={onShowProjects}><Layers size={15}/> Ver proyectos <ArrowRight size={14}/></button></header>
     {error && <div className="project-error" role="alert">{error}</div>}
@@ -64,10 +67,10 @@ function DashboardPage({ token, user, lastVisit, onOpen, onShowProjects }) {
     </section>
     <div className="dashboard-content-grid">
       <section className="dashboard-card dashboard-projects"><div className="dashboard-section-heading"><div><Layers size={17}/><h2>Tus proyectos</h2></div><button className="text-button" onClick={onShowProjects}>Administrar <ArrowRight size={13}/></button></div>
-        {projects.length ? <div className="dashboard-project-list">{projects.map((project) => <button className="dashboard-project-row" key={project.id} onClick={() => onOpen(project)}><span className="dashboard-project-mark"><Box size={17}/></span><span className="dashboard-project-info"><strong>{project.name}</strong><small>{[project.city, project.country].filter(Boolean).join(", ") || project.description || "Sin ubicación"}</small></span><span className="dashboard-project-date">{formatDate(project.updated_at)}<ArrowRight size={14}/></span></button>)}</div> : <div className="dashboard-empty"><Layers size={25}/><strong>Aún no tienes proyectos</strong><span>Crea un proyecto para empezar a trabajar.</span><button className="button" onClick={onShowProjects}>Crear proyecto</button></div>}
+        {projects.length ? <div className="dashboard-project-list">{projects.map((project) => <button className="dashboard-project-row" key={project.id} onClick={() => onOpen(project)}><span className="dashboard-project-mark"><Box size={17}/></span><span className="dashboard-project-info"><strong>{project.name} <DesignStatusBadge status={project.design_status}/></strong><small>{[project.city, project.country].filter(Boolean).join(", ") || project.description || "Sin ubicación"}</small></span><span className="dashboard-project-date">{formatDate(project.updated_at)}<ArrowRight size={14}/></span></button>)}</div> : <div className="dashboard-empty"><Layers size={25}/><strong>Aún no tienes proyectos</strong><span>Crea un proyecto para empezar a trabajar.</span><button className="button" onClick={onShowProjects}>Crear proyecto</button></div>}
       </section>
       <section className="dashboard-card dashboard-activity"><div className="dashboard-section-heading"><div><Sparkles size={17}/><h2>Funciones usadas recientemente</h2></div></div>
-        {features.length ? <ul className="dashboard-feature-list">{features.map((item, index) => <li key={`${item.usedAt}-${index}`}><span className="dashboard-feature-icon"><Activity size={15}/></span><span><strong>{featureNames[item.feature] || item.feature}</strong><small>{item.projectName || "Proyecto"} · {formatDate(item.usedAt, true)}</small></span></li>)}</ul> : <div className="dashboard-empty compact"><Sparkles size={23}/><strong>Sin actividad reciente</strong><span>Las funciones que abras aparecerán aquí.</span></div>}
+        {visibleFeatures.length ? <ul className="dashboard-feature-list">{visibleFeatures.map((item, index) => <li key={`${item.usedAt}-${index}`}><span className="dashboard-feature-icon"><Activity size={15}/></span><span><strong>{featureNames[item.feature] || item.feature}</strong><small>{item.projectName || "Proyecto"} · {formatDate(item.usedAt, true)}</small></span></li>)}</ul> : <div className="dashboard-empty compact"><Sparkles size={23}/><strong>Sin actividad reciente</strong><span>Las funciones que abras aparecerán aquí.</span></div>}
       </section>
       <SystemHealthCard token={token}/>
     </div>

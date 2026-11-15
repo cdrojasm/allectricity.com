@@ -31,6 +31,7 @@ make smoke-ui ARGS='01-solo-lectura'     # solo los checks de lectura (no crea n
 2. **Ciclo de proyecto** (`02`): crea `zz-smoke-<fecha>-<id>`, lo edita, comprueba que persiste tras recargar,
    abre su espacio, verifica que "Cancelar" no borra, lo borra y exige que el listado final sea idéntico al inicial.
 3. **Aislamiento** (`03`): un proyecto del `designer` no aparece al `viewer`.
+4. **Estudio público** (`04`): el estudio publicado concluye lo mismo que el panel Resultados.
 
 ## Seguridad en producción
 

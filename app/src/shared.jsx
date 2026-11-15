@@ -1,4 +1,5 @@
 import React from "react";
+import { designStatusLabels } from "./labels.js";
 
 export const mimeByExtension = {
   pdf: "application/pdf",
@@ -65,4 +66,33 @@ export function recordFeatureUse(userId, feature, projectName) {
     const next = [{ feature, projectName, usedAt: Date.now() }, ...existing].slice(0, 20);
     localStorage.setItem(key, JSON.stringify(next));
   } catch { /* Keep feature navigation available if local storage is unavailable. */ }
+}
+
+// One state per project: sin_diseno, borrador, no_cumple, cumple (+ published study).
+export function DesignStatusBadge({ status }) {
+  if (!status?.state) return null;
+  return <span className={`design-status ${status.state}`} data-testid="design-status">{designStatusLabels[status.state]}{status.published ? " · publicado" : ""}</span>;
+}
+
+const inline = (text) => text.split(/(\*\*[^*]+\*\*)/g).map((part, i) => (part.startsWith("**") && part.endsWith("**") && part.length > 4 ? <strong key={i}>{part.slice(2, -2)}</strong> : part));
+
+// Chat text with lists and bold, built from React elements only (no HTML is ever injected).
+export function RichText({ text }) {
+  const blocks = [];
+  let list = null;
+  String(text).split("\n").forEach((raw, index) => {
+    const line = raw.trimEnd();
+    const bullet = line.match(/^\s*[-*•]\s+(.*)$/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    const kind = bullet ? "ul" : numbered ? "ol" : null;
+    if (kind) {
+      if (!list || list.kind !== kind) { list = { kind, items: [], key: index }; blocks.push(list); }
+      list.items.push((bullet || numbered)[1]);
+    } else {
+      list = null;
+      if (line.trim()) blocks.push({ kind: "p", text: line, key: index });
+    }
+  });
+  return <>{blocks.map((block) => block.kind === "p" ? <p key={block.key}>{inline(block.text)}</p>
+    : React.createElement(block.kind, { key: block.key, className: "chat-list" }, block.items.map((item, i) => <li key={i}>{inline(item)}</li>)))}</>;
 }

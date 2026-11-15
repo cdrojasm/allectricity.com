@@ -26,6 +26,11 @@ function colorFor(t, color) {
  */
 export default function Surface3D({ calculation, plan, onClose }) {
   const mount = useRef(null);
+  useEffect(() => {
+    const onKey = (event) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   const [mode, setMode] = useState("touch");
   const [resolution, setResolution] = useState("completa");
   const [exaggeration, setExaggeration] = useState(1);

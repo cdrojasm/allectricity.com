@@ -26,9 +26,9 @@ export default async function globalSetup() {
       const key = role.toUpperCase();
       const page = await (await browser.newContext({ baseURL: base })).newPage();
       await page.goto("/login");
-      await page.getByLabel("Email address").fill(process.env[`SMOKE_${key}_EMAIL`]);
-      await page.getByLabel("Password").fill(process.env[`SMOKE_${key}_PASSWORD`]);
-      await page.getByRole("button", { name: "Sign in" }).click();
+      await page.getByLabel("Correo electrónico").fill(process.env[`SMOKE_${key}_EMAIL`]);
+      await page.getByLabel("Contraseña").fill(process.env[`SMOKE_${key}_PASSWORD`]);
+      await page.getByRole("button", { name: "Iniciar sesión" }).click();
       try {
         await page.waitForURL((u) => !/login/.test(u.pathname), { timeout: 20_000 });
       } catch {

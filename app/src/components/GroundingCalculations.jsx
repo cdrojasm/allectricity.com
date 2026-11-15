@@ -421,6 +421,54 @@ function GroundingCalculations({
     thermal_duration_s: "",
     ambient_temperature_c: "",
   });
+  // One source of truth: the form starts from the newest saved version of the project's design (the one the
+  // agent edits) and saves new versions of that same design instead of a parallel one.
+  const [baseArtifact, setBaseArtifact] = useState(null);
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/v1/projects/${project.id}/artefactos-diseno-tierras`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows) => {
+        const row = rows[0];
+        if (!live || !row) return;
+        const snap = row.snapshot || {};
+        const g = snap.geometry || {}; const f = snap.fault || {}; const c = snap.conductor || {};
+        const text = (v) => (v === null || v === undefined ? "" : String(v));
+        setBaseArtifact(row);
+        setDesign((current) => ({
+          ...current,
+          name: row.name || current.name,
+          length_m: text(g.length_m), width_m: text(g.width_m), burial_depth_m: text(g.burial_depth_m),
+          conductor_spacing_m: text(g.conductor_spacing_m ?? g.conductor_spacing_x_m),
+          rods_count: text(g.rods_count), rod_length_m: text(g.rod_length_m),
+          current_a: text(f.current_a), clearing_time_s: text(f.clearing_time_s),
+          surface_resistivity_ohm_m: text(f.surface_resistivity_ohm_m), surface_thickness_m: text(f.surface_thickness_m),
+          body_weight_kg: text(f.body_weight_kg),
+          conductor_material_id: text(c.material_id) || current.conductor_material_id,
+          conductor_section_mm2: text(c.cross_section_mm2), conductor_joint_type: text(c.joint_type),
+          conductor_thermal_profile: c.thermal_profile || current.conductor_thermal_profile,
+          conductor_voltage_level: c.voltage_level || current.conductor_voltage_level,
+          conductor_maximum_temperature_c: text(c.maximum_temperature_c),
+          thermal_duration_s: text(c.thermal_duration_s), ambient_temperature_c: text(c.ambient_temperature_c),
+        }));
+        if (snap.soil_measurements?.measurements?.length) {
+          setMeasurementMethod(snap.soil_measurements.array || "wenner");
+          setReadings(snap.soil_measurements.measurements.map((m) => ({ ...m, spacing_m: text(m.spacing_m), apparent_resistivity_ohm_m: text(m.apparent_resistivity_ohm_m) })));
+        }
+        if (snap.soil_layers?.length && snap.soil_measurements?.measurements?.length) {
+          setSoilSource("measurements");
+          setLayerCount(snap.soil_layers.length);
+          setFit({ soil_layers: snap.soil_layers, layer_count: snap.soil_layers.length, ...(snap.soil_model?.fit || {}) });
+        } else if (snap.soil_layers?.length) {
+          setSoilSource("manual");
+          setLayerCount(snap.soil_layers.length);
+          setManualLayers(snap.soil_layers.map((l) => ({ material: l.material || "", resistivity_ohm_m: text(l.resistivity_ohm_m), depth_m: l.depth_m ?? null })));
+        }
+        setHydrated(true);
+      }).catch(() => {});
+    return () => { live = false; };
+  }, [project.id, token]);
   const soilLayers = soilSource === "manual" ? manualLayers : fit?.soil_layers;
   const soilReady = Boolean(
     soilLayers?.length &&
@@ -597,11 +645,13 @@ function GroundingCalculations({
     setError("");
     setCalculation(null);
     try {
-      const artifact = await request(root, {
+      const base = baseArtifact?.snapshot || {};
+      const artifact = await request(baseArtifact ? `${root}/${baseArtifact.artifact_id}/versions` : root, {
         method: "POST",
         body: JSON.stringify({
           name: design.name,
           geometry: {
+            ...(base.geometry || {}),
             length_m: Number(design.length_m),
             width_m: Number(design.width_m),
             burial_depth_m: Number(design.burial_depth_m),
@@ -652,6 +702,7 @@ function GroundingCalculations({
                 }
               : { source: "materials" },
           fault: {
+            ...(base.fault || {}),
             current_a: Number(design.current_a),
             clearing_time_s: Number(design.clearing_time_s),
             surface_resistivity_ohm_m: Number(design.surface_resistivity_ohm_m),
@@ -659,6 +710,7 @@ function GroundingCalculations({
             body_weight_kg: Number(design.body_weight_kg),
           },
           conductor: {
+            ...(base.conductor || {}),
             material_id: design.conductor_material_id,
             cross_section_mm2: Number(design.conductor_section_mm2),
             joint_type: design.conductor_joint_type,
@@ -674,6 +726,7 @@ function GroundingCalculations({
           },
         }),
       });
+      setBaseArtifact(artifact);
       onArtifactSaved?.();
       const calculationParameters = {
         surface_spacing_m: 0.5,
