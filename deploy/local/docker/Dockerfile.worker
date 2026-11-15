@@ -48,6 +48,12 @@ RUN pip install --no-cache-dir --no-deps . && rm -rf build ./*.egg-info
 USER spat
 CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "calculations"]
 
+FROM calculation-deps AS optimizer-worker
+COPY --from=sources /app /app
+RUN pip install --no-cache-dir --no-deps . && rm -rf build ./*.egg-info
+USER spat
+CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "-Q", "optimizer"]
+
 FROM base AS mail-deps
 RUN mkdir src && touch src/__init__.py && pip install --no-cache-dir . \
     && pip uninstall -y spat-design-agent && rm -rf src build ./*.egg-info

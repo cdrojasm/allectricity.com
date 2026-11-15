@@ -84,7 +84,8 @@ Contratos, permisos y operación: [docs/AUTH.md](docs/AUTH.md).
 
 En despliegue, Celery se divide por responsabilidad: `agent-worker` coordina los
 agentes y el LLM, `document-worker` procesa archivos y OCR, `calculation-worker`
-ejecuta cálculos contra `solver-api`, `render-worker` reserva Chromium para PDFs
+ejecuta cálculos contra `solver-api`, `optimizer-worker` atiende en su propia cola
+las búsquedas del optimizador (largas, para que no bloqueen los cálculos), `render-worker` reserva Chromium para PDFs
 y `mail-worker` atiende el correo transaccional. El API HTTP conserva solo la
 frontera transaccional y publica trabajos en las colas correspondientes.
 

@@ -15,7 +15,7 @@ Las tareas Celery están separadas por colas: `agent`, `documents`, `calculation
 ## Imágenes reducidas
 
 - `api`: runtime Python transaccional sin GCC, sin el binario C++ embebido, sin Chromium y sin dependencias LLM/documentales.
-- `agent-worker`, `document-worker`, `calculation-worker`, `mail-worker`: imágenes Celery con colas y dependencias separadas.
+- `agent-worker`, `document-worker`, `calculation-worker`, `optimizer-worker`, `mail-worker`: imágenes Celery con colas y dependencias separadas.
 - `render-worker`: runtime Python con Chromium, porque es el único proceso que renderiza PDFs.
 - `potential-engine`: imagen propia con solo el binario C++ compilado, el entrypoint `solver_api` y Python slim. Expone `/v1/calculate` y `/v1/projects/{project_id}/calculate`; cada request ejecuta un proyecto completo y aislado.
 - `frontend`: build Node multietapa y runtime Nginx con los estáticos compilados.

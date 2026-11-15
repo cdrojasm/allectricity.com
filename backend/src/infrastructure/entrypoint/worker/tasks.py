@@ -32,7 +32,7 @@ celery_app.conf.update(
         "spat.reprocess_document": {"queue": "documents"},
         "spat.reconcile_file_uploads": {"queue": "documents"},
         "spat.calculate_artifact_potential": {"queue": "calculations"},
-        "spat.optimize_topology": {"queue": "calculations"},
+        "spat.optimize_topology": {"queue": "optimizer"},
         "spat.render_study_pdf": {"queue": "render"},
         "spat.dispatch_reset_mail": {"queue": "mail"},
         "spat.send_reset_mail": {"queue": "mail"},
