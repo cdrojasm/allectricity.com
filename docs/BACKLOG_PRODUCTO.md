@@ -151,7 +151,7 @@ H1 va primero porque H2 sin una sola verdad reproduce las incoherencias actuales
 | PR-55 | ✅ **Implementada.** La vista conserva impresión local y el backend encola render Chromium/Playwright, almacena el PDF en MinIO y expone una URL firmada. | Celery, MinIO, Playwright | PR-51 |
 | PR-56 | ✅ **Implementada.** La publicación fija la versión, avisa de versiones nuevas y «Republicar nueva versión» crea otro slug; la anterior permanece intacta. | PR-03 | PR-50 |
 | PR-57 | ✅ **Implementada.** Supuestos críticos impiden publicar como final; los borradores llevan marca de agua visible. | PR-25 | PR-25, PR-51 |
-| PR-58 | **Dominio propio del cliente** (`estudios.miempresa.com`). Candidato a plan de pago; después de H3. | — | PR-51 |
+| PR-58 | **Dominio propio del cliente** (`estudios.miempresa.com`). Candidato a plan de pago; después de H3. ⏸ **En espera comercial (15 nov):** se decide después de H3. | — | PR-51 |
 
 ## 7. Qué se congela
 
