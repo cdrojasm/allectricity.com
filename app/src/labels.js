@@ -67,7 +67,9 @@ export function referenceText(reference) {
   const note = reference?.note;
   const ref = reference?.ref;
   const looksInternal = typeof ref === "string" && /^[0-9a-f]{8}-|^[0-9a-f]{16,}$/i.test(ref);
-  return [kind || "Origen registrado", note, ref && !looksInternal ? ref : null].filter(Boolean).join(" · ");
+  // A note that only repeats the origin («Confirmado por el usuario · Confirmado por el usuario») adds nothing.
+  const parts = [kind || "Origen registrado", note, ref && !looksInternal ? ref : null].filter(Boolean);
+  return parts.filter((part, index) => parts.findIndex((other) => String(other).trim().toLowerCase() === String(part).trim().toLowerCase()) === index).join(" · ");
 }
 
 export const designStatusLabels = { sin_diseno: "Sin diseño", borrador: "Borrador", no_cumple: "No cumple", cumple: "Cumple" };

@@ -112,6 +112,28 @@ def _design_margins(summary: dict) -> list[dict]:
     return entries
 
 
+_REASON_PHRASES = (
+    (r"Input should be greater than or equal to ([-\d.]+)", r"debe ser mayor o igual que \1"),
+    (r"Input should be greater than ([-\d.]+)", r"debe ser mayor que \1"),
+    (r"Input should be less than or equal to ([-\d.]+)", r"debe ser menor o igual que \1"),
+    (r"Input should be less than ([-\d.]+)", r"debe ser menor que \1"),
+    (r"Input should be a valid number[^;,.]*", "debe ser un número"),
+    (r"Input should be a valid integer[^;,.]*", "debe ser un número entero"),
+    (r"Field required", "es obligatorio"),
+    (r"Extra inputs are not permitted", "no es un campo admitido"),
+    (r"Path not editable by the agent", "el agente no puede editar este campo"),
+    (r"\bnot applied, ", ""),
+)
+
+
+def _spanish_reason(reason: str) -> str:
+    """Validator messages, which reach the user in the final answer, in Spanish."""
+    text = str(reason)
+    for pattern, replacement in _REASON_PHRASES:
+        text = re.sub(pattern, replacement, text)
+    return text
+
+
 def reconcile_final_response(text: str, applied: dict | None, rejected: list | None = None) -> str:
     """Build the final claim from persisted changes, never from the model's recollection.
 
@@ -123,7 +145,7 @@ def reconcile_final_response(text: str, applied: dict | None, rejected: list | N
             applied = {**applied, "rejected": list(dict.fromkeys([*(applied.get("rejected") or []), *rejected]))}
         else:
             base = reconcile_final_response(text, None)
-            return f"{base.rstrip()} Cambios no aplicados: " + "; ".join(str(item) for item in rejected) + "."
+            return f"{base.rstrip()} Cambios no aplicados: " + "; ".join(_spanish_reason(item) for item in rejected) + "."
     if applied:
         changes = applied.get("changes") or []
         fields = ", ".join(
@@ -136,7 +158,7 @@ def reconcile_final_response(text: str, applied: dict | None, rejected: list | N
         # A field refused once and then saved on a retry is not a rejection.
         rejected = [item for item in applied.get("rejected") or []
                     if str(item).split(":", 1)[0].strip() not in saved_paths]
-        rejection_detail = (" Cambios no aplicados: " + "; ".join(str(item) for item in rejected) + "."
+        rejection_detail = (" Cambios no aplicados: " + "; ".join(_spanish_reason(item) for item in rejected) + "."
                             if rejected else "")
         return f"Se guardó la versión {applied['version']} del diseño: {summary}.{detail}{rejection_detail}"
     if re.search(r"\b(?:guard[eé]|cre[eé]|apliqu[eé]|actualic[eé])\b.{0,50}\b(?:versi[oó]n|diseñ|artefacto)\b",

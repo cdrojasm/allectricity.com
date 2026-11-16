@@ -2,6 +2,7 @@
 
 from hashlib import sha256
 import os
+import re
 from time import time
 from uuid import uuid4
 
@@ -210,6 +211,16 @@ def _bill_of_materials(snapshot, origin, db, project_id) -> dict | None:
     }
 
 
+def _client_assumptions(provenance: dict) -> list[str]:
+    """Design values the agent assumed and nobody confirmed: the study must read as a draft while they remain.
+
+    Only paths that change the engineering result count; the generated name and editor metadata do not.
+    """
+    ignored = {"name", "schema_version", "geometry.snap_m"}
+    return sorted(path for path, value in (provenance or {}).items()
+                  if isinstance(value, dict) and value.get("kind") == "assumption" and path not in ignored)
+
+
 def _payload(db, study):
     artifact = db.one("artefacto_diseno_tierras", project_id=study["project_id"], artifact_id=study["artifact_id"], version=study["artifact_version"])
     project = db.one("projects", id=study["project_id"])
@@ -221,6 +232,7 @@ def _payload(db, study):
     provenance = origin.get("provenance") or {}
     unconfirmed = (snapshot.get("unconfirmed_critical") or origin.get("unconfirmed_critical")
                    or unconfirmed_critical(snapshot, provenance))
+    assumptions = [path for path in _client_assumptions(provenance) if path not in (unconfirmed or [])]
     config = dict(study["config"] or {})
     logo_id = config.get("logo_upload_id")
     if logo_id:
@@ -240,10 +252,20 @@ def _payload(db, study):
         latest_calculation = max(calculations, key=lambda row: row["created_at"])
         snapshot = {**snapshot, "result": summarize(latest_calculation)}
         calculation_detail = _calculation_detail(latest_calculation)
-    return {"study": {**{k: study[k] for k in ("id", "slug", "title", "access", "status", "artifact_id", "artifact_version", "expires_at", "published_at", "updated_at")}, "config": config}, "project": {"name": project["name"], "description": project["description"], "city": project.get("city"), "country": project.get("country")}, "artifact": snapshot, "calculation": calculation_detail, "references": references, "optimization": _optimization(db, study["project_id"], artifact.get("origin")), "bill_of_materials": _bill_of_materials(snapshot, artifact.get("origin"), db, study["project_id"]), "draft": bool(unconfirmed) or bool(origin.get("draft")), "unconfirmed_critical": unconfirmed, "non_compliant": _verdict(db, study) == "no_cumple", "has_newer_version": bool(latest and latest["version"] > study["artifact_version"])}
+    return {"study": {**{k: study[k] for k in ("id", "slug", "title", "access", "status", "artifact_id", "artifact_version", "expires_at", "published_at", "updated_at")}, "config": config}, "project": {"name": project["name"], "description": project["description"], "city": project.get("city"), "country": project.get("country")}, "artifact": snapshot, "calculation": calculation_detail, "references": references, "optimization": _optimization(db, study["project_id"], artifact.get("origin")), "bill_of_materials": _bill_of_materials(snapshot, artifact.get("origin"), db, study["project_id"]), "draft": bool(unconfirmed) or bool(origin.get("draft")) or bool(assumptions), "unconfirmed_critical": unconfirmed, "assumptions": assumptions, "non_compliant": _verdict(db, study) == "no_cumple", "has_newer_version": bool(latest and latest["version"] > study["artifact_version"])}
 
 
 _DENIALS = ("no se cuenta", "no se dispone", "sin resultados", "no hay resultados", "no existen resultados", "aún no se ha calculado", "no se ha realizado")
+
+
+_VERDICT_CODES = {"no_cumple": "no cumple", "no_evaluado": "no evaluado", "no_evaluable": "no evaluable", "cumple": "cumple"}
+
+
+def _plain_codes(text: str) -> str:
+    """Verdict codes the model copied from the result («"no_cumple"») read as plain Spanish."""
+    def plain(match):
+        return _VERDICT_CODES[match.group(1)]
+    return re.sub(r"[\"“”«»']?\b(no_cumple|no_evaluado|no_evaluable)\b[\"“”«»']?", plain, text)
 
 
 def _denies_results(text: str) -> bool:
@@ -323,6 +345,7 @@ def generate_study_section(project_id: str, study_id: str, section_id: str, data
         study = db.one("studies", id=study_id, project_id=project_id)
         artifact = db.one("artefacto_diseno_tierras", project_id=project_id, artifact_id=study["artifact_id"], version=study["artifact_version"]) if study else None
         latest = _latest_completed(db, study) if study and artifact else None
+        project = db.one("projects", id=project_id)
     if not study or not artifact: raise HTTPException(404, "Study or artifact not found")
     from src.infrastructure.agents.calculation_summary import summarize
     outcome = summarize(latest) if latest else None
@@ -331,9 +354,9 @@ def generate_study_section(project_id: str, study_id: str, section_id: str, data
         _, client = clients()
         response = client.chat.completions.create(model=os.getenv("STUDY_WRITER_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini")), temperature=0.2, max_tokens=500, messages=[
             {"role": "system", "content": "Escribe un párrafo técnico breve en español para un estudio de puesta a tierra. No inventes valores: si faltan datos, dilo explícitamente. Si se entrega un resultado de cálculo, es la fuente de verdad: cita su veredicto (cumple / no cumple) tal cual y nunca digas que faltan resultados. No uses identificadores internos ni ids; nombra el proyecto por su título. Devuelve solo el párrafo."},
-            {"role": "user", "content": f"Sección: {section_id}. Título: {study['title']}. Artefacto: {artifact['snapshot']}. Resultado del cálculo fijado: {outcome if outcome else 'sin cálculo para esta versión'}. Instrucción: {data.instruction or 'Resume esta sección para un revisor técnico.'}"},
+            {"role": "user", "content": f"Sección: {section_id}. Proyecto: {(project or {}).get('name') or study['title']}. Título del estudio: {study['title']}. Artefacto: {artifact['snapshot']}. Resultado del cálculo fijado: {outcome if outcome else 'sin cálculo para esta versión'}. Instrucción: {data.instruction or 'Resume esta sección para un revisor técnico.'}"},
         ])
-        text = (response.choices[0].message.content or "").strip()
+        text = _plain_codes((response.choices[0].message.content or "").strip())
     except Exception as exc:
         raise HTTPException(503, "El generador de texto no está disponible") from exc
     if outcome and outcome["verdict"] in {"cumple", "no_cumple"} and _denies_results(text):

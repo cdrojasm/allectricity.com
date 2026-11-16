@@ -491,7 +491,7 @@ def test_final_response_includes_rejected_changes_alongside_saved_changes():
                "rejected": ["geometry.burial_depth_m: not applied, debe ser positivo"]}
     assert reconcile_final_response("Listo.", applied) == (
         "Se guardó la versión 6 del diseño: Ajuste de ancho. Campos guardados: geometry.width_m=38. "
-        "Cambios no aplicados: geometry.burial_depth_m: not applied, debe ser positivo.")
+        "Cambios no aplicados: geometry.burial_depth_m: debe ser positivo.")
 
 
 def test_final_response_reports_changes_rejected_after_the_saved_version():
@@ -513,7 +513,7 @@ def test_final_response_reports_rejections_when_nothing_was_saved():
     response = reconcile_final_response("Guardé la versión 7 del diseño.", None,
                                         ["geometry.burial_depth_m: not applied, debe ser positivo"])
     assert response == ("No se guardó una versión nueva del diseño en este paso. Cambios no aplicados: "
-                        "geometry.burial_depth_m: not applied, debe ser positivo.")
+                        "geometry.burial_depth_m: debe ser positivo.")
 
 
 def test_final_response_does_not_claim_a_version_when_nothing_was_persisted():
@@ -536,7 +536,7 @@ def test_response_does_not_claim_a_saved_version_after_change_validation_fails(c
     assert artifacts(client, tokens, project) == []
     assistant = [message for message in messages(client, tokens, conversation) if message["source"] == "agent"][-1]
     assert assistant["text"] == ("No se guardó una versión nueva del diseño en este paso. "
-                                 "Cambios no aplicados: Path not editable by the agent: compliance.")
+                                 "Cambios no aplicados: el agente no puede editar este campo: compliance.")
 
 
 class LoopRunsStub:
@@ -921,3 +921,13 @@ def test_a_too_short_justification_does_not_stop_the_calculation(chat):
     ], dispatched)
     queued = tool_result(llm, 1)
     assert queued["queued"] is True and dispatched == [queued["calculation_id"]]
+
+
+def test_rejection_reasons_reach_the_user_in_spanish():
+    from src.infrastructure.agents.design_agent import _spanish_reason
+
+    assert _spanish_reason("geometry.burial_depth_m: Input should be greater than 0") == (
+        "geometry.burial_depth_m: debe ser mayor que 0")
+    assert _spanish_reason("fault.current_a: not applied, Input should be greater than or equal to 1") == (
+        "fault.current_a: debe ser mayor o igual que 1")
+    assert _spanish_reason("geometry.foo: Extra inputs are not permitted") == "geometry.foo: no es un campo admitido"

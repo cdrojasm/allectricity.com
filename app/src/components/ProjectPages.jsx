@@ -1,11 +1,84 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Activity, ArrowDownToLine, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, Check, ChevronDown, ChevronRight, CircleHelp, File, FileImage, FileSpreadsheet, FolderOpen, GitBranch, History, Layers, LayoutGrid, MapPin, MessageCircle, Minus, Maximize2, Mic, Network, Paperclip, Plus, Pencil, RotateCcw, Search, Settings2, ShieldCheck, Sparkles, Square, X, Trash2, Zap } from "lucide-react";
 import { DesignStatusBadge, mimeByExtension, uploadableMimeTypes, uploadStatusLabels } from "../shared.jsx";
+function ForgotPasswordForm({ initialEmail, onBack }) {
+  const [email, setEmail] = useState(initialEmail || "");
+  const [state, setState] = useState("idle");
+  async function submit(event) {
+    event.preventDefault();
+    setState("busy");
+    try {
+      const response = await fetch("/api/v1/auth/forgot-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
+      setState(response.ok ? "sent" : response.status === 429 ? "limited" : "error");
+    } catch { setState("error"); }
+  }
+  return (
+    <form className="login-card" onSubmit={submit} data-testid="forgot-password-form">
+      <div className="login-brand"><Zap size={22} fill="currentColor" /></div>
+      <div className="eyebrow">TERRA WORKSPACE</div>
+      <h1>Restablecer contraseña</h1>
+      <p>Escribe el correo de tu cuenta y te enviaremos un enlace para elegir una contraseña nueva.</p>
+      <label>Correo electrónico<input autoComplete="username" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
+      {state === "sent" && <div className="login-notice" role="status">Si el correo corresponde a una cuenta, recibirás un enlace en unos minutos. Revisa también la carpeta de spam.</div>}
+      {state === "limited" && <div className="login-error" role="alert">Demasiados intentos. Espera unos minutos y vuelve a intentarlo.</div>}
+      {state === "error" && <div className="login-error" role="alert">No se pudo enviar la solicitud. Inténtalo de nuevo.</div>}
+      <button className="button primary login-submit" type="submit" disabled={state === "busy"}>{state === "busy" ? "Enviando…" : "Enviar enlace"}</button>
+      <button className="login-link" type="button" onClick={onBack}>Volver a iniciar sesión</button>
+    </form>
+  );
+}
+
+export function ResetPasswordPage() {
+  const token = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("token") || "";
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [state, setState] = useState("idle");
+  const [error, setError] = useState("");
+  async function submit(event) {
+    event.preventDefault();
+    setError("");
+    if (password.length < 12) return setError("La contraseña debe tener al menos 12 caracteres.");
+    if (password !== confirm) return setError("Las contraseñas no coinciden.");
+    setState("busy");
+    try {
+      const response = await fetch("/api/v1/auth/reset-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, password }) });
+      if (response.ok) { window.history.replaceState({}, "", "/reset-password"); setState("done"); return; }
+      setError(response.status === 400 || response.status === 401 || response.status === 422
+        ? "El enlace no es válido o ya venció. Pide uno nuevo desde «¿Olvidaste tu contraseña?»."
+        : "No se pudo cambiar la contraseña. Inténtalo de nuevo.");
+    } catch { setError("No se pudo contactar el servicio de autenticación."); }
+    setState("idle");
+  }
+  return (
+    <main className="login-page">
+      <form className="login-card" onSubmit={submit} data-testid="reset-password-form">
+        <div className="login-brand"><Zap size={22} fill="currentColor" /></div>
+        <div className="eyebrow">TERRA WORKSPACE</div>
+        <h1>Elige una contraseña nueva</h1>
+        {state === "done" ? <>
+          <div className="login-notice" role="status">Tu contraseña se cambió. Las sesiones abiertas se cerraron por seguridad.</div>
+          <a className="button primary login-submit" href="/login">Iniciar sesión</a>
+        </> : !token ? <>
+          <div className="login-error" role="alert">Este enlace no trae un código de restablecimiento. Pide uno nuevo desde «¿Olvidaste tu contraseña?».</div>
+          <a className="button login-submit" href="/login">Volver a iniciar sesión</a>
+        </> : <>
+          <p>Usa al menos 12 caracteres.</p>
+          <label>Contraseña nueva<input autoComplete="new-password" type="password" required minLength={12} value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+          <label>Confirmar contraseña<input autoComplete="new-password" type="password" required minLength={12} value={confirm} onChange={(e) => setConfirm(e.target.value)} /></label>
+          {error && <div className="login-error" role="alert">{error}</div>}
+          <button className="button primary login-submit" type="submit" disabled={state === "busy"}>{state === "busy" ? "Guardando…" : "Cambiar contraseña"}</button>
+        </>}
+      </form>
+    </main>
+  );
+}
+
 function Login({ onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [forgot, setForgot] = useState(false);
   async function submit(event) {
     event.preventDefault();
     setBusy(true);
@@ -25,6 +98,7 @@ function Login({ onLogin }) {
       setBusy(false);
     }
   }
+  if (forgot) return <main className="login-page"><ForgotPasswordForm initialEmail={email} onBack={() => setForgot(false)} /></main>;
   return (
     <main className="login-page">
       <form className="login-card" onSubmit={submit}>
@@ -36,6 +110,7 @@ function Login({ onLogin }) {
         <label>Contraseña<input autoComplete="current-password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} /></label>
         {error && <div className="login-error" role="alert">{error}</div>}
         <button className="button primary login-submit" type="submit" disabled={busy}>{busy ? "Entrando…" : "Iniciar sesión"}</button>
+        <button className="login-link" type="button" onClick={() => setForgot(true)}>¿Olvidaste tu contraseña?</button>
       </form>
     </main>
   );

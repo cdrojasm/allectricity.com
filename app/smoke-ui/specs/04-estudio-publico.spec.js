@@ -108,6 +108,13 @@ test.describe.serial("estudio publicado", () => {
     await expect(inputs).toContainText("8.500 A");
     await expect(inputs).toContainText("Capa 2");
     await expect(inputs).toContainText("semiinfinita");
+    // El plano de la malla publicada acompaña a las entradas.
+    await expect(study.getByTestId("study-plan").locator("svg")).toBeVisible();
+    // Las referencias no repiten el origen en la nota ni muestran claves del esquema.
+    const references = study.getByTestId("study-references");
+    if (await references.count()) {
+      await expect(references).not.toContainText(/Confirmado por el usuario · Confirmado por el usuario|schema version|geometry snap/);
+    }
     await visitor.close();
   });
 

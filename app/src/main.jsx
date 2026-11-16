@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { CircleAlert, CircleHelp, Layers, LayoutGrid, LogOut, PackageSearch, X, Zap } from "lucide-react";
 import { IconButton } from "./shared.jsx";
-import { Login, ProjectsPage } from "./components/ProjectPages.jsx";
+import { Login, ProjectsPage, ResetPasswordPage } from "./components/ProjectPages.jsx";
 import { DashboardPage } from "./components/DashboardPage.jsx";
 import { ProjectChatWorkspace } from "./components/ProjectChatWorkspace.jsx";
 import { PublicStudyPage } from "./components/StudyPage.jsx";
@@ -12,6 +12,7 @@ import "./styles.css";
 
 function App() {
   const publicStudy = window.location.pathname.match(/^\/e\/([^/]+)\/?$/);
+  const resetPage = /^\/reset-password\/?$/.test(window.location.pathname);
   const [token, setToken] = useState(() => localStorage.getItem("spat_access_token"));
   const [user, setUser] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
@@ -28,7 +29,7 @@ function App() {
   }, []);
   useEffect(() => {
     let cancelled = false;
-    if (publicStudy) { setAuthChecking(false); return () => { cancelled = true; }; }
+    if (publicStudy || resetPage) { setAuthChecking(false); return () => { cancelled = true; }; }
     if (!token) {
       localStorage.removeItem("spat_access_token");
       if (window.location.pathname !== "/login") window.history.replaceState({}, "", "/login");
@@ -146,6 +147,7 @@ function App() {
     return () => clearTimeout(id);
   }, [notice]);
   if (authChecking) return <main className="login-page"><div className="login-loading">Loading your workspace…</div></main>;
+  if (resetPage) return <ResetPasswordPage />;
   if (publicStudy) return <PublicStudyPage slug={decodeURIComponent(publicStudy[1])} />;
   if (!token || !user) return <><Login onLogin={acceptToken} />{sessionExpired && <SessionExpiredDialog onExit={exitExpiredSession} onLogin={goToLogin} />}</>;
   return (
