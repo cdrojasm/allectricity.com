@@ -334,7 +334,7 @@ class AgentRuns:
                        "draft": change.get("draft", False),
                        "draft_watermark": change.get("draft_watermark")}
             created = "Se creó" if change.get("base_version") is None else "Se editó"
-            self._post(db, run, "notification", f"{created} el artefacto «{row['name']}» (versión {row['version']}): "
+            self._post(db, run, "notification", f"{created} el diseño «{row['name']}» (versión {row['version']}): "
                        f"{change['summary']}", payload=payload)
             self.emit(db, run, EventType.ARTIFACT_VERSION_CREATED, f"Versión {row['version']} de «{row['name']}»",
                       level=EventLevel.SUCCESS, payload={"artifact_id": row["artifact_id"], "version": row["version"]})

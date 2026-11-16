@@ -95,12 +95,12 @@ Las tareas están ordenadas por bloqueo de lanzamiento. Los criterios de cierre 
 
 ### T1 · Hacer verificable el cierre del bucle autónomo
 
-**Responsable:** backend de agente y experiencia de resultados. **En curso (2026-11-15):** el backend registra y puntúa el mejor candidato, emite el evento terminal y cierra de forma determinista; el panel muestra versión/cálculo y ofrece restaurar como versión nueva y recalcular. Pasó el runner P1 y 34 pruebas del agente cubren límite=1, margen empeorado y propuesta inválida. Falta forzar desde UI una última versión peor y verificar la restauración/re-cálculo completo.
+**Responsable:** backend de agente y experiencia de resultados. **Hecho (2026-11-16):** el backend registra y puntúa el mejor candidato, cierra de forma determinista y, si una iteración posterior empeora, restaura el mejor diseño como versión nueva y lo recalcula; una propuesta que nunca validó cierra como `no_valid_candidate` sin guardar ni calcular. P1-01 a P1-04 pasan desde la UI (P1-03/P1-04 con el LLM de prueba de `app/smoke-ui/loop-scenarios`).
 
 1. **Hecho:** guardar candidato, versión, cálculo, veredicto, margen mínimo y criterio dominante en `backend/src/infrastructure/agents/design_agent.py`; puntuar márgenes en estructuras antiguas y resultados por escenarios.
 2. **Hecho:** el backend guarda y publica `design_loop_result`; el panel presenta razón, iteraciones, veredicto, versión/cálculo y margen mínimo.
-3. **Implementado; rama de rescate pendiente de escenario determinista:** el panel restaura la mejor versión como versión nueva y recalcula con los parámetros del cálculo original. Comprobar que la versión nueva apunta al snapshot esperado y que el nuevo cálculo termina antes de anunciar el rescate.
-4. **Hecho en backend; UI pendiente:** pruebas deterministas cubren `DESIGN_MAX_ITERATIONS=1`, diseñador sin cambio válido y margen posterior peor. Repetir P1-02/P1-03/P1-04 desde la UI para confirmar límite, no-colgado y rescate del mejor candidato.
+3. **Hecho y verificado en UI (P1-04):** el panel restaura la mejor versión como versión nueva y recalcula con los parámetros del cálculo original. Comprobar que la versión nueva apunta al snapshot esperado y que el nuevo cálculo termina antes de anunciar el rescate.
+4. **Hecho en backend y en UI:** pruebas deterministas cubren `DESIGN_MAX_ITERATIONS=1`, diseñador sin cambio válido y margen posterior peor. Repetir P1-02/P1-03/P1-04 desde la UI para confirmar límite, no-colgado y rescate del mejor candidato.
 
 **Cierre:** los tres escenarios terminan sin run colgado, el límite no se excede, ningún resultado no conforme se etiqueta como conforme y el mejor candidato puede recuperarse desde la interfaz con versión/cálculo trazables. P1-01 a P1-04 pasan.
 

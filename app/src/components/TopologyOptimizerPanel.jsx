@@ -287,7 +287,7 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, runForm, o
         {applied.revalidation?.status === "pending"
           ? "Se encoló su cálculo completo con malla fina; el veredicto del estudio será el de ese cálculo, no el de la búsqueda."
           : applied.revalidation?.status === "blocked"
-            ? `No se pudo encolar la revalidación: ${applied.revalidation.detail?.message || "el artefacto no está listo para calcular"}. Calcula la versión cuando lo esté.`
+            ? `No se pudo encolar la revalidación: ${applied.revalidation.detail?.message || "el diseño no está listo para calcular"}. Calcula la versión cuando lo esté.`
             : applied.revalidation?.status === "failed"
               ? "No se pudo encolar la revalidación; calcula la versión manualmente."
               : ""}</small>}

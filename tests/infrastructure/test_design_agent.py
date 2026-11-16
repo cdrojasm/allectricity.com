@@ -94,7 +94,7 @@ def test_grid_first_without_critical_inputs(chat):
     # The structured flag the client uses to reload and show the "artifact edited" card.
     [update] = updates(client, tokens, conversation)
     payload = update["payload"]
-    assert update["source"] == "notification" and update["text"].startswith("Se creó el artefacto")
+    assert update["source"] == "notification" and update["text"].startswith("Se creó el diseño")
     assert payload["artifact_id"] == artifact["artifact_id"] and payload["version"] == 1
     assert payload["previous_version"] is None and payload["missing_for_calculation"] == [
         "soil_layers", "fault.current_a", "fault.clearing_time_s"]
@@ -131,7 +131,7 @@ def test_drawn_conductors_edit_and_undo(chat):
     latest = artifacts(client, tokens, project)[0]
     assert len(latest["snapshot"]["geometry"]["conductors"]) == 6 and latest["snapshot"]["geometry"]["rods_count"] == 1
     [update] = updates(client, tokens, conversation)
-    assert update["payload"]["previous_version"] == 1 and update["text"].startswith("Se editó el artefacto")
+    assert update["payload"]["previous_version"] == 1 and update["text"].startswith("Se editó el diseño")
 
     undo = client.post(f"/api/v1/projects/{project['id']}/artefactos-diseno-tierras/{created['artifact_id']}"
                        f"/versions/1/restaurar", headers=headers(tokens))

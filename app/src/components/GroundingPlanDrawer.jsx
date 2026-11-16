@@ -334,7 +334,7 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
   }
   async function importDxf() {
     const file = sourceFiles.find((item) => item.upload_id === dxfFile && item.status === "available");
-    if (!file || !artifactRef.current) return setMessage("Selecciona un DXF analizado y un artefacto guardado.");
+    if (!file || !artifactRef.current) return setMessage("Selecciona un DXF analizado y un diseño guardado.");
     const response = await fetch(`/api/v1/projects/${projectId}/artefactos-diseno-tierras/${artifactRef.current.artifact_id}/import-dxf`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ upload_id: file.upload_id }) });
     const proposal = await response.json().catch(() => ({}));
     if (!response.ok) return setMessage(proposal.detail || "No se pudo leer el DXF.");
@@ -345,7 +345,7 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
   }
   async function proposePlanVision() {
     const file = sourceFiles.find((item) => item.upload_id === backgroundFile && item.status === "available");
-    if (!file || !artifactRef.current) return setMessage("Selecciona un plano disponible y un artefacto guardado.");
+    if (!file || !artifactRef.current) return setMessage("Selecciona un plano disponible y un diseño guardado.");
     if (!["application/pdf", "image/png", "image/jpeg"].includes(file.mime_type)) return setMessage("La lectura visual requiere un PDF, PNG o JPEG.");
     setVisionBusy(true);
     try {

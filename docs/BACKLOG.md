@@ -17,6 +17,17 @@ real y fijar umbrales) · BL-21 (falta memoria con ecuaciones, DOCX y firma) · 
 navegador) · SV-01 + SV-27 (falta congelar corrientes y potenciales completos) · BL-26 mínimo (falta OTel,
 panel, runbook y SLO).
 
+**Hecho el 16 nov (camino al MVP):** matriz P0 de `docs/PLAN_PRUEBAS_P0_FLUJOS.md` cerrada desde la UI, con
+escenarios forzados repetibles (`app/smoke-ui/loop-scenarios`) · bucle autónomo: restaura el mejor candidato si
+una iteración empeora y descarta propuestas que nunca validaron · respuesta final del agente: solo lo persistido
+y, además, los cambios rechazados (en español) · estudio público: borrador cuando hay supuestos del agente sin
+confirmar, plano de la malla, referencias sin repeticiones, texto generado sin códigos (BL-21 parcial) ·
+restablecer contraseña e invitación de ingenieros piloto con rol diseñador y bolsa de tokens (desbloquea el alta
+de usuarios externos; BL-05 sigue para equipos con roles por proyecto) · AG-04: el agente se detiene antes de
+llamar al modelo si la bolsa no alcanza (`AGENT_MIN_STEP_TOKENS`, `AGENT_REQUIRE_BUDGET`) · BL-26: respaldo local
+con verificación de restauración (`make backup-local`, `make backup-verify`) y `docs/RUNBOOK.md` · «artefacto»
+→ «diseño» en los textos visibles.
+
 **Siguiente, en orden:**
 1. Cerrar los restos de arriba que afectan exactitud: rechazo por diferencia en OP-07 y bandeja de revisión de BL-15.
 2. EG-12 con el LLM real → EG-25 (modelo por paso) → EG-26/27 (clasificación y pasadas enfocadas).

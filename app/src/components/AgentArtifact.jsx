@@ -107,7 +107,7 @@ function ArtifactGrid({ geometry }) {
   const w = length * scale, h = width * scale, x0 = (490 - w) / 2, y0 = (330 - h) / 2;
   // Plan y grows upward from the origin corner: draw it bottom-up.
   const px = (x, y) => [x0 + x * scale, y0 + h - y * scale];
-  const rodNote = geometry.rods?.length ? "posiciones del artefacto" : "repartidas en el perímetro";
+  const rodNote = geometry.rods?.length ? "posiciones del diseño" : "repartidas en el perímetro";
   return <svg className="agent-grid-svg" viewBox="0 0 490 350" role="img" aria-label={`Terreno de ${length} por ${width} m, ${areas.length} zonas, ${gridDescription(geometry)}, ${rods.length} varillas y ${structures.length} elementos constructivos`}>
     <defs><pattern id="artifact-grid-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#9aa0a3" strokeWidth="1.2"/></pattern></defs>
     <rect x={x0} y={y0} width={w} height={h} fill="#fbfcfb" stroke="#b7c8c0" strokeDasharray="4 3"/>
@@ -140,7 +140,7 @@ function AgentArtifactPanel({ project, conversation, token, refreshKey, onOpenGr
         // A user-created artifact may predate the conversation state. The API returns
         // latest versions first, so keep the workspace useful while a valid version exists.
         setArtifact(artifacts.find((a) => a.artifact_id === state.artifact_id) || artifacts[0] || null);
-      } catch (e) { if (live) setError("No se pudo cargar el artefacto."); }
+      } catch (e) { if (live) setError("No se pudo cargar el diseño."); }
     })();
     return () => { live = false; };
   }, [project.id, conversation?.id, token, refreshKey]);
@@ -158,7 +158,7 @@ function AgentArtifactPanel({ project, conversation, token, refreshKey, onOpenGr
   const soilNote = snapshot?.soil_measurements ? `${formatValue(snapshot.soil_measurements)}${soilSource?.kind === "tool" && soilSource.note ? ` · ${soilSource.note}` : ""}` : "";
   const origin = artifact?.origin?.kind === "agent" ? "Creada por el agente" : "Creada por el usuario";
   const openEvidence = (source) => setEvidenceSource(source);
-  return <aside className="panel artifact-side-panel"><div className="panel-heading"><div><Box size={17}/><h2>Artefacto de puesta a tierra</h2></div>{artifact && <span className="muted-label">Versión {artifact.version}</span>}</div>
+  return <aside className="panel artifact-side-panel"><div className="panel-heading"><div><Box size={17}/><h2>Diseño de puesta a tierra</h2></div>{artifact && <span className="muted-label">Versión {artifact.version}</span>}</div>
     {snapshot ? <>
       {snapshot.geometry ? <div className="agent-grid-preview"><ArtifactGrid geometry={snapshot.geometry}/>{planWarnings.map((warning, i) => <p key={i} className="artifact-update-warning">{warning.kind === "disconnected" ? `La malla tiene ${warning.parts} partes separadas: el cálculo las trata como un solo conductor, lo que solo es cierto si un conductor de unión las conecta.` : warning.message}</p>)}</div> : <div className="artifact-preview-empty"><Box size={22}/><strong>Sin malla todavía</strong><span>Pídele al agente la geometría, por ejemplo: «malla de 40 × 30 m con retícula de 5 m».</span></div>}
       <div className="artifact-status"><strong>{artifact.name}</strong><span>{origin} · {new Date(artifact.created_at * 1000).toLocaleString("es-CO")}</span></div>
@@ -170,7 +170,7 @@ function AgentArtifactPanel({ project, conversation, token, refreshKey, onOpenGr
       <div className="artifact-status"><strong>Falla <ProvenanceChip provenance={provenance} path="fault" onOpen={openEvidence}/></strong>{snapshot.fault?.current_a && snapshot.fault?.clearing_time_s ? <span>{formatValue(snapshot.fault.current_a)} A · {formatValue(snapshot.fault.clearing_time_s)} s · capa superficial {formatValue(snapshot.fault.surface_resistivity_ohm_m)} Ω·m, {formatValue(snapshot.fault.surface_thickness_m)} m</span> : <span className="no-information">Pendiente: {[!snapshot.fault?.current_a && "corriente de falla", !snapshot.fault?.clearing_time_s && "tiempo de despeje"].filter(Boolean).join(", ")}. Se necesitan para el cálculo de seguridad.</span>}</div>
       {snapshot.conductor && <div className="artifact-status"><strong>Conductor <ProvenanceChip provenance={provenance} path="conductor" onOpen={openEvidence}/></strong><span>{fieldValueLabel("conductor.material_id", snapshot.conductor.material_name || snapshot.conductor.material_id)} · {formatValue(snapshot.conductor.cross_section_mm2)} mm² · unión {fieldValueLabel("conductor.joint_type", snapshot.conductor.joint_type)}</span></div>}
       {evidenceSource && <ArtifactEvidencePanel project={project} token={token} source={evidenceSource} onClose={() => setEvidenceSource(null)} onOpenGraph={onOpenGraph}/>}
-    </> : <div className="artifact-preview-empty"><Box size={25}/><strong>Aún no hay un artefacto de malla</strong><span>{error || "Pídele al agente en el chat que diseñe la malla, por ejemplo: «créame una malla de 40 × 30 m con retícula de 5 m»."}</span></div>}
+    </> : <div className="artifact-preview-empty"><Box size={25}/><strong>Aún no hay un diseño de malla</strong><span>{error || "Pídele al agente en el chat que diseñe la malla, por ejemplo: «créame una malla de 40 × 30 m con retícula de 5 m»."}</span></div>}
   </aside>;
 }
 
@@ -202,14 +202,14 @@ function ArtifactUpdateCard({ message, token, project, onView, onUndone }) {
   }
   const created = update.previous_version == null;
   return <article className="artifact-update-card">
-    <div className="artifact-update-head"><PencilRuler size={15}/><strong>{created ? "Se creó el artefacto" : "Se editó el artefacto"}</strong><span>{update.name} · versión {update.version}</span></div>
+    <div className="artifact-update-head"><PencilRuler size={15}/><strong>{created ? "Se creó el diseño" : "Se editó el diseño"}</strong><span>{update.name} · versión {update.version}</span></div>
     <p>{update.summary}</p>
     <div className="artifact-update-changes">{update.changes.slice(0, 8).map((change) => <div key={change.path}><span>{fieldLabels[change.path] || change.path}</span><small>{change.confirmed ? <><b>{formatValue(fieldValueLabel(change.path, change.after))}</b> · confirmado</> : <>{created ? "" : `${formatValue(fieldValueLabel(change.path, change.before))} → `}<b>{formatValue(fieldValueLabel(change.path, change.after))}</b></>}</small></div>)}{update.changes.length > 8 && <div><span>+{update.changes.length - 8} cambios más</span></div>}</div>
     {!created && stale && <p className="artifact-update-warning">El resultado quedó desactualizado · recalcula para esta versión.</p>}
     {update.missing_for_calculation?.length > 0 && <p className="artifact-update-warning">Para el cálculo de seguridad faltan: {update.missing_for_calculation.map((path) => fieldLabels[path] || path).join(", ")}.</p>}
     <div className="artifact-update-actions">
       <button className="button" disabled={state === "busy" || state === "undone"} onClick={undo}><Undo2 size={14}/> {state === "undone" ? "Deshecho" : created ? "Deshacer (eliminar)" : `Deshacer (volver a v${update.previous_version})`}</button>
-      <button className="button primary" onClick={onView}><Eye size={14}/> Ver artefacto</button>
+      <button className="button primary" onClick={onView}><Eye size={14}/> Ver diseño</button>
     </div>
     {state === "error" && <p className="artifact-update-warning">No se pudo deshacer el cambio.</p>}
   </article>;
@@ -376,7 +376,7 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
   return <aside className="panel artifact-side-panel agent-results-panel"><div className="panel-heading"><div><Activity size={17}/><h2>Resultados</h2></div><div className="artifact-results-heading-actions">{calculation && <span className="muted-label">Versión {calculation.artifact_version}</span>}{recalculateButton}</div></div>
     {actionError && <p className="artifact-update-warning">{actionError}</p>}
     {designLoopResult && <div className="artifact-status" data-testid="design-loop-result"><strong>Optimización automática</strong><span>{designLoopResult.reason === "goal_met" ? "Se alcanzó cumplimiento." : designLoopResult.reason === "no_improvement" ? "La última iteración no mejoró el mejor margen." : designLoopResult.reason === "iteration_limit" ? "Se alcanzó el límite de iteraciones." : "El bucle terminó sin completar otra iteración."} Iteraciones: {designLoopResult.iterations_used}/{designLoopResult.max_iterations}.</span>{bestCandidate && <span>Mejor candidato: versión {bestCandidate.artifact_version}, cálculo {bestCandidate.calculation_id}{Number.isFinite(bestCandidate.margin_percent) ? ` · margen mínimo ${bestCandidate.margin_percent.toLocaleString("es-CO", { maximumFractionDigits: 1 })}%` : ""}.</span>}{canRestoreBest && <button className="button primary" data-testid="restore-best-design-candidate" disabled={restoringBest || recalculating} onClick={restoreBestCandidate}><Undo2 size={14}/>{restoringBest ? "Restaurando y recalculando…" : "Recuperar mejor versión y recalcular"}</button>}</div>}
-    {!calculation ? <div className="artifact-results-empty"><p className="no-information">{state === "error" ? "No se pudieron cargar los resultados." : "Sin cálculo para esta versión del artefacto."}</p>{artifact && <p className="no-information">Completa y confirma los parámetros eléctricos antes de recalcular.</p>}</div>
+    {!calculation ? <div className="artifact-results-empty"><p className="no-information">{state === "error" ? "No se pudieron cargar los resultados." : "Sin cálculo para esta versión del diseño."}</p>{artifact && <p className="no-information">Completa y confirma los parámetros eléctricos antes de recalcular.</p>}</div>
       : calculation.status !== "completed" ? <div className="artifact-status"><strong>Cálculo {calculation.status === "pending" || calculation.status === "running" ? "en curso…" : calculation.status}</strong>{calculation.error && <span className="no-information">{calculation.error}</span>}</div>
       : <>
         {freshnessLabel && <div className="artifact-update-warning">{freshnessLabel} {recalculateButton}</div>}

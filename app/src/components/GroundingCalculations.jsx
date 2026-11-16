@@ -265,14 +265,14 @@ function ArtifactPanel({ fit = null, calculation = null, design = null }) {
       <div className="panel-heading">
         <div>
           <Box size={17} />
-          <h2>Artefacto de puesta a tierra</h2>
+          <h2>Diseño de puesta a tierra</h2>
         </div>
         <span className="muted-label">{result ? "Calculado" : "Borrador"}</span>
       </div>
       <div className="artifact-preview-empty">
         <Box size={25} />
         <strong>
-          {design ? "Geometría del diseño" : "Aún no hay un artefacto de malla"}
+          {design ? "Geometría del diseño" : "Aún no hay un diseño de malla"}
         </strong>
         <span>
           {design
@@ -1411,7 +1411,7 @@ function GroundingCalculations({
           )}
           {soilReady && (
             <p className="calc-help">
-              El perfil se guardará en el artefacto cuando ejecutes el cálculo.
+              El perfil se guardará en el diseño cuando ejecutes el cálculo.
             </p>
           )}
         </section>

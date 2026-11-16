@@ -11,7 +11,7 @@ const featureNames = {
   soil: "Modelo de suelo",
   safety: "Parámetros eléctricos",
   plan: "Plano de puesta a tierra",
-  artifact: "Artefacto de puesta a tierra",
+  artifact: "Diseño de puesta a tierra",
   results: "Resultados de seguridad",
   study: "Estudio público",
 };

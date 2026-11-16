@@ -441,7 +441,7 @@ def announce_user_artifact_update(db, project_id: str, row: dict, previous: dict
         "missing_for_calculation": missing_for_calculation(row["snapshot"]),
     }
     db.add("chat_messages", id=str(uuid4()), conversation_id=conversation_id, source="notification",
-           text=f"Se editó el artefacto «{row['name']}» (versión {row['version']}): {summary}",
+           text=f"Se editó el diseño «{row['name']}» (versión {row['version']}): {summary}",
            type="text", generated_at=now, created_at=now, updated_at=now, status="completed",
            task_id=None, run_id=None, payload=payload, created_ms=now * 1000)
     db.change("conversations", conversation_id, updated_at=now)
