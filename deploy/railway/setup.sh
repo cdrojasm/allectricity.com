@@ -1,12 +1,13 @@
 #!/bin/sh
 # Creates the Railway project for the free pilot: services, volumes, public domains and every NON-secret variable.
 # Secrets are set separately by the owner with deploy/railway/secrets.sh; code is deployed with deploy.sh.
-# Usage (from the repository root, after `railway login`):  sh deploy/railway/setup.sh [project-name]
+# Usage (from the repository root, after `railway login`):  sh deploy/railway/setup.sh [project-name] [workspace]
 set -eu
 cd "$(dirname "$0")/../.."
 NAME=${1:-terra-piloto}
+WORKSPACE=${2:-}
 
-railway init -n "$NAME"
+if [ -n "$WORKSPACE" ]; then railway init -n "$NAME" -w "$WORKSPACE"; else railway init -n "$NAME"; fi
 railway add -d postgres
 railway add -d redis
 for service in api scheduler agent-worker document-worker calculation-worker optimizer-worker mail-worker \
