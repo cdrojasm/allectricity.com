@@ -112,8 +112,18 @@ def _design_margins(summary: dict) -> list[dict]:
     return entries
 
 
-def reconcile_final_response(text: str, applied: dict | None) -> str:
-    """Build the final claim from persisted changes, never from the model's recollection."""
+def reconcile_final_response(text: str, applied: dict | None, rejected: list | None = None) -> str:
+    """Build the final claim from persisted changes, never from the model's recollection.
+
+    `rejected` are changes refused after the last saved version (or in a step that saved nothing): they are
+    always reported, so a request that partly failed never reads as fully done.
+    """
+    if rejected:
+        if applied:
+            applied = {**applied, "rejected": list(dict.fromkeys([*(applied.get("rejected") or []), *rejected]))}
+        else:
+            base = reconcile_final_response(text, None)
+            return f"{base.rstrip()} Cambios no aplicados: " + "; ".join(str(item) for item in rejected) + "."
     if applied:
         changes = applied.get("changes") or []
         fields = ", ".join(
@@ -122,7 +132,13 @@ def reconcile_final_response(text: str, applied: dict | None) -> str:
         )
         detail = f" Campos guardados: {fields}." if fields else ""
         summary = str(applied.get("summary") or "Cambios al artefacto").rstrip(". ")
-        return f"Se guardó la versión {applied['version']} del diseño: {summary}.{detail}"
+        saved_paths = {item.get("path") for item in changes}
+        # A field refused once and then saved on a retry is not a rejection.
+        rejected = [item for item in applied.get("rejected") or []
+                    if str(item).split(":", 1)[0].strip() not in saved_paths]
+        rejection_detail = (" Cambios no aplicados: " + "; ".join(str(item) for item in rejected) + "."
+                            if rejected else "")
+        return f"Se guardó la versión {applied['version']} del diseño: {summary}.{detail}{rejection_detail}"
     if re.search(r"\b(?:guard[eé]|cre[eé]|apliqu[eé]|actualic[eé])\b.{0,50}\b(?:versi[oó]n|diseñ|artefacto)\b",
                  text, re.IGNORECASE):
         return "No se guardó una versión nueva del diseño en este paso."
@@ -178,6 +194,7 @@ class ArtifactWorkspace:
         self.queued_calculation = None
         self.applied = False
         self.last_applied = None
+        self.rejected_changes = []
         with store.transaction() as db:
             state = db.one("agent_conversation_state", id=run["conversation_id"]) or {}
             self.artifacts = {row["artifact_id"]: row for row in db.designs.latest_by_artifact(run["project_id"])}
@@ -347,6 +364,7 @@ class ArtifactWorkspace:
             self.runs.progress(self.run["id"], EventType.TOOL_CALLED,
                                f"Actualicé {len(applied)} campo(s) del borrador",
                                payload={"paths": applied, "reason": str(args.get("reason") or "")[:300]})
+        self.rejected_changes.extend(errors)
         return {"applied": applied, "errors": errors}
 
     def _set_conductors(self, conductors: list[dict], ref: str, note: str) -> dict:
@@ -717,6 +735,7 @@ class ArtifactWorkspace:
             # Nothing was saved: the draft stays as it was, so the work in progress is not lost.
             self.draft, self.provenance = kept
             self._save()
+            self._record_rejected(result.get("errors"), result.get("skipped"))
             return result
 
         if not check["valid"]:
@@ -764,12 +783,30 @@ class ArtifactWorkspace:
         self.provenance = dict(row["origin"]["provenance"])
         self.artifacts[row["artifact_id"]] = row
         self.applied = True
+        self._record_rejected(None, skipped)  # sections left at their saved value did not make it into this version
         self.last_applied = {"version": row["version"], "summary": change["summary"],
-                             "paths": [item["path"] for item in shown], "changes": shown}
+                             "paths": [item["path"] for item in shown], "changes": shown,
+                             "rejected": list(self.rejected_changes)}
+        self.rejected_changes.clear()
         return {"artifact_id": row["artifact_id"], "version": row["version"], "name": row["name"],
                 "unconfirmed_critical": change["unconfirmed_critical"],
                 "missing_for_calculation": change["missing_for_calculation"],
                 "skipped": skipped or None}
+
+    def _record_rejected(self, errors, skipped) -> None:
+        """Remember changes that did not reach a version, so the final answer can say so."""
+        for item in [*(errors or []), *[error for section in (skipped or {}).values() for error in section]]:
+            if item not in self.rejected_changes:
+                self.rejected_changes.append(item)
+
+    def discard_draft(self) -> None:
+        """Drop unsaved draft changes: the draft goes back to the saved version it is based on."""
+        if self.artifact_id and self.artifact_id in self.artifacts:
+            self._load(self.artifact_id)
+        else:
+            self.draft, self.provenance = (dict(self.base) if self.base else {}), {}
+        self.pending_layout = None
+        self._save()
 
     def restore_version(self, version: int, summary: str) -> dict:
         """Save an earlier version's snapshot as a new version (history is never rewritten)."""
@@ -1202,8 +1239,10 @@ class GroundingDesignAgent:
                 return False, {"error": "The draft has changes that were not applied: call apply_changes, or call "
                                         "respond_to_user again to leave them unapplied",
                                "pending_changes": [c["path"] for c in pending]}
-            args["text"] = reconcile_final_response(str(args.get("text") or ""), workspace.last_applied)
+            args["text"] = reconcile_final_response(str(args.get("text") or ""), workspace.last_applied,
+                                                    list(workspace.rejected_changes))
             workspace.last_applied = None
+            workspace.rejected_changes.clear()
             return True, {"ok": True}
 
         result = runtime.run_tool_agent(client, model_for("AGENT_ORCHESTRATOR_MODEL"), messages, tools, handlers,
@@ -1375,10 +1414,13 @@ class GroundingDesignAgent:
                 "del usuario. Prioriza la restricción dominante y aplica el cambio más conservador que pueda mejorar "
                 f"el margen. Resultado determinista: {json.dumps(finished, ensure_ascii=False)}")
         designed = run_grid_designer(client, prompts, workspace, task, usage)
-        if not designed.get("applied"):
+        if not designed.get("applied") or designed.get("errors"):
+            # The designer never produced a change that validates: drop it, never try to save it.
+            workspace.discard_draft()
             runs.progress(run["id"], EventType.SUBAGENT_COMPLETED,
                           "No se pudo proponer una mejora automática",
-                          level=EventLevel.WARNING, payload={"iteration": iteration})
+                          level=EventLevel.WARNING,
+                          payload={"iteration": iteration, "errors": (designed.get("errors") or [])[:5]})
             return self._close_design_loop(runs, run, "no_valid_candidate", best_candidate, iteration, limit,
                                            workspace)
         saved = workspace.apply({"summary": f"Iteración automática {iteration}: mejora de seguridad"})

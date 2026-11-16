@@ -1,0 +1,17 @@
+# Local only: forces the autonomous-loop branches for app/smoke-ui/specs/08-p1-casos-forzados.spec.js.
+# Used together with deploy/local/docker/docker-compose.yml; relative paths resolve from deploy/local/docker.
+# Restore the normal worker afterwards with `make local-up`.
+services:
+  llm-stub:
+    image: grounding-design-ai-agent-worker
+    container_name: grounding-design-ai-llm-stub
+    profiles: ["loop-stub"]
+    entrypoint: ["python", "/stub/llm_stub.py"]
+    environment:
+      STUB_SCENARIO: ${SMOKE_LOOP_SCENARIO:-worse}
+    volumes:
+      - ../../../app/smoke-ui/loop-scenarios:/stub:ro
+  agent-worker:
+    environment:
+      DESIGN_MAX_ITERATIONS: ${SMOKE_DESIGN_MAX_ITERATIONS:-3}
+      LLM_BASE_URL: ${SMOKE_LLM_BASE_URL:-}

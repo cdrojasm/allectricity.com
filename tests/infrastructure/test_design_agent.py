@@ -485,6 +485,37 @@ def test_final_response_uses_only_the_persisted_change(claim):
     assert response == 'Se guardó la versión 4 del diseño: Ajuste de ancho. Campos guardados: geometry.width_m=31.'
 
 
+def test_final_response_includes_rejected_changes_alongside_saved_changes():
+    applied = {"version": 6, "summary": "Ajuste de ancho",
+               "changes": [{"path": "geometry.width_m", "before": 30, "after": 38}],
+               "rejected": ["geometry.burial_depth_m: not applied, debe ser positivo"]}
+    assert reconcile_final_response("Listo.", applied) == (
+        "Se guardó la versión 6 del diseño: Ajuste de ancho. Campos guardados: geometry.width_m=38. "
+        "Cambios no aplicados: geometry.burial_depth_m: not applied, debe ser positivo.")
+
+
+def test_final_response_reports_changes_rejected_after_the_saved_version():
+    applied = {"version": 6, "summary": "Ancho", "rejected": [],
+               "changes": [{"path": "geometry.width_m", "before": 30, "after": 38}]}
+    response = reconcile_final_response("Guardé la profundidad de -2 m.", applied,
+                                        ["geometry: geometry.burial_depth_m: debe ser mayor que 0"])
+    assert response.startswith("Se guardó la versión 6 del diseño: Ancho. Campos guardados: geometry.width_m=38.")
+    assert response.endswith("Cambios no aplicados: geometry: geometry.burial_depth_m: debe ser mayor que 0.")
+
+
+def test_final_response_drops_a_rejection_that_a_retry_saved():
+    applied = {"version": 2, "summary": "Ancho", "changes": [{"path": "geometry.width_m", "before": 30, "after": 31}],
+               "rejected": ["geometry.width_m: m1 is not a user message of this conversation"]}
+    assert "no aplicados" not in reconcile_final_response("Listo.", applied)
+
+
+def test_final_response_reports_rejections_when_nothing_was_saved():
+    response = reconcile_final_response("Guardé la versión 7 del diseño.", None,
+                                        ["geometry.burial_depth_m: not applied, debe ser positivo"])
+    assert response == ("No se guardó una versión nueva del diseño en este paso. Cambios no aplicados: "
+                        "geometry.burial_depth_m: not applied, debe ser positivo.")
+
+
 def test_final_response_does_not_claim_a_version_when_nothing_was_persisted():
     assert reconcile_final_response("Guardé la versión 5 del diseño.", None) == (
         "No se guardó una versión nueva del diseño en este paso.")
@@ -504,7 +535,8 @@ def test_response_does_not_claim_a_saved_version_after_change_validation_fails(c
     assert run_of(client, tokens, sent["run_id"])["status"] == "completed"
     assert artifacts(client, tokens, project) == []
     assistant = [message for message in messages(client, tokens, conversation) if message["source"] == "agent"][-1]
-    assert assistant["text"] == "No se guardó una versión nueva del diseño en este paso."
+    assert assistant["text"] == ("No se guardó una versión nueva del diseño en este paso. "
+                                 "Cambios no aplicados: Path not editable by the agent: compliance.")
 
 
 class LoopRunsStub:
@@ -552,10 +584,32 @@ def test_autonomous_loop_closes_when_designer_cannot_propose_a_valid_change(monk
     finished = {"calculation_id": "calc-current", "artifact_version": 2, "verdict": "no_cumple"}
     best = {"calculation_id": "calc-current", "artifact_version": 2, "verdict": "no_cumple", "score": -5.0}
     monkeypatch.setattr(design_agent_module, "run_grid_designer", lambda *_args: {"applied": False})
+    workspace = SimpleNamespace(discarded=0, artifact_id=None)
+    workspace.discard_draft = lambda: setattr(workspace, "discarded", workspace.discarded + 1)
     outcome = GroundingDesignAgent(None)._automatic_iteration(
-        None, None, None, run, runs, finished, AgentMode.AUTONOMO, {}, best)
+        None, None, workspace, run, runs, finished, AgentMode.AUTONOMO, {}, best)
     assert "No se pudo guardar una mejora válida" in outcome.text
     assert runs.usage[-1][1]["design_loop_result"]["reason"] == "no_valid_candidate"
+    assert workspace.discarded == 1
+
+
+def test_autonomous_loop_discards_a_designer_change_that_never_validated(monkeypatch):
+    """The designer set a field but the geometry kept failing validation: never try to save it."""
+    monkeypatch.setenv("DESIGN_MAX_ITERATIONS", "3")
+    runs = LoopRunsStub()
+    run = {"id": "run-1", "mode": "autonomo", "usage": {"design_iterations": 0}}
+    finished = {"calculation_id": "calc-current", "artifact_version": 2, "verdict": "no_cumple"}
+    best = {"calculation_id": "calc-current", "artifact_version": 2, "verdict": "no_cumple", "score": -5.0}
+    monkeypatch.setattr(design_agent_module, "run_grid_designer", lambda *_args: {
+        "applied": ["geometry.burial_depth_m"], "errors": ["geometry.burial_depth_m: debe ser positivo"]})
+    workspace = SimpleNamespace(discarded=0, artifact_id=None, apply=lambda *_: pytest.fail("an invalid change must not be saved"))
+    workspace.discard_draft = lambda: setattr(workspace, "discarded", workspace.discarded + 1)
+    outcome = GroundingDesignAgent(None)._automatic_iteration(
+        None, None, workspace, run, runs, finished, AgentMode.AUTONOMO, {}, best)
+    assert runs.usage[-1][1]["design_loop_result"]["reason"] == "no_valid_candidate"
+    assert "No se pudo guardar una mejora válida" in outcome.text and workspace.discarded == 1
+    failed = [event for event in runs.events if event[2] == "No se pudo proponer una mejora automática"]
+    assert failed[0][3]["payload"]["errors"] == ["geometry.burial_depth_m: debe ser positivo"]
 
 
 def calculation_setup(chat, artifact=ARTIFACT):

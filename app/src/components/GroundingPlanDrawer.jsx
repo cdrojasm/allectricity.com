@@ -721,7 +721,7 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
           {optimizerContext&&<div className="optimizer-context-result">
             <strong className={`optimizer-context-status ${optimizerContext.status}`}>{optimizerContext.status === "ready" ? "Contexto listo" : "Optimización bloqueada"}</strong>
             {optimizerContext.status !== "ready"&&<p>Falta un perfil normativo revisado o hay criterios obligatorios pendientes. No se habilitan variables ni se puede iniciar una corrida.</p>}
-            {optimizerContext.profile&&<small>Perfil: {optimizerContext.profile.profile_id} · v{optimizerContext.profile.version}</small>}
+            {optimizerContext.profile&&optimizerContext.profile.version!=="none"&&<small>Perfil: {optimizerContext.profile.profile_id} · v{optimizerContext.profile.version}</small>}
             {optimizerContext.missing_mandatory_criteria?.length>0&&<small>Criterios pendientes: {optimizerContext.missing_mandatory_criteria.join(", ")}</small>}
             {Object.keys(optimizerContext.variable_bounds||{}).length>0&&<><h4>Límites continuos</h4>{Object.entries(optimizerContext.variable_bounds).map(([name,bounds])=><div className="optimizer-context-row" key={name}><span>{name}</span><strong>{bounds.min}–{bounds.max}</strong><small>{(optimizerContext.bound_provenance?.[name]||[]).map((source)=>source.source_type||source.rule_id||source.document||"Fuente").join(" · ")}</small></div>)}</>}
             {Object.keys(optimizerContext.frozen_variables||{}).length>0&&<><h4>Variables congeladas</h4>{Object.entries(optimizerContext.frozen_variables).map(([name,reason])=><div className="optimizer-context-row frozen" key={name}><span>{name}</span><small>{reason}</small></div>)}</>}
