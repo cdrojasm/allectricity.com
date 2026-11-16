@@ -102,10 +102,10 @@ ol.order{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;m
 
 <div class="wrap">
 <header>
-  <span class="eyebrow">Recorrido de producto · 15 nov 2026 · perfil diseñador · stack local · segunda corrida</span>
+  <span class="eyebrow">Recorrido de producto · 15 nov 2026 · perfil diseñador · stack local · recorrido + revisión de código</span>
   <h1>Mapa de flujos Terra</h1>
   <p class="lede">Repetí el recorrido del 14 nov sobre la rama actual, como lo haría un ingeniero que llega por primera vez: crear un proyecto, pedirle al agente una malla de 40 × 30 m, intentar llevarla a cumplir IEEE 80 (con el agente y con el optimizador de topologías) y compartir el estudio. Cada paso tiene su pantallazo de esta corrida.</p>
-  <p class="lede">La columna «Estado» de los hallazgos compara con el recorrido del 14 nov: qué se verificó resuelto en la app y qué sigue roto. La sección <a href="#cambios">Qué cambió</a> lo resume.</p>
+  <p class="lede">Las capturas corresponden al recorrido del 15 nov sobre <code>82e3a13</code>. La sección <a href="#cambios">Qué cambió</a> añade la revisión del código actual en <code>2b3df90</code>; los cambios de código todavía requieren repetirse en la app.</p>
   <div class="verdict">
     <div>
       <span class="eyebrow">Veredicto</span>
@@ -123,9 +123,8 @@ ol.order{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;m
     <div>
       <span class="eyebrow">Lo que impide usarlo de verdad</span>
       <ul>
-        <li>«Optimizar hasta cumplir» responde sin iterar; el optimizador de topologías falla sin perfil normativo revisado.</li>
-        <li>El editor de plano no muestra la malla del agente («0 elementos»).</li>
-        <li>El agente dice «no se realizaron cambios» justo después de crear la versión 3.</li>
+        <li>El optimizador de topologías falla sin perfil normativo revisado.</li>
+        <li>El recorrido capturado muestra el plano vacío y una respuesta del agente que niega cambios; el código actual incluye correcciones para ambos casos, pendientes de repetir en la app.</li>
       </ul>
     </div>
   </div>
@@ -157,19 +156,20 @@ ol.order{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;m
   <h2>Estrategia por hallazgo</h2>
   <p>Propuesta del 14 nov, ajustada con lo que mostró este recorrido. Casi todo lo que falla ya tiene las piezas construidas; la estrategia sigue siendo conectar y cerrar lo que hay.</p>
   <div id="strat" style="display:flex;flex-direction:column;gap:18px"></div>
-  <h3 id="cambios">Qué cambió desde el 14 nov · verificado en la app</h3>
+  <h3 id="cambios">Qué cambió desde el 14 nov · recorrido y revisión de código</h3>
   <ul class="order" style="list-style:disc">
     <li><strong>Resuelto y comprobado:</strong> login en español; Inicio sin actividad fantasma; la ciudad escrita se respeta; insignia de estado (Sin diseño → Borrador → No cumple · publicado); Resumen con veredicto; Parámetros y Suelo leen la versión guardada; sin «Cargar mensajes anteriores» en un chat vacío; catálogo accesible desde el proyecto con el proyecto ya elegido; borrado que avisa del estudio publicado.</li>
     <li><strong>Estudio:</strong> «Publicar estudio» es la acción principal, publicar un «No cumple» exige confirmación y deja la banda «Diseño no conforme», el resumen con IA usa los valores reales, hay «Ver estudio», enlace visible y estado del PDF con «Descargar». El estudio trae lista de materiales.</li>
     <li><strong>Chat:</strong> el estado del cálculo ya no se contradice («en curso» → «terminado» → resultado), y las respuestas muestran listas.</li>
-    <li><strong>Sigue roto:</strong> llegar a «Cumple» (agente y optimizador), el plano vacío y el agente negando cambios que sí hizo.</li>
-    <li><strong>Nuevo:</strong> el optimizador de topologías no se puede usar desde una cuenta nueva: exige un perfil normativo revisado que la interfaz no deja elegir, y el error sale en inglés con códigos internos.</li>
+    <li><strong>Corregido en código; falta repetir el recorrido:</strong> «Optimizar hasta cumplir» inicia el modo autónomo desde el cálculo vigente; el agente realiza hasta <code>DESIGN_MAX_ITERATIONS</code> (3 por defecto), guarda cada mejora como versión y recalcula. Al recibir un cálculo no conforme continúa el ciclo. El cierre todavía depende de la salida del agente si no puede proponer una mejora y el candidato de mejor margen se registra, pero no se restaura automáticamente.</li>
+    <li><strong>Corregido en código; falta repetir el recorrido:</strong> el editor materializa la retícula y las varillas paramétricas al abrir el plano cuando no hay elementos explícitos; la respuesta final del agente corrige una negación de cambios si ya se creó una versión.</li>
+    <li><strong>Sigue bloqueado:</strong> el optimizador de topologías necesita un perfil normativo revisado y la interfaz no permite seleccionarlo. Esta dependencia requiere revisión normativa antes de activar un perfil por defecto.</li>
   </ul>
   <h3>Orden recomendado</h3>
   <ol class="order">
-    <li><strong>Hallazgo 11 y 1 · llegar a «Cumple»:</strong> un perfil IEEE 80 revisado por defecto (OP-20) y que «Optimizar hasta cumplir» use la búsqueda de topologías (PR-33) en vez de responder con texto. Sin esto la promesa no se cumple.</li>
-    <li><strong>Hallazgo 2 · plano:</strong> que el editor dibuje la retícula del agente (convertir <code>geometry</code> paramétrica en conductores al abrirlo).</li>
-    <li><strong>Hallazgo 3 · el agente niega lo que hizo:</strong> la respuesta final debe salir del diff de la versión creada, no de la opinión del modelo.</li>
+    <li><strong>Hallazgo 11 · optimizador:</strong> resolver la selección del perfil normativo revisado para cuentas nuevas, con la revisión de especialista requerida.</li>
+    <li><strong>Hallazgo 1 · llegar a «Cumple»:</strong> probar en la app el bucle autónomo ya implementado; comprobar que mejora, crea versiones y recalcula, y cerrar correctamente al cumplir, agotar iteraciones o no poder mejorar.</li>
+    <li><strong>Hallazgos 2 y 3 · plano y respuesta:</strong> repetir en la app para validar que la malla paramétrica se dibuja y que el agente reconoce la versión creada.</li>
     <li><strong>Hallazgo 4 · estudio:</strong> referencias sin claves internas, marca de borrador cuando hay supuestos y el plano de la malla.</li>
     <li>El resto: vocabulario (<code>bolted</code>, <code>copper_hard_drawn</code>, <code>study</code>, <code>PDF: none</code>), Inicio por perfil, tokens consumidos.</li>
   </ol>
@@ -271,10 +271,10 @@ const STEPS=[
   finds:[["ok","El catálogo propone Medellín como ciudad aunque el proyecto está en Bogotá."],["ok","La actividad reciente muestra «study» sin traducir."]]}
 ];
 const PRIO=[
- ["bad","P0","El diseño no llega a «Cumple» por el camino principal.","Conectar «Optimizar hasta cumplir» a la búsqueda de topologías (PR-33) o iterar de verdad; cerrar siempre con «Cumple en vN» o «no alcanzable: cambia X».",["bad","Sigue roto","El botón existe, pero el agente responde en texto sin iterar ni crear versiones."]],
+ ["bad","P0","El diseño no llega a «Cumple» por el camino principal.","Validar el bucle autónomo con iteraciones reales y versiones nuevas; cerrar al cumplir, agotar intentos o no encontrar una mejora.",["warn","Implementado; E2E pendiente","El código inicia modo autónomo desde el cálculo vigente, itera y recalcula. Falta repetir el recorrido; el mejor candidato se registra pero no se restaura automáticamente."]],
  ["bad","P0","El optimizador de topologías no se puede usar desde una cuenta nueva.","Perfil IEEE 80 revisado por defecto (OP-20) o selector de perfil; errores en español; ocultar JSON y variables; tarifas desde el catálogo.",["bad","Nuevo","Falla con «OP-05 context is blocked: normative_profile_not_selected»."]],
- ["bad","P0","Formularios de Parámetros, Suelo y Plano no reflejan el artefacto.","Que todas las pestañas lean y escriban la misma versión del artefacto.",["warn","Parcial","Parámetros, Suelo y Resumen correctos. El plano sigue vacío («0 elementos»)."]],
- ["bad","P0","El chat y el panel de resultado se contradicen.","Un solo origen para el estado del cálculo y para lo que cambió en cada versión.",["warn","Parcial","El estado del cálculo ya es coherente. El agente niega cambios que sí hizo (v3)."]],
+ ["bad","P0","Formularios de Parámetros, Suelo y Plano no reflejan el artefacto.","Que todas las pestañas lean y escriban la misma versión del artefacto.",["warn","Corregido en código; E2E pendiente","El plano materializa la geometría paramétrica al abrir. Parámetros, Suelo y Resumen ya coincidían en el recorrido anterior."]],
+ ["bad","P0","El chat y el panel de resultado se contradicen.","Un solo origen para el estado del cálculo y para lo que cambió en cada versión.",["warn","Corregido en código; E2E pendiente","La respuesta final sustituye la negación de cambios si el agente ya creó una versión."]],
  ["bad","P0","El estudio público sale con resumen falso, claves internas y sin freno al publicar un «No cumple».","Resumen desde el resultado fijado, referencias en lenguaje de ingeniería, confirmación y marca de borrador.",["warn","Casi resuelto","Resumen fiel, confirmación y banda verificados. Faltan referencias legibles, marca de borrador con supuestos y plano."]],
  ["warn","P1","El Resumen y el Inicio no muestran el veredicto del diseño.","Estado visible por proyecto y en la primera pestaña.",["ok","Resuelto","Verificado: insignia en Inicio, Proyectos y cabecera; veredicto en Resumen."]],
  ["warn","P1","Editor de estudio sin terminar: estilos, jerarquía de botones, vista previa, estado del PDF.","Componentes de la app, «Publicar» como acción principal, «Ver estudio».",["ok","Casi resuelto","Verificado. Faltan «PDF: none», el selector de logo nativo y el guardado automático."]],
