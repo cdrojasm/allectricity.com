@@ -56,6 +56,18 @@ test.describe.serial("optimizador de topologías", () => {
     const created = await post(admin, "/api/v1/constraint-profiles", { profile_id: seed.profileId, definition: PROFILE });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
     expect((await post(admin, `/api/v1/constraint-profiles/${seed.profileId}/versions/1/review`, {})).status).toBe(200);
+    seed.draftProfileId = runId().toLowerCase();
+    const draft = await post(admin, "/api/v1/constraint-profiles", {
+      profile_id: seed.draftProfileId, definition: { ...PROFILE, title: "Perfil borrador smoke-ui" },
+    });
+    expect(draft.status, JSON.stringify(draft.body)).toBe(201);
+    seed.incompatibleProfileId = runId().toLowerCase();
+    const incompatible = await post(admin, "/api/v1/constraint-profiles", {
+      profile_id: seed.incompatibleProfileId,
+      definition: { ...PROFILE, title: "Perfil incompatible smoke-ui", installation_type: "industrial_ac" },
+    });
+    expect(incompatible.status, JSON.stringify(incompatible.body)).toBe(201);
+    expect((await post(admin, `/api/v1/constraint-profiles/${seed.incompatibleProfileId}/versions/1/review`, {})).status).toBe(200);
 
     page = await sessionPage(browser, "designer");
     const project = await post(page, "/api/v1/projects", { name: runId(), description: "Prueba del optimizador. Se borra sola.", city: "Medellín", country: "Colombia" });
@@ -68,13 +80,74 @@ test.describe.serial("optimizador de topologías", () => {
 
   test.afterAll(async () => {
     if (page) await sweepResidue(page);
-    if (admin) { await post(admin, `/api/v1/constraint-profiles/${seed.profileId}/versions/1/retire`, {}).catch(() => {}); await admin.context().close(); }
+    if (admin) {
+      if (seed.draftProfileId) {
+        await post(admin, `/api/v1/constraint-profiles/${seed.draftProfileId}/versions/1/review`, {}).catch(() => {});
+        await post(admin, `/api/v1/constraint-profiles/${seed.draftProfileId}/versions/1/retire`, {}).catch(() => {});
+      }
+      if (seed.incompatibleProfileId) await post(admin, `/api/v1/constraint-profiles/${seed.incompatibleProfileId}/versions/1/retire`, {}).catch(() => {});
+      await post(admin, `/api/v1/constraint-profiles/${seed.profileId}/versions/1/retire`, {}).catch(() => {});
+      await admin.context().close();
+    }
     await page?.context().close();
+  });
+
+  test("bloquea resolver el contexto si no hay perfil fijado al proyecto", async () => {
+    await openOptimizer(page, seed.projectId);
+    const profile = page.getByRole("checkbox", { name: /Perfil de prueba smoke-ui/ });
+    await expect(profile).toBeChecked();
+    await profile.uncheck();
+    await page.getByRole("button", { name: "Guardar perfiles del proyecto" }).click();
+    await expect.poll(async () => (await api(page, `/api/v1/projects/${seed.projectId}/constraint-profiles`)).body.profiles.length).toBe(0);
+    await page.getByRole("button", { name: "Resolver contexto" }).click();
+    await expect(page.locator(".optimizer-context-status")).toContainText("Optimización bloqueada");
+    await expect(page.locator(".optimizer-context-result")).toContainText("normative_profile_not_selected");
+    const unchecked = page.getByRole("checkbox", { name: /Perfil de prueba smoke-ui/ });
+    await unchecked.check();
+    await page.getByRole("button", { name: "Guardar perfiles del proyecto" }).click();
+    await expect.poll(async () => (await api(page, `/api/v1/projects/${seed.projectId}/constraint-profiles`)).body.profiles.length).toBe(1);
+  });
+
+  test("oculta el perfil borrador y rechaza fijarlo al proyecto", async () => {
+    await openOptimizer(page, seed.projectId);
+    await expect(page.getByRole("checkbox", { name: /Perfil borrador smoke-ui/ })).toHaveCount(0);
+    const response = await api(page, `/api/v1/projects/${seed.projectId}/constraint-profiles`, {
+      method: "PUT", body: JSON.stringify({ profiles: [{ profile_id: seed.draftProfileId, version: 1 }] }),
+    });
+    expect([400, 404, 409, 422]).toContain(response.status);
+    const selected = await api(page, `/api/v1/projects/${seed.projectId}/constraint-profiles`);
+    expect(selected.body.profiles.map((item) => [item.profile_id, item.profile_version])).toEqual([[seed.profileId, 1]]);
+  });
+
+  test("rechaza resolver perfiles fijados para tipos de instalación distintos", async () => {
+    const selected = await api(page, `/api/v1/projects/${seed.projectId}/constraint-profiles`, {
+      method: "PUT", body: JSON.stringify({ profiles: [
+        { profile_id: seed.profileId, version: 1 },
+        { profile_id: seed.incompatibleProfileId, version: 1 },
+      ] }),
+    });
+    expect(selected.status).toBe(200);
+    await openOptimizer(page, seed.projectId);
+    await page.getByRole("button", { name: "Resolver contexto" }).click();
+    await expect(page.getByRole("alert")).toContainText("different installation types");
+    await api(page, `/api/v1/projects/${seed.projectId}/constraint-profiles`, {
+      method: "PUT", body: JSON.stringify({ profiles: [{ profile_id: seed.profileId, version: 1 }] }),
+    });
   });
 
   test("precarga el suelo y la falla del artefacto, busca, previsualiza y aplica", async () => {
     test.setTimeout(240_000);
     await openOptimizer(page, seed.projectId);
+    // El perfil se sembró y fijó por API; comprobar que la interfaz lo carga, permite retirarlo y volver a fijarlo.
+    const profile = page.getByRole("checkbox", { name: /Perfil de prueba smoke-ui/ });
+    await expect(profile).toBeChecked();
+    await profile.uncheck();
+    await page.getByRole("button", { name: "Guardar perfiles del proyecto" }).click();
+    await expect.poll(async () => (await api(page, `/api/v1/projects/${seed.projectId}/constraint-profiles`)).body.profiles.length).toBe(0);
+    await profile.check();
+    await page.getByRole("button", { name: "Guardar perfiles del proyecto" }).click();
+    await expect.poll(async () => (await api(page, `/api/v1/projects/${seed.projectId}/constraint-profiles`)).body.profiles.length).toBe(1);
+
     // Sin pulsar «Resolver contexto»: los datos del artefacto ya están en el formulario.
     await expect(page.getByLabel("Resistividad de suelo (Ω·m)")).toHaveValue("100");
     await expect(page.getByLabel("Corriente de falla inyectada (A)")).toHaveValue("1000");

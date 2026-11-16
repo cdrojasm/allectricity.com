@@ -229,6 +229,8 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
   const [recalculating, setRecalculating] = useState(false);
   const [actionError, setActionError] = useState("");
   const [optimizing, setOptimizing] = useState(false);
+  const [designLoopResult, setDesignLoopResult] = useState(null);
+  const [restoringBest, setRestoringBest] = useState(false);
   const [solverConfig, setSolverConfig] = useState({ discretization_m: 1, segmentation: "graded", surface_spacing_m: 0.5, touch_reach_m: 0, estimate_uncertainty: false, justification: "Discretización validada para la geometría actual y segmentación graduada en nodos críticos." });
   useEffect(() => {
     if (!conversation) return undefined;
@@ -264,6 +266,30 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
     })();
     return () => { live = false; };
   }, [project.id, conversation?.id, token, refreshKey]);
+  useEffect(() => {
+    if (!conversation) return undefined;
+    let live = true;
+    let timer;
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/v1/conversations/${conversation.id}/agent-events`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!live) return;
+        if (data.active_run) setDesignLoopResult(null);
+        const event = [...(data.events || [])].reverse().find((item) => item.payload?.design_loop_result);
+        if (event?.payload?.design_loop_result && !data.active_run) {
+          setDesignLoopResult(event.payload.design_loop_result);
+          return;
+        }
+        if (data.active_run && live) timer = setTimeout(poll, data.poll_after_ms || 1500);
+      } catch (_) { /* A later refresh can recover the terminal run event. */ }
+    };
+    poll();
+    return () => { live = false; clearTimeout(timer); };
+  }, [conversation?.id, token, refreshKey]);
   useEffect(() => {
     if (!calculation?.parameters) return;
     setSolverConfig((current) => ({ ...current, ...Object.fromEntries(["discretization_m", "segmentation", "surface_spacing_m", "touch_reach_m", "estimate_uncertainty", "justification"].filter((key) => calculation.parameters[key] !== undefined).map((key) => [key, calculation.parameters[key]])) }));
@@ -306,13 +332,50 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
     } catch (error) { setActionError(error.message); }
     finally { setRecalculating(false); }
   }
+  async function restoreBestCandidate() {
+    const candidate = designLoopResult?.best_candidate;
+    if (!candidate?.artifact_version || !candidate?.calculation_id || !artifact || restoringBest) return;
+    setRestoringBest(true);
+    setActionError("");
+    const root = `/api/v1/projects/${project.id}/artefactos-diseno-tierras/${artifact.artifact_id}`;
+    const auth = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    const request = async (url, options = {}) => {
+      const response = await fetch(url, { ...options, headers: auth });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.detail?.message || body.detail || "No se pudo recuperar el mejor resultado.");
+      return body;
+    };
+    try {
+      const originalCalculation = await request(`${root}/calculos-potencial/${candidate.calculation_id}`);
+      const restored = await request(`${root}/versions/${candidate.artifact_version}/restaurar`, { method: "POST" });
+      const parameterKeys = ["justification", "conductor_radius_m", "discretization_m", "segmentation",
+        "estimate_uncertainty", "surface_spacing_m", "touch_reach_m", "safety_standards", "fault_split",
+        "x_over_r", "system_frequency_hz", "scenarios", "transfer_assessment_complete",
+        "transfer_assessment_evidence", "transfer_exposures"];
+      const parameters = Object.fromEntries(parameterKeys.filter((key) => originalCalculation.parameters?.[key] !== undefined)
+        .map((key) => [key, originalCalculation.parameters[key]]));
+      const queued = await request(`${root}/versions/${restored.version}/calculos-potencial`, {
+        method: "POST", body: JSON.stringify(parameters),
+      });
+      setArtifact(restored);
+      setCalculation(queued);
+      setFreshness("calculando");
+      setState("ready");
+    } catch (error) { setActionError(error.message); }
+    finally { setRestoringBest(false); }
+  }
   const result = calculation?.result;
   const { verdict, interpretation, safety } = evaluateResult(result);
   const value = formatNumber;
   const freshnessLabel = freshness === "desactualizado" ? "El resultado quedó desactualizado · recalcula para esta versión" : freshness === "calculando" ? "Calculando la versión vigente…" : null;
   const recalculateButton = <button className="button primary" disabled={!artifact || recalculating || ["pending", "running"].includes(calculation?.status)} onClick={recalculate}><RefreshCw size={14}/> {recalculating || ["pending", "running"].includes(calculation?.status) ? "Calculando…" : "Recalcular"}</button>;
+  const bestCandidate = designLoopResult?.best_candidate;
+  const canRestoreBest = bestCandidate?.artifact_version && bestCandidate?.calculation_id
+    && artifact && artifact.version > bestCandidate.artifact_version
+    && designLoopResult?.reason !== "goal_met";
   return <aside className="panel artifact-side-panel agent-results-panel"><div className="panel-heading"><div><Activity size={17}/><h2>Resultados</h2></div><div className="artifact-results-heading-actions">{calculation && <span className="muted-label">Versión {calculation.artifact_version}</span>}{recalculateButton}</div></div>
     {actionError && <p className="artifact-update-warning">{actionError}</p>}
+    {designLoopResult && <div className="artifact-status" data-testid="design-loop-result"><strong>Optimización automática</strong><span>{designLoopResult.reason === "goal_met" ? "Se alcanzó cumplimiento." : designLoopResult.reason === "no_improvement" ? "La última iteración no mejoró el mejor margen." : designLoopResult.reason === "iteration_limit" ? "Se alcanzó el límite de iteraciones." : "El bucle terminó sin completar otra iteración."} Iteraciones: {designLoopResult.iterations_used}/{designLoopResult.max_iterations}.</span>{bestCandidate && <span>Mejor candidato: versión {bestCandidate.artifact_version}, cálculo {bestCandidate.calculation_id}{Number.isFinite(bestCandidate.margin_percent) ? ` · margen mínimo ${bestCandidate.margin_percent.toLocaleString("es-CO", { maximumFractionDigits: 1 })}%` : ""}.</span>}{canRestoreBest && <button className="button primary" data-testid="restore-best-design-candidate" disabled={restoringBest || recalculating} onClick={restoreBestCandidate}><Undo2 size={14}/>{restoringBest ? "Restaurando y recalculando…" : "Recuperar mejor versión y recalcular"}</button>}</div>}
     {!calculation ? <div className="artifact-results-empty"><p className="no-information">{state === "error" ? "No se pudieron cargar los resultados." : "Sin cálculo para esta versión del artefacto."}</p>{artifact && <p className="no-information">Completa y confirma los parámetros eléctricos antes de recalcular.</p>}</div>
       : calculation.status !== "completed" ? <div className="artifact-status"><strong>Cálculo {calculation.status === "pending" || calculation.status === "running" ? "en curso…" : calculation.status}</strong>{calculation.error && <span className="no-information">{calculation.error}</span>}</div>
       : <>

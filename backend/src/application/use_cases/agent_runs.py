@@ -313,6 +313,8 @@ class AgentRuns:
             origin = {"kind": "agent", "run_id": run_id, "summary": change["summary"],
                       "provenance": change["provenance"], "draft": change.get("draft", False),
                       "draft_watermark": change.get("draft_watermark")}
+            if change.get("restored_from") is not None:
+                origin["restored_from"] = change["restored_from"]
             if change.get("artifact_id"):
                 row = db.designs.append_version(run["project_id"], change["artifact_id"], snapshot["name"], snapshot,
                                                 run["created_by"], origin, expected_version=change["base_version"])

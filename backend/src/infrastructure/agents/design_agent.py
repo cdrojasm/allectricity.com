@@ -84,13 +84,49 @@ def max_design_iterations() -> int:
 
 def calculation_score(summary: dict) -> float:
     """Comparable safety margin for choosing the best non-compliant candidate."""
-    margins = [criterion.get("margin_percent") for standard in summary.get("standards", [])
-               for criterion in (standard.get("touch"), standard.get("step"))
-               if isinstance(criterion, dict) and isinstance(criterion.get("margin_percent"), (int, float))]
+    margins = [entry["margin_percent"] for entry in _design_margins(summary)]
     thermal = summary.get("conductor_thermal") or {}
     if thermal.get("status") == "no_cumple":
         margins.append(-1.0)
     return min(margins) if margins else float("-inf")
+
+
+def _design_margins(summary: dict) -> list[dict]:
+    """Collect criterion margins from both legacy and scenario-based calculation summaries."""
+    entries = []
+
+    def visit(standards, scenario=None):
+        for standard in standards or []:
+            for criterion, result in standard.items():
+                if criterion in {"standard", "status", "reason"} or not isinstance(result, dict):
+                    continue
+                margin = result.get("margin_percent")
+                if isinstance(margin, (int, float)) and not isinstance(margin, bool):
+                    entries.append({"margin_percent": float(margin), "criterion": criterion,
+                                    "standard": standard.get("standard"), "scenario": scenario})
+
+    visit(summary.get("standards"))
+    for scenario, result in (summary.get("scenarios") or {}).items():
+        if isinstance(result, dict):
+            visit(result.get("standards"), scenario)
+    return entries
+
+
+def reconcile_final_response(text: str, applied: dict | None) -> str:
+    """Build the final claim from persisted changes, never from the model's recollection."""
+    if applied:
+        changes = applied.get("changes") or []
+        fields = ", ".join(
+            f"{item['path']}={json.dumps(item.get('after'), ensure_ascii=False, sort_keys=True)}"
+            for item in changes if item.get("path")
+        )
+        detail = f" Campos guardados: {fields}." if fields else ""
+        summary = str(applied.get("summary") or "Cambios al artefacto").rstrip(". ")
+        return f"Se guardó la versión {applied['version']} del diseño: {summary}.{detail}"
+    if re.search(r"\b(?:guard[eé]|cre[eé]|apliqu[eé]|actualic[eé])\b.{0,50}\b(?:versi[oó]n|diseñ|artefacto)\b",
+                 text, re.IGNORECASE):
+        return "No se guardó una versión nueva del diseño en este paso."
+    return text
 
 
 def _prompt_file(name: str) -> str:
@@ -163,12 +199,7 @@ class ArtifactWorkspace:
         self.base_version = row["version"] if row else None
         self.base = row["snapshot"] if row else None
         self.draft = dict(self.base) if self.base else {}
-        origin = (row or {}).get("origin") or {}
-        self.provenance = dict(origin.get("provenance") or {})
-        if row and not self.provenance and origin.get("kind", "user") == "user":
-            # Entered by the user in the forms or the API: their data, like a chat message.
-            self.provenance = {path: {"kind": "user", "ref": f"version {row['version']}",
-                                      "note": "Ingresado por el usuario"} for path in flatten(row["snapshot"])}
+        self.provenance = _row_provenance(row) if row else {}
 
     def persisted_provenance(self) -> dict:
         """Provenance of the saved version the draft is based on (user form data counts as the user's)."""
@@ -710,6 +741,7 @@ class ArtifactWorkspace:
                   "provenance": provenance, "diff": shown,
                   "unconfirmed_critical": check["unconfirmed_critical"],
                   "missing_for_calculation": check["missing_for_calculation"],
+                  "restored_from": args.get("restored_from"),
                   "draft": bool(check["unconfirmed_critical"]),
                   "draft_watermark": (f"Borrador · {len(check['unconfirmed_critical'])} supuesto(s) sin confirmar"
                                       if check["unconfirmed_critical"] else None)}
@@ -733,11 +765,40 @@ class ArtifactWorkspace:
         self.artifacts[row["artifact_id"]] = row
         self.applied = True
         self.last_applied = {"version": row["version"], "summary": change["summary"],
-                             "paths": [item["path"] for item in shown]}
+                             "paths": [item["path"] for item in shown], "changes": shown}
         return {"artifact_id": row["artifact_id"], "version": row["version"], "name": row["name"],
                 "unconfirmed_critical": change["unconfirmed_critical"],
                 "missing_for_calculation": change["missing_for_calculation"],
                 "skipped": skipped or None}
+
+    def restore_version(self, version: int, summary: str) -> dict:
+        """Save an earlier version's snapshot as a new version (history is never rewritten)."""
+        if not self.artifact_id:
+            return {"error": "There is no artifact to restore"}
+        with self.store.transaction() as db:
+            row = db.designs.get_version(self.run["project_id"], self.artifact_id, int(version))
+        if not row:
+            return {"error": f"Version {version} does not exist"}
+        previous = (self.draft, self.provenance)
+        self.draft = dict(row["snapshot"])
+        self.provenance = _row_provenance(row)
+        self._save()
+        saved = self.apply({"summary": summary, "restored_from": int(version)})
+        if "error" in saved:  # leave the draft as it was, not half-way to the old version
+            self.draft, self.provenance = previous
+            self._save()
+        return saved
+
+
+def _row_provenance(row: dict) -> dict:
+    """Per-field provenance of a saved version; data entered in the forms or the API is the user's."""
+    origin = row.get("origin") or {}
+    provenance = dict(origin.get("provenance") or {})
+    if not provenance and origin.get("kind", "user") == "user":
+        # Entered by the user in the forms or the API: their data, like a chat message.
+        provenance = {path: {"kind": "user", "ref": f"version {row['version']}",
+                             "note": "Ingresado por el usuario"} for path in flatten(row["snapshot"])}
+    return provenance
 
 
 def _field_guide() -> dict:
@@ -995,7 +1056,8 @@ class GroundingDesignAgent:
         if finished:
             context["finished_calculation"] = finished
             best_candidate = self._record_design_candidate(run, runs, finished)
-            loop = self._automatic_iteration(client, prompts, workspace, run, runs, finished, mode, usage)
+            loop = self._automatic_iteration(client, prompts, workspace, run, runs, finished, mode, usage,
+                                             best_candidate)
             if loop is not None:
                 return loop
             context["design_loop"] = self._design_loop_context(run, finished, best_candidate)
@@ -1140,13 +1202,8 @@ class GroundingDesignAgent:
                 return False, {"error": "The draft has changes that were not applied: call apply_changes, or call "
                                         "respond_to_user again to leave them unapplied",
                                "pending_changes": [c["path"] for c in pending]}
-            applied = workspace.last_applied
-            if applied and re.search(r"no\s+(?:se\s+)?(?:realizaron|hicieron|hubo)\s+cambios|no changes were made",
-                                     str(args.get("text") or ""), re.IGNORECASE):
-                paths = ", ".join(path.replace("geometry.", "").replace("_", " ").replace(".", " ")
-                                   for path in applied["paths"])
-                args["text"] = (f"Sí hubo cambios en el diseño: se creó la versión {applied['version']}"
-                                 f" ({applied['summary']}). Campos actualizados: {paths}.")
+            args["text"] = reconcile_final_response(str(args.get("text") or ""), workspace.last_applied)
+            workspace.last_applied = None
             return True, {"ok": True}
 
         result = runtime.run_tool_agent(client, model_for("AGENT_ORCHESTRATOR_MODEL"), messages, tools, handlers,
@@ -1172,29 +1229,142 @@ class GroundingDesignAgent:
         """Keep the strongest result across suspended calculation steps."""
         score = calculation_score(finished)
         previous = (run.get("usage") or {}).get("best_candidate")
-        if previous and previous.get("score", float("-inf")) >= score:
+        if (previous and finished.get("verdict") != "cumple"
+                and previous.get("verdict") == "cumple"):
             return previous
-        candidate = {
-            "score": score,
-            "verdict": finished.get("verdict"),
-            "calculation_id": finished.get("calculation_id"),
-            "artifact_version": finished.get("artifact_version"),
-        }
+        if previous and finished.get("verdict") != "cumple":
+            previous_score = previous.get("score")
+            if ((previous_score is None and score == float("-inf"))
+                    or (previous_score is not None
+                        and (score == float("-inf") or previous_score >= score))):
+                return previous
+        candidate = GroundingDesignAgent._candidate(finished)
         runs.set_usage_fields(run["id"], best_candidate=candidate)
         return candidate
 
-    def _automatic_iteration(self, client, prompts, workspace, run, runs, finished, mode, usage):
-        """Improve a failing autonomous design and suspend it on a new calculation."""
-        if mode != AgentMode.AUTONOMO or finished.get("verdict") != "no_cumple":
+    @staticmethod
+    def _candidate(finished) -> dict:
+        score = calculation_score(finished)
+        margins = _design_margins(finished)
+        dominant = min(margins, key=lambda item: item["margin_percent"]) if margins else None
+        thermal = finished.get("conductor_thermal") or {}
+        if thermal.get("status") == "no_cumple" and (not dominant or dominant["margin_percent"] > -1):
+            dominant = {"margin_percent": -1.0, "criterion": "conductor_thermal", "standard": None,
+                        "scenario": None}
+        return {
+            "score": score if score != float("-inf") else None,
+            "verdict": finished.get("verdict"),
+            "calculation_id": finished.get("calculation_id"),
+            "artifact_version": finished.get("artifact_version"),
+            "margin_percent": dominant["margin_percent"] if dominant else None,
+            "dominant_criterion": ({key: dominant[key] for key in ("criterion", "standard", "scenario")}
+                                   if dominant else None),
+        }
+
+    def _restore_best_candidate(self, workspace, runs, run, reason, candidate, used, limit):
+        """When a later iteration of this run was worse, leave the best design as the current version.
+
+        The best snapshot is saved again as a new version and recalculated with the same parameters, so the
+        current version carries its own up-to-date result. Returns the suspended step, or None when nothing
+        has to be restored (or it could not be: the loop then closes reporting the best version).
+        """
+        version = (candidate or {}).get("artifact_version")
+        if version is None or not workspace.artifact_id or candidate.get("verdict") not in {"cumple", "no_cumple"}:
             return None
+        with self.store.transaction() as db:
+            latest = db.designs.latest(run["project_id"], workspace.artifact_id)
+            best_calc = db.one("calculos_potencial_tierras", id=candidate.get("calculation_id"),
+                               project_id=run["project_id"])
+        if not latest or latest["version"] == version:
+            return None
+        if (latest.get("origin") or {}).get("run_id") != run["id"]:
+            # Someone else versioned the design meanwhile: never overwrite their change.
+            return None
+        restored = workspace.restore_version(
+            version, f"Restauré la versión {version}: mejor resultado de la optimización automática")
+        if "error" in restored:
+            runs.progress(run["id"], EventType.STEP_COMPLETED, "No se pudo restaurar el mejor diseño",
+                          level=EventLevel.WARNING, payload={"version": version, "error": restored["error"]})
+            return None
+        parameters = {k: v for k, v in ((best_calc or {}).get("parameters") or {}).items() if v is not None}
+        queued = workspace.request_calculation(parameters)
+        if not queued.get("queued") and parameters:
+            queued = workspace.request_calculation({})
+        if not queued.get("queued"):
+            runs.progress(run["id"], EventType.STEP_COMPLETED, "No se pudo recalcular el diseño restaurado",
+                          level=EventLevel.WARNING, payload={"version": restored["version"]})
+            return None
+        runs.set_usage_fields(run["id"], design_loop_restoring={
+            "reason": reason, "iterations_used": used, "max_iterations": limit,
+            "restored_from": version, "restored_version": restored["version"]})
+        runs.progress(run["id"], EventType.STEP_COMPLETED,
+                      f"Restauré la versión {version} como versión {restored['version']}",
+                      level=EventLevel.PROGRESS,
+                      payload={"restored_from": version, "artifact_version": restored["version"],
+                               "calculation_id": queued["calculation_id"]})
+        return StepOutcome(f"La última iteración empeoró el diseño: restauré la versión {version} (el mejor "
+                           f"resultado) como versión {restored['version']} y la estoy recalculando.",
+                           calculation_id=queued["calculation_id"])
+
+    def _close_design_loop(self, runs, run, reason, candidate, used, limit, workspace=None):
+        if workspace is not None:
+            restoring = self._restore_best_candidate(workspace, runs, run, reason, candidate, used, limit)
+            if restoring is not None:
+                return restoring
+        result = {"reason": reason, "iterations_used": used, "max_iterations": limit,
+                  "verdict": candidate.get("verdict") if candidate else "no_evaluable",
+                  "best_candidate": candidate}
+        runs.set_usage_fields(run["id"], design_loop_result=result)
+        runs.progress(run["id"], EventType.STEP_COMPLETED, "Optimización automática finalizada",
+                      level=EventLevel.SUCCESS if reason == "goal_met" else EventLevel.WARNING,
+                      payload={"design_loop_result": result})
+        if candidate:
+            version = candidate.get("artifact_version")
+            calculation_id = candidate.get("calculation_id")
+            margin = candidate.get("margin_percent")
+            margin_text = f", margen mínimo {margin:.1f}%" if isinstance(margin, (int, float)) else ""
+            origin_text = (f" (restaurada desde la versión {candidate['restored_from']})"
+                           if candidate.get("restored_from") is not None else "")
+            best_text = (f"Mejor resultado: versión {version}{origin_text}, cálculo {calculation_id}{margin_text}. "
+                         if version is not None and calculation_id else "")
+        else:
+            best_text = "No quedó un cálculo evaluable como candidato. "
+        messages = {
+            "goal_met": "El diseño cumple los criterios evaluados.",
+            "iteration_limit": "Se alcanzó el límite de iteraciones sin lograr cumplimiento.",
+            "no_improvement": "La última iteración no mejoró el margen de seguridad del mejor resultado.",
+            "no_valid_candidate": "No se pudo guardar una mejora válida; no se creó una versión nueva.",
+            "save_failed": "La mejora propuesta no pasó la validación; no se creó una versión nueva.",
+            "calculation_failed": "No se pudo iniciar el recálculo de la mejora.",
+            "not_evaluable": "El resultado no permite confirmar cumplimiento; se requiere revisar los datos.",
+        }
+        return StepOutcome(f"{messages[reason]} {best_text}Iteraciones usadas: {used}/{limit}.")
+
+    def _automatic_iteration(self, client, prompts, workspace, run, runs, finished, mode, usage,
+                             best_candidate=None):
+        """Improve a failing autonomous design and suspend it on a new calculation."""
+        if mode != AgentMode.AUTONOMO:
+            return None
+        restoring = (run.get("usage") or {}).get("design_loop_restoring")
+        if restoring:
+            # This is the recalculation of the restored best design: close the loop with the reason it had.
+            runs.set_usage_fields(run["id"], design_loop_restoring=None)
+            candidate = {**self._candidate(finished), "restored_from": restoring["restored_from"]}
+            runs.set_usage_fields(run["id"], best_candidate=candidate)
+            return self._close_design_loop(runs, run, restoring["reason"], candidate,
+                                           restoring["iterations_used"], restoring["max_iterations"])
         used = int((run.get("usage") or {}).get("design_iterations", 0))
         limit = max_design_iterations()
+        best_candidate = best_candidate or (run.get("usage") or {}).get("best_candidate")
+        verdict = finished.get("verdict")
+        if verdict == "cumple":
+            return self._close_design_loop(runs, run, "goal_met", best_candidate, used, limit, workspace)
+        if verdict != "no_cumple":
+            return self._close_design_loop(runs, run, "not_evaluable", best_candidate, used, limit, workspace)
+        if best_candidate and best_candidate.get("calculation_id") != finished.get("calculation_id"):
+            return self._close_design_loop(runs, run, "no_improvement", best_candidate, used, limit, workspace)
         if used >= limit:
-            runs.progress(run["id"], EventType.STEP_COMPLETED,
-                          f"Bucle automático detenido tras {used} iteración(es)",
-                          level=EventLevel.WARNING,
-                          payload={"reason": "iteration_limit", "iterations": used, "max_iterations": limit})
-            return None
+            return self._close_design_loop(runs, run, "iteration_limit", best_candidate, used, limit, workspace)
         iteration = used + 1
         runs.set_usage_fields(run["id"], design_iterations=iteration)
         runs.progress(run["id"], EventType.SUBAGENT_STARTED,
@@ -1209,18 +1379,20 @@ class GroundingDesignAgent:
             runs.progress(run["id"], EventType.SUBAGENT_COMPLETED,
                           "No se pudo proponer una mejora automática",
                           level=EventLevel.WARNING, payload={"iteration": iteration})
-            return None
+            return self._close_design_loop(runs, run, "no_valid_candidate", best_candidate, iteration, limit,
+                                           workspace)
         saved = workspace.apply({"summary": f"Iteración automática {iteration}: mejora de seguridad"})
         if "error" in saved:
             runs.progress(run["id"], EventType.SUBAGENT_COMPLETED,
                           "La mejora automática no pudo guardarse",
                           level=EventLevel.WARNING,
                           payload={"iteration": iteration, "error": saved["error"]})
-            return None
+            return self._close_design_loop(runs, run, "save_failed", best_candidate, iteration, limit,
+                                           workspace)
         queued = workspace.request_calculation({})
         if not queued.get("queued"):
-            return StepOutcome("No pude recalcular la mejora automática: "
-                               + "; ".join(queued.get("errors") or [queued.get("suggestion", "revisa los datos")]))
+            return self._close_design_loop(runs, run, "calculation_failed", best_candidate, iteration, limit,
+                                           workspace)
         runs.progress(run["id"], EventType.SUBAGENT_COMPLETED,
                       f"Iteración automática {iteration}/{limit} encolada",
                       level=EventLevel.SUCCESS,

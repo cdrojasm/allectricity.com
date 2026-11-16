@@ -4,7 +4,11 @@ import json
 from types import SimpleNamespace
 
 from src.application.use_cases.agent_runs import AgentRuns, run_step
-from src.infrastructure.agents.design_agent import ArtifactWorkspace, GroundingDesignAgent
+from src.domain.agent.run import AgentMode
+from src.infrastructure.agents.design_agent import (
+    ArtifactWorkspace, GroundingDesignAgent, calculation_score, reconcile_final_response,
+)
+import src.infrastructure.agents.design_agent as design_agent_module
 from tests.infrastructure.test_agent_routes import ARTIFACT, chat, events, messages, send  # noqa: F401
 from tests.infrastructure.test_identity import env, headers  # noqa: F401
 
@@ -444,6 +448,116 @@ RESULT = {"grid_resistance_ohm": 1.234, "gpr_v": 6170.0, "injected_current_a": 5
           "model_warnings": ["Sin factor de división S_f."], "engine_warnings": []}
 
 
+def test_calculation_score_tracks_worst_scenario_margin_and_candidate_provenance():
+    finished = {"calculation_id": "calc-2", "artifact_version": 3, "verdict": "no_cumple",
+                "scenarios": {"public": {"standards": [
+                    {"standard": "RETIE", "status": "no_cumple",
+                     "touch": {"margin_percent": -4.5}, "step": {"margin_percent": 10.0}}]},
+                    "occupational": {"standards": [
+                        {"standard": "IEEE 80", "status": "no_cumple",
+                         "touch": {"margin_percent": -12.0}}]}}}
+    assert calculation_score(finished) == -12.0
+
+    class RunStore:
+        saved = None
+
+        def set_usage_fields(self, run_id, **fields):
+            self.saved = (run_id, fields)
+
+    runs = RunStore()
+    candidate = GroundingDesignAgent._record_design_candidate(
+        None, {"id": "run-1", "usage": {}}, runs, finished)
+    assert candidate["artifact_version"] == 3 and candidate["calculation_id"] == "calc-2"
+    assert candidate["margin_percent"] == -12.0
+    assert candidate["dominant_criterion"] == {"criterion": "touch", "standard": "IEEE 80",
+                                                 "scenario": "occupational"}
+    assert runs.saved == ("run-1", {"best_candidate": candidate})
+
+
+@pytest.mark.parametrize("claim", [
+    "No se realizaron cambios.", "No hicimos cambios.", "No hubo cambios.", "No changes were made.",
+    "Actualicé el ancho a 99 m y quedó listo.",
+])
+def test_final_response_uses_only_the_persisted_change(claim):
+    applied = {"version": 4, "summary": "Ajuste de ancho",
+               "changes": [{"path": "geometry.width_m", "before": 30, "after": 31}]}
+    response = reconcile_final_response(claim, applied)
+    assert response == 'Se guardó la versión 4 del diseño: Ajuste de ancho. Campos guardados: geometry.width_m=31.'
+
+
+def test_final_response_does_not_claim_a_version_when_nothing_was_persisted():
+    assert reconcile_final_response("Guardé la versión 5 del diseño.", None) == (
+        "No se guardó una versión nueva del diseño en este paso.")
+    assert reconcile_final_response("Falta confirmar el tiempo de despeje.", None) == (
+        "Falta confirmar el tiempo de despeje.")
+
+
+def test_response_does_not_claim_a_saved_version_after_change_validation_fails(chat):
+    services, client, tokens, project, conversation, _, _ = chat
+    sent = send(client, tokens, conversation, "Establece un criterio inexistente y guarda el diseño")
+    llm = step(services, sent["run_id"], [
+        ("set_fields", {"reason": "Solicitud del usuario", "changes": [
+            {"path": "compliance", "value": [],
+             "source": {"kind": "user", "ref": sent["id"], "note": None}}]}),
+        ("respond_to_user", {"text": "Guardé la versión 1 del diseño.", "waits_for": "nothing"}),
+    ])
+    assert run_of(client, tokens, sent["run_id"])["status"] == "completed"
+    assert artifacts(client, tokens, project) == []
+    assistant = [message for message in messages(client, tokens, conversation) if message["source"] == "agent"][-1]
+    assert assistant["text"] == "No se guardó una versión nueva del diseño en este paso."
+
+
+class LoopRunsStub:
+    def __init__(self):
+        self.usage = []
+        self.events = []
+
+    def set_usage_fields(self, run_id, **fields):
+        self.usage.append((run_id, fields))
+
+    def progress(self, run_id, event_type, title, **kwargs):
+        self.events.append((run_id, event_type, title, kwargs))
+
+
+def test_autonomous_loop_closes_at_one_iteration_limit(monkeypatch):
+    monkeypatch.setenv("DESIGN_MAX_ITERATIONS", "1")
+    runs = LoopRunsStub()
+    run = {"id": "run-1", "mode": "autonomo", "usage": {"design_iterations": 1}}
+    finished = {"calculation_id": "calc-current", "verdict": "no_cumple"}
+    best = {"calculation_id": "calc-current", "artifact_version": 2, "verdict": "no_cumple", "score": -5.0}
+    outcome = GroundingDesignAgent(None)._automatic_iteration(
+        None, None, None, run, runs, finished, AgentMode.AUTONOMO, {}, best)
+    assert "límite de iteraciones" in outcome.text
+    assert runs.usage[-1][1]["design_loop_result"]["reason"] == "iteration_limit"
+    assert runs.events[-1][3]["payload"]["design_loop_result"]["best_candidate"] == best
+
+
+def test_autonomous_loop_stops_when_the_latest_margin_is_worse(monkeypatch):
+    runs = LoopRunsStub()
+    run = {"id": "run-1", "mode": "autonomo", "usage": {"design_iterations": 1}}
+    finished = {"calculation_id": "calc-worse", "artifact_version": 3, "verdict": "no_cumple",
+                "standards": [{"standard": "IEEE 80", "touch": {"margin_percent": -20.0}}]}
+    best = {"calculation_id": "calc-best", "artifact_version": 2, "verdict": "no_cumple", "score": -5.0}
+    monkeypatch.setattr(design_agent_module, "run_grid_designer", lambda *_args: pytest.fail("must stop before proposing"))
+    outcome = GroundingDesignAgent(None)._automatic_iteration(
+        None, None, None, run, runs, finished, AgentMode.AUTONOMO, {}, best)
+    assert "no mejoró" in outcome.text
+    assert runs.usage[-1][1]["design_loop_result"]["reason"] == "no_improvement"
+
+
+def test_autonomous_loop_closes_when_designer_cannot_propose_a_valid_change(monkeypatch):
+    monkeypatch.setenv("DESIGN_MAX_ITERATIONS", "3")
+    runs = LoopRunsStub()
+    run = {"id": "run-1", "mode": "autonomo", "usage": {"design_iterations": 0}}
+    finished = {"calculation_id": "calc-current", "artifact_version": 2, "verdict": "no_cumple"}
+    best = {"calculation_id": "calc-current", "artifact_version": 2, "verdict": "no_cumple", "score": -5.0}
+    monkeypatch.setattr(design_agent_module, "run_grid_designer", lambda *_args: {"applied": False})
+    outcome = GroundingDesignAgent(None)._automatic_iteration(
+        None, None, None, run, runs, finished, AgentMode.AUTONOMO, {}, best)
+    assert "No se pudo guardar una mejora válida" in outcome.text
+    assert runs.usage[-1][1]["design_loop_result"]["reason"] == "no_valid_candidate"
+
+
 def calculation_setup(chat, artifact=ARTIFACT):
     services, client, tokens, project, conversation, _, _ = chat
     created = client.post(f"/api/v1/projects/{project['id']}/artefactos-diseno-tierras", json=artifact,
@@ -501,6 +615,94 @@ def test_safety_calculation_suspends_and_resumes_with_the_result(chat):
     assert "Cálculo de seguridad terminado" in texts  # mirrored milestone
     assert texts[-1].startswith("No cumple")
     assert created["artifact_id"] == queued["artifact_id"]
+
+
+WORSE = {**RESULT, "max_touch_v": {"value": 1100.0},
+         "safety": [{**RESULT["safety"][0], "criteria": [
+             {**RESULT["safety"][0]["criteria"][0], "actual_v": 1100.0, "margin_rel": -0.3253},
+             RESULT["safety"][0]["criteria"][1]]}]}
+
+
+def finish(services, calculation_id, result):
+    with services.store.transaction(write=True) as db:
+        db.change("calculos_potencial_tierras", calculation_id, status="completed", result=result)
+    AgentRuns(services.store).calculation_finished(calculation_id)
+
+
+def autonomous_iteration_to_a_worse_version(chat):
+    """v1 does not comply; the automatic iteration saves v2, whose result is worse than v1's."""
+    services, client, tokens, project, conversation, _, _ = chat
+    calculation_setup(chat)
+    client.put(f"/api/v1/conversations/{conversation['id']}/agent-state", json={"mode": "autonomo"},
+               headers=headers(tokens))
+    sent = send(client, tokens, conversation, "Optimiza el diseño hasta que cumpla")
+    dispatched = []
+    llm = calc_step(services, sent["run_id"], [
+        ("request_potential_calculation", {"x_over_r": 12}),
+        ("respond_to_user", {"text": "Calculando.", "waits_for": "calculation"}),
+    ], dispatched)
+    first = tool_result(llm, 1)["calculation_id"]
+    finish(services, first, RESULT)
+    calc_step(services, sent["run_id"], [
+        designer(sent["id"], ("geometry.burial_depth_m", 0.8, "assumption"), rationale="Más profundidad"),
+    ], dispatched)
+    assert [a["version"] for a in artifacts(client, tokens, project)] == [2] and len(dispatched) == 2
+    return services, client, tokens, project, conversation, sent, dispatched, first
+
+
+def run_usage(services, run_id):
+    with services.store.transaction() as db:
+        return db.one("agent_runs", id=run_id)["usage"]
+
+
+def test_autonomous_loop_restores_the_best_version_when_an_iteration_is_worse(chat):
+    services, client, tokens, project, conversation, sent, dispatched, first = (
+        autonomous_iteration_to_a_worse_version(chat))
+    finish(services, dispatched[1], WORSE)
+
+    # No model call: the loop restores v1 as v3 and recalculates it with v1's parameters.
+    calc_step(services, sent["run_id"], [], dispatched)
+    with services.store.transaction() as db:
+        v1 = db.designs.get_version(project["id"], artifacts(client, tokens, project)[0]["artifact_id"], 1)
+        restored_calc = db.one("calculos_potencial_tierras", id=dispatched[2])
+        first_calc = db.one("calculos_potencial_tierras", id=first)
+    [latest] = artifacts(client, tokens, project)
+    assert latest["version"] == 3 and latest["snapshot"] == v1["snapshot"]
+    assert latest["origin"]["restored_from"] == 1 and latest["origin"]["run_id"] == sent["run_id"]
+    assert restored_calc["artifact_version"] == 3 and restored_calc["parameters"] == first_calc["parameters"]
+    assert run_of(client, tokens, sent["run_id"])["status"] == "waiting_calculation"
+    assert run_usage(services, sent["run_id"])["design_loop_restoring"]["restored_from"] == 1
+    assert updates(client, tokens, conversation)[-1]["payload"]["version"] == 3  # card with «Deshacer»
+
+    finish(services, dispatched[2], RESULT)
+    calc_step(services, sent["run_id"], [], dispatched)
+    assert len(dispatched) == 3 and run_of(client, tokens, sent["run_id"])["status"] == "completed"
+    usage = run_usage(services, sent["run_id"])
+    assert usage["design_loop_restoring"] is None
+    result = usage["design_loop_result"]
+    assert result["reason"] == "no_improvement" and result["iterations_used"] == 1
+    assert result["best_candidate"]["artifact_version"] == 3 and result["best_candidate"]["restored_from"] == 1
+    assert result["best_candidate"]["calculation_id"] == dispatched[2]
+    final = [m for m in messages(client, tokens, conversation) if m["source"] == "agent"][-1]["text"]
+    assert "versión 3 (restaurada desde la versión 1)" in final and "margen mínimo -18.1%" in final
+    assert artifacts(client, tokens, project)[0]["calculation_verdict"] == "no_cumple"  # v3 has its own result
+
+
+def test_autonomous_loop_never_restores_over_a_user_edit(chat):
+    services, client, tokens, project, conversation, sent, dispatched, _ = (
+        autonomous_iteration_to_a_worse_version(chat))
+    [current] = artifacts(client, tokens, project)
+    edited = client.put(f"/api/v1/projects/{project['id']}/artefactos-diseno-tierras/{current['artifact_id']}",
+                        json={**current["snapshot"], "name": "Editado a mano"}, headers=headers(tokens))
+    assert edited.status_code == 201, edited.text
+    finish(services, dispatched[1], WORSE)
+
+    calc_step(services, sent["run_id"], [], dispatched)
+    assert len(dispatched) == 2 and run_of(client, tokens, sent["run_id"])["status"] == "completed"
+    [latest] = artifacts(client, tokens, project)
+    assert latest["version"] == 3 and latest["name"] == "Editado a mano"
+    result = run_usage(services, sent["run_id"])["design_loop_result"]
+    assert result["reason"] == "no_improvement" and result["best_candidate"]["artifact_version"] == 1
 
 
 def test_calculation_is_not_repeated_for_the_same_version_and_parameters(chat):
