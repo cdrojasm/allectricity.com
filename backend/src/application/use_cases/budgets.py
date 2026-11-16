@@ -69,3 +69,29 @@ class Budgets:
             )
             audit(db, actor.user_id, "budget.consume", usage["id"])
             return usage
+
+    def consume_agent_usage(self, user_id, project_id, run_id, step, model, input_tokens, output_tokens):
+        """Debit an agent invocation from the user's active budget, if one has capacity."""
+        total = int(input_tokens) + int(output_tokens)
+        if total <= 0:
+            return None
+        key = f"agent:{run_id}:{step}:{model}"[:128]
+        with self.store.transaction(write=True) as db:
+            candidates = sorted(db.many("budget", user_id=user_id, active=True, limit=None),
+                               key=lambda budget: budget["created_at"])
+            for budget in candidates:
+                previous = db.one("budget_usage", budget_id=budget["id"], idempotency_key=key)
+                if previous:
+                    return previous
+                if budget["used_tokens"] + total > budget["total_tokens"]:
+                    continue
+                db.change("budget", budget["id"], used_tokens=budget["used_tokens"] + total)
+                usage = db.add(
+                    "budget_usage", id=uid(), budget_id=budget["id"], actor_id=user_id,
+                    project_id=project_id, action="grounding_design_agent", model=model,
+                    input_tokens=int(input_tokens), output_tokens=int(output_tokens), total_tokens=total,
+                    idempotency_key=key, created_at=now(),
+                )
+                audit(db, user_id, "budget.consume", usage["id"])
+                return usage
+        return None

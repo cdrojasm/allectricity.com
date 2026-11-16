@@ -92,13 +92,21 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
         setArtifact(artifact || null);
         prefillRunForm(artifact?.snapshot);
         if (!geometry) { setHydrated(true); return; }
-        const spacing = geometry.conductor_spacing_m || geometry.conductor_spacing_x_m || 5;
+        const sx = geometry.conductor_spacing_x_m || geometry.conductor_spacing_m || 5;
+        const sy = geometry.conductor_spacing_y_m || geometry.conductor_spacing_m || sx;
+        // The artifact renderer also draws a regular grid when conductors are implicit.
+        // Materialize that same geometry here so the editor can select and edit it.
+        const conductors = geometry.conductors?.length ? geometry.conductors : [
+          ...axisPositions(geometry.width_m || emptyPlan.width, sy).map((y) => ({ start: { x: 0, y }, end: { x: geometry.length_m || emptyPlan.length, y } })),
+          ...axisPositions(geometry.length_m || emptyPlan.length, sx).map((x) => ({ start: { x, y: 0 }, end: { x, y: geometry.width_m || emptyPlan.width } })),
+        ];
+        const rods = geometry.rods?.length ? geometry.rods : perimeterRods(geometry.rods_count || 0, geometry.length_m || emptyPlan.length, geometry.width_m || emptyPlan.width).map(([x, y]) => ({ x, y }));
         const items = [
-          ...(geometry.conductors || []).map((line) => ({ id: crypto.randomUUID(), type: "conductor", from: { x: line.start.x, y: line.start.y }, to: { x: line.end.x, y: line.end.y } })),
-          ...(geometry.rods || []).map((rod) => ({ id: crypto.randomUUID(), type: "electrode", x: rod.x, y: rod.y, ...(rod.length_m ? { length_m: rod.length_m } : {}) })),
+          ...conductors.map((line) => ({ id: crypto.randomUUID(), type: "conductor", from: { x: line.start.x, y: line.start.y }, to: { x: line.end.x, y: line.end.y } })),
+          ...rods.map((rod) => ({ id: crypto.randomUUID(), type: "electrode", x: rod.x, y: rod.y, ...(rod.length_m ? { length_m: rod.length_m } : {}) })),
           ...(geometry.structures || []).map((item) => ({ id: crypto.randomUUID(), type: "structure", x: item.x, y: item.y, width: item.width, height: item.height, label: item.label || "" })),
         ];
-        const next = { length: geometry.length_m || emptyPlan.length, width: geometry.width_m || emptyPlan.width, spacing, items,
+        const next = { length: geometry.length_m || emptyPlan.length, width: geometry.width_m || emptyPlan.width, spacing: sx, items,
           areas: (geometry.areas || []).map((area) => ({ type: area.type, label: area.label || "", polygon: areaPoints(area) })),
           snap: geometry.snap_m || null, background: geometry.background || null };
         setPlan(next);
@@ -757,6 +765,8 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
   </>;
 }
 
+function axisPositions(span, spacing) { const count=Math.max(2,Math.ceil(span/spacing)+1); return Array.from({length:count},(_,i)=>(i*span)/(count-1)); }
+function perimeterRods(count, length, width) { const perimeter=2*(length+width); return Array.from({length:count},(_,index)=>{ const d=perimeter*index/Math.max(count,1); if(d<length)return[d,0]; if(d<length+width)return[length,d-length]; if(d<2*length+width)return[length-(d-length-width),width]; return[0,width-(d-2*length-width)]; }); }
 function makeGrid(size, spacing) { const values=Array.from({length:Math.floor(size/spacing)+1},(_,i)=>Number((i*spacing).toFixed(6))); if(values.at(-1)<size-1e-6)values.push(size); return values; }
 // Coordinates on multiples of the construction step (geometry.snap_m), inside the site.
 function snapCoordinate(value, size, step) { const top = Math.floor(size / step + 1e-8) * step; return Number(Math.max(0, Math.min(top, Math.floor(value / step + 0.5) * step)).toFixed(6)); }

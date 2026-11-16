@@ -13,6 +13,7 @@ const featureNames = {
   plan: "Plano de puesta a tierra",
   artifact: "Artefacto de puesta a tierra",
   results: "Resultados de seguridad",
+  study: "Estudio público",
 };
 
 function formatDate(timestamp, includeTime = false) {

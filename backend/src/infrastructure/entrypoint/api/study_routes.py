@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from src.domain.agent.patches import unconfirmed_critical
 from src.infrastructure.security.middleware import require
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/studies", tags=["studies"])
@@ -216,7 +217,10 @@ def _payload(db, study):
         raise HTTPException(409, "The pinned artifact version is no longer available")
     latest = db.one("artefacto_diseno_tierras", project_id=study["project_id"], artifact_id=study["artifact_id"], version=max(r["version"] for r in db.many("artefacto_diseno_tierras", project_id=study["project_id"], artifact_id=study["artifact_id"], limit=None)))
     snapshot = artifact["snapshot"]
-    unconfirmed = snapshot.get("unconfirmed_critical") or (artifact.get("origin") or {}).get("unconfirmed_critical") or []
+    origin = artifact.get("origin") or {}
+    provenance = origin.get("provenance") or {}
+    unconfirmed = (snapshot.get("unconfirmed_critical") or origin.get("unconfirmed_critical")
+                   or unconfirmed_critical(snapshot, provenance))
     config = dict(study["config"] or {})
     logo_id = config.get("logo_upload_id")
     if logo_id:
@@ -224,7 +228,11 @@ def _payload(db, study):
         logo = db.one("file_uploads", id=logo_id, project_id=study["project_id"], status="available")
         if logo:
             config["logo_url"] = storage_client().presign_download(logo["target_bucket"], logo["object_key"], logo["filename"])
-    references = [{"path": path, "reference": value} for path, value in ((artifact.get("origin") or {}).get("provenance") or {}).items() if value]
+    # Schema metadata and editor snapping are implementation details, not client-facing references.
+    internal_reference_paths = {"schema_version", "geometry.snap_m"}
+    references = [{"path": path, "reference": value} for path, value in provenance.items()
+                  if value and path not in internal_reference_paths
+                  and (not isinstance(value, dict) or value.get("kind") != "schema_default")]
     calculation_detail = None
     calculations = [row for row in db.many("calculos_potencial_tierras", project_id=study["project_id"], artifact_id=study["artifact_id"], artifact_version=study["artifact_version"], limit=1000) if row["status"] == "completed"]
     if calculations:
@@ -232,7 +240,7 @@ def _payload(db, study):
         latest_calculation = max(calculations, key=lambda row: row["created_at"])
         snapshot = {**snapshot, "result": summarize(latest_calculation)}
         calculation_detail = _calculation_detail(latest_calculation)
-    return {"study": {**{k: study[k] for k in ("id", "slug", "title", "access", "status", "artifact_id", "artifact_version", "expires_at", "published_at", "updated_at")}, "config": config}, "project": {"name": project["name"], "description": project["description"], "city": project.get("city"), "country": project.get("country")}, "artifact": snapshot, "calculation": calculation_detail, "references": references, "optimization": _optimization(db, study["project_id"], artifact.get("origin")), "bill_of_materials": _bill_of_materials(snapshot, artifact.get("origin"), db, study["project_id"]), "draft": bool(unconfirmed), "unconfirmed_critical": unconfirmed, "non_compliant": _verdict(db, study) == "no_cumple", "has_newer_version": bool(latest and latest["version"] > study["artifact_version"])}
+    return {"study": {**{k: study[k] for k in ("id", "slug", "title", "access", "status", "artifact_id", "artifact_version", "expires_at", "published_at", "updated_at")}, "config": config}, "project": {"name": project["name"], "description": project["description"], "city": project.get("city"), "country": project.get("country")}, "artifact": snapshot, "calculation": calculation_detail, "references": references, "optimization": _optimization(db, study["project_id"], artifact.get("origin")), "bill_of_materials": _bill_of_materials(snapshot, artifact.get("origin"), db, study["project_id"]), "draft": bool(unconfirmed) or bool(origin.get("draft")), "unconfirmed_critical": unconfirmed, "non_compliant": _verdict(db, study) == "no_cumple", "has_newer_version": bool(latest and latest["version"] > study["artifact_version"])}
 
 
 _DENIALS = ("no se cuenta", "no se dispone", "sin resultados", "no hay resultados", "no existen resultados", "aún no se ha calculado", "no se ha realizado")

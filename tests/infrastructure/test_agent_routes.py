@@ -192,3 +192,25 @@ def test_agent_state_and_authorization(chat):
         client.get(f"/api/v1/conversations/{conversation['id']}/agent-stream", headers=headers(other_tokens)),
     ):
         assert response.status_code == 404
+
+
+def test_autonomous_optimization_run_starts_from_the_current_completed_calculation(chat):
+    services, client, tokens, project, conversation, _, actor = chat
+    artifact = client.post(f"/api/v1/projects/{project['id']}/artefactos-diseno-tierras", json=ARTIFACT,
+                           headers=headers(tokens)).json()
+    client.put(f"/api/v1/conversations/{conversation['id']}/agent-state",
+               json={"mode": "autonomo", "artifact_id": artifact["artifact_id"]}, headers=headers(tokens))
+    calculation_id = "00000000-0000-4000-8000-000000000001"
+    with services.store.transaction(write=True) as db:
+        db.add("calculos_potencial_tierras", id=calculation_id, project_id=project["id"],
+               artifact_id=artifact["artifact_id"], artifact_version=artifact["version"], status="completed",
+               parameters={}, result={}, trace=None, error=None, created_by=actor.user_id,
+               created_at=1, updated_at=2)
+
+    sent = send(client, tokens, conversation,
+                "Optimiza el diseño hasta que cumpla la norma; parte del último cálculo de esta versión")
+    with services.store.transaction() as db:
+        run = db.one("agent_runs", id=sent["run_id"])
+    assert run["mode"] == "autonomo"
+    assert run["artifact_id"] == artifact["artifact_id"]
+    assert run["pending_calculation_id"] == calculation_id

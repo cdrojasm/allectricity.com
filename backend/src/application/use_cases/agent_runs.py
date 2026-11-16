@@ -6,6 +6,7 @@ the per-conversation event sequence dense and the single-active-run rule race fr
 """
 
 from dataclasses import dataclass
+import re
 from time import time
 from uuid import uuid4
 
@@ -101,13 +102,29 @@ class AgentRuns:
         """
         state = self.ensure_state(db, conversation)
         now = self.now()
+        message = db.one("chat_messages", id=message_id)
+        optimize_request = bool(
+            state["mode"] == AgentMode.AUTONOMO.value
+            and re.search(r"optimiza el diseño hasta que cumpla", (message or {}).get("text", ""), re.IGNORECASE)
+        )
         run = self.active_run(db, conversation["id"])
         if run is None:
+            artifact_id = state["artifact_id"]
+            pending_calculation_id = None
+            if optimize_request and artifact_id:
+                latest_artifact = db.designs.latest(conversation["project_id"], artifact_id)
+                if latest_artifact:
+                    completed = [row for row in db.many(
+                        "calculos_potencial_tierras", project_id=conversation["project_id"],
+                        artifact_id=artifact_id, artifact_version=latest_artifact["version"], limit=1000,
+                    ) if row["status"] == "completed"]
+                    if completed:
+                        pending_calculation_id = max(completed, key=lambda row: (row["updated_at"], row["id"]))["id"]
             run = db.add("agent_runs", id=str(uuid4()), conversation_id=conversation["id"],
                          project_id=conversation["project_id"], trigger_message_id=message_id,
-                         artifact_id=state["artifact_id"], base_version=None, mode=state["mode"],
+                         artifact_id=artifact_id, base_version=None, mode=state["mode"],
                          status=RunStatus.QUEUED.value, plan=[], current_step=None,
-                         draft_snapshot=None, pending_calculation_id=None, pending_question=None,
+                         draft_snapshot=None, pending_calculation_id=pending_calculation_id, pending_question=None,
                          inbox=[], usage={"steps": 0}, error=None, created_by=actor_id,
                          created_at=now, updated_at=now, finished_at=None)
             db.change("chat_messages", message_id, run_id=run["id"])

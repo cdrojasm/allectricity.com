@@ -26,9 +26,37 @@ export const fieldLabels = {
   "conductor.thermal_duration_s": "Duración térmica t_c (s)",
   "conductor.ambient_temperature_c": "Temperatura ambiente (°C)",
 };
+const fieldValueLabels = {
+  "conductor.material_id": {
+    copper_annealed: "Cobre recocido",
+    copper_hard_drawn: "Cobre comercial duro",
+    copper_clad_40: "Acero revestido de cobre, 40 %",
+    copper_clad_30: "Acero revestido de cobre, 30 %",
+    copper_clad_rod_17: "Varilla de acero revestida de cobre, 17 %",
+    copper_clad_rod_20: "Varilla de acero revestida de cobre, 20 %",
+    aluminum_clad_steel: "Acero revestido de aluminio",
+    steel_1020: "Acero 1020",
+    stainless_clad_rod: "Varilla revestida de acero inoxidable",
+    zinc_coated_steel_rod: "Varilla de acero galvanizado",
+    stainless_304: "Acero inoxidable 304",
+    copper: "Cobre",
+    aluminium: "Aluminio",
+    aluminum: "Aluminio",
+    steel: "Acero",
+  },
+  "conductor.joint_type": {
+    bolted: "Apernada",
+    brazed: "Brasada o a presión",
+    welded: "Soldada o exotérmica",
+    other: "Otra",
+    mechanical: "Mecánica",
+    exothermic: "Exotérmica",
+  },
+};
+export const fieldValueLabel = (path, value) => fieldValueLabels[path]?.[value] || value;
 export const provenanceLabels = { claim: "Extraído de documentos", document: "Documento", user: "Confirmado por el usuario", tool: "Calculado", assumption: "Supuesto", schema_default: "Valor predeterminado" };
 export const studyStatusLabels = { draft: "borrador", published: "publicado", revoked: "revocado" };
-export const pdfStatusLabels = { pending: "En cola", running: "Generando…", ready: "Listo", failed: "Falló" };
+export const pdfStatusLabels = { none: "Sin generar", pending: "En cola", running: "Generando…", ready: "Listo", failed: "Falló" };
 
 // Plain label for a field path; unknown paths lose their dots and underscores instead of leaking raw keys.
 export const fieldLabel = (path) => (fieldLabels[path] || String(path).replace(/[._]/g, " ")).replace(/\s*\([^)]*\)\s*$/, "");

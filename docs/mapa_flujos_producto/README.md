@@ -17,4 +17,4 @@ Todo el contenido está en tres listas al final de `index.html`:
 
 Para rehacer el recorrido tras un cambio grande: `make local-up`, `make smoke-ui-seed`, recorrer la app con el perfil `designer` en `127.0.0.1:3001` usando un proyecto `zz-smoke-<fecha>-<id>`, reemplazar los pantallazos en `img/` y ajustar las listas. Borra el proyecto al terminar (`make smoke-ui-sweep`). Cambia también la fecha del encabezado.
 
-Última corrida: 2026-11-14, rama `p1-motor-potencial`. Estado de resolución actualizado el 2026-11-15 contra el código (sin recorrido nuevo): columna «Estado» de `PRIO` y sección «Estado de resolución».
+Última corrida: 2026-11-15, rama `p1-motor-potencial` en `82e3a13` (segunda corrida; la primera fue el 2026-11-14). Pantallazos `img/fNN.jpg`; la columna «Estado» de `PRIO` compara con la primera corrida.

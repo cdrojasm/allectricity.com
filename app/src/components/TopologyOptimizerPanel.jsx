@@ -21,7 +21,14 @@ function baseStatus(electrical) {
   if (electrical.feasible === true) return `Sin violaciones en el nivel más fino${ratio}; no certificado.`;
   return "No se pudo evaluar su cumplimiento.";
 }
-const detailText = (body, fallback) => (typeof body?.detail === "string" ? body.detail : fallback);
+const detailText = (body, fallback) => {
+  const detail = typeof body?.detail === "string" ? body.detail : "";
+  if (detail.includes("normative_profile_not_selected")) return "Falta fijar un perfil normativo revisado al proyecto. Selecciónalo arriba y guarda los cambios.";
+  if (detail.includes("mandatory_safety_profile_not_selected")) return "El perfil seleccionado no define criterios obligatorios de seguridad. Elige un perfil que incluya contacto y paso.";
+  if (detail.includes("jurisdiction_profile_mismatch")) return "La jurisdicción del perfil no coincide con el país del proyecto. Revisa el país o elige un perfil aplicable.";
+  if (detail.startsWith("OP-05 context is blocked:")) return "El contexto normativo todavía no permite optimizar. Revisa los perfiles seleccionados y sus criterios obligatorios.";
+  return detail || fallback;
+};
 
 // The run form (exposure, standards) is shared with the discrete optimizer in GroundingPlanDrawer.
 function TopologyOptimizerPanel({ projectId, token, artifact, canRun, runForm, onApplied }) {
@@ -48,6 +55,9 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, runForm, o
 
   const [history, setHistory] = useState([]);
   const [remembered, setRemembered] = useState(false);
+  const [profiles, setProfiles] = useState([]);
+  const [selectedProfiles, setSelectedProfiles] = useState([]);
+  const [profileBusy, setProfileBusy] = useState(false);
 
   useEffect(() => () => clearTimeout(timer.current), []);
 
@@ -76,6 +86,39 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, runForm, o
     } catch { /* El historial es una ayuda; el panel funciona sin él. */ }
   }
   useEffect(() => { if (token) loadHistory(true); }, [projectId, token]);
+
+  useEffect(() => {
+    if (!token) return;
+    let live = true;
+    Promise.all([
+      fetch("/api/v1/constraint-profiles", { headers: auth }).then(async (r) => r.ok ? r.json() : Promise.reject(new Error("No se pudieron cargar los perfiles normativos."))),
+      fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/constraint-profiles`, { headers: auth }).then(async (r) => r.ok ? r.json() : Promise.reject(new Error("No se pudo cargar la selección normativa del proyecto."))),
+    ]).then(([catalog, pinned]) => {
+      if (!live) return;
+      const latestReviewed = new Map();
+      for (const item of (catalog.profiles || []).filter((entry) => entry.status === "reviewed")) {
+        const previous = latestReviewed.get(item.profile_id);
+        if (!previous || item.version > previous.version) latestReviewed.set(item.profile_id, item);
+      }
+      setProfiles([...latestReviewed.values()]);
+      setSelectedProfiles((pinned.profiles || []).map((item) => ({ profile_id: item.profile_id, version: item.profile_version })));
+    }).catch((failure) => { if (live) setError(failure.message); });
+    return () => { live = false; };
+  }, [projectId, token]);
+
+  async function saveProfiles() {
+    setProfileBusy(true); setError("");
+    try {
+      const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/constraint-profiles`, {
+        method: "PUT", headers: { ...auth, "Content-Type": "application/json" },
+        body: JSON.stringify({ profiles: selectedProfiles }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(detailText(body, "No se pudieron fijar los perfiles al proyecto."));
+      setSelectedProfiles((body.profiles || []).map((item) => ({ profile_id: item.profile_id, version: item.profile_version })));
+    } catch (failure) { setError(failure.message); }
+    finally { setProfileBusy(false); }
+  }
 
   useEffect(() => {
     setCatalogOptions({});
@@ -173,7 +216,19 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, runForm, o
   const active = run && !TERMINAL.has(run.status);
   return <form className="optimizer-run-form topology-optimizer" onSubmit={start}>
     <h4>Búsqueda de topologías</h4>
-    <small>Explora trazados de conductores y varillas dentro de las áreas intervenibles y devuelve los más baratos que pasan la verificación más fina. Usa el suelo, la falla, la exposición y los estándares del formulario de arriba; el contexto normativo lo resuelve el servidor.</small>
+    <small>Explora trazados de conductores y varillas dentro de las áreas intervenibles. Antes de buscar, fija al proyecto un perfil normativo revisado que corresponda a esta instalación.</small>
+    <fieldset><legend>Perfiles normativos del proyecto</legend>
+      {profiles.length ? profiles.map((profile) => {
+        const selected = selectedProfiles.some((item) => item.profile_id === profile.profile_id);
+        return <label className="checkbox-row" key={`${profile.profile_id}-${profile.version}`}><input type="checkbox" checked={selected} onChange={(event) => setSelectedProfiles((current) => event.target.checked
+          ? [...current.filter((item) => item.profile_id !== profile.profile_id), { profile_id: profile.profile_id, version: profile.version }]
+          : current.filter((item) => item.profile_id !== profile.profile_id))}/>
+          {profile.definition?.title || profile.profile_id} · v{profile.version} · {profile.definition?.jurisdiction || "jurisdicción sin indicar"}
+        </label>;
+      }) : <small>No hay perfiles normativos revisados disponibles para seleccionar.</small>}
+      <button type="button" className="button" disabled={profileBusy || !profiles.length} onClick={saveProfiles}>{profileBusy ? "Guardando…" : "Guardar perfiles del proyecto"}</button>
+      {selectedProfiles.length === 0 && <small>Selecciona al menos un perfil; debe incluir los criterios obligatorios de seguridad aplicables.</small>}
+    </fieldset>
     <fieldset><legend>Tarifas ({currency || "moneda"})</legend>
       {remembered && <small>Precargadas con la tarifa de la última corrida de este proyecto; revísalas antes de buscar.</small>}
       <label>Moneda<input value={currency} maxLength={3} onChange={(e) => setCurrency(e.target.value.toUpperCase())}/></label>
@@ -196,7 +251,7 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, runForm, o
     </fieldset>
     <label className="checkbox-row"><input type="checkbox" checked={orthogonal} onChange={(e) => setOrthogonal(e.target.checked)}/> Solo trazados ortogonales (sin diagonales nuevas)</label>
     <label>Presupuesto de llamadas al solver<select value={budget} onChange={(e) => setBudget(e.target.value)}><option value="60">60 · rápido</option><option value="150">150 · recomendado</option><option value="300">300 · exhaustivo</option></select></label>
-    <button className="button primary" type="submit" disabled={busy || active || !canRun}>{busy ? "Enviando…" : "Buscar topologías"}</button>
+    <button className="button primary" type="submit" disabled={busy || active || !canRun || selectedProfiles.length === 0}>{busy ? "Enviando…" : "Buscar topologías"}</button>
     {error && <p className="optimizer-context-error" role="alert">{error}</p>}
     {run && <div className="optimizer-run-result" aria-live="polite">
       <strong>{STATUS_TEXT[run.status] || run.status}</strong>

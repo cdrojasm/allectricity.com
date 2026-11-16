@@ -80,8 +80,14 @@ def run_tool_agent(client, model, messages, tools, handlers, final_tool, finaliz
         )
         usage["rounds"] += 1
         if getattr(response, "usage", None):
-            usage["prompt_tokens"] += response.usage.prompt_tokens or 0
-            usage["completion_tokens"] += response.usage.completion_tokens or 0
+            prompt_tokens = response.usage.prompt_tokens or 0
+            completion_tokens = response.usage.completion_tokens or 0
+            usage["prompt_tokens"] += prompt_tokens
+            usage["completion_tokens"] += completion_tokens
+            per_model = usage.setdefault("models", {}).setdefault(
+                model, {"prompt_tokens": 0, "completion_tokens": 0})
+            per_model["prompt_tokens"] += prompt_tokens
+            per_model["completion_tokens"] += completion_tokens
         if max_tokens and usage["prompt_tokens"] + usage["completion_tokens"] > max_tokens:
             raise TokenLimitExceeded(f"Agent exceeded its token limit ({max_tokens})")
         message = response.choices[0].message

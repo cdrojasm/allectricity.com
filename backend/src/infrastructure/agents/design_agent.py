@@ -8,13 +8,16 @@ missing, which only blocks the potential calculation.
 """
 
 import json
+import logging
 import os
+import re
 from pathlib import Path
 from time import time
 
 from pydantic import TypeAdapter, ValidationError
 
 from src.application.use_cases.agent_runs import StepOutcome, message_order
+from src.application.use_cases.budgets import Budgets
 from src.domain.agent.events import EventLevel, EventType
 from src.domain.agent.patches import (
     CRITICAL, UNCONFIRMED, get_path,
@@ -55,6 +58,7 @@ TABLE_MIMES = {"text/csv", "application/vnd.openxmlformats-officedocument.spread
 DESIGNER_ROUNDS = 6
 DESIGNER_PATHS = ("name", "geometry.", "conductor.")
 DEFAULT_DESIGN_ITERATIONS = 3
+logger = logging.getLogger(__name__)
 
 
 def enabled() -> bool:
@@ -137,6 +141,7 @@ class ArtifactWorkspace:
         self.pending_layout = None  # a rod layout that failed and is retried when the grid changes
         self.queued_calculation = None
         self.applied = False
+        self.last_applied = None
         with store.transaction() as db:
             state = db.one("agent_conversation_state", id=run["conversation_id"]) or {}
             self.artifacts = {row["artifact_id"]: row for row in db.designs.latest_by_artifact(run["project_id"])}
@@ -727,6 +732,8 @@ class ArtifactWorkspace:
         self.provenance = dict(row["origin"]["provenance"])
         self.artifacts[row["artifact_id"]] = row
         self.applied = True
+        self.last_applied = {"version": row["version"], "summary": change["summary"],
+                             "paths": [item["path"] for item in shown]}
         return {"artifact_id": row["artifact_id"], "version": row["version"], "name": row["name"],
                 "unconfirmed_critical": change["unconfirmed_critical"],
                 "missing_for_calculation": change["missing_for_calculation"],
@@ -898,6 +905,15 @@ class GroundingDesignAgent:
             runs.add_usage(run["id"], {"prompt_tokens": usage["prompt_tokens"],
                                        "completion_tokens": usage["completion_tokens"],
                                        "llm_rounds": usage["rounds"]})
+            step = (run.get("usage") or {}).get("steps", 1)
+            for model, counts in usage.get("models", {}).items():
+                try:
+                    Budgets(self.store).consume_agent_usage(
+                        run["created_by"], run["project_id"], run["id"], step, model,
+                        counts["prompt_tokens"], counts["completion_tokens"],
+                    )
+                except Exception:
+                    logger.exception("Could not debit agent token usage for run %s", run["id"])
 
     def _history(self, run) -> list[dict]:
         with self.store.transaction() as db:
@@ -1124,6 +1140,13 @@ class GroundingDesignAgent:
                 return False, {"error": "The draft has changes that were not applied: call apply_changes, or call "
                                         "respond_to_user again to leave them unapplied",
                                "pending_changes": [c["path"] for c in pending]}
+            applied = workspace.last_applied
+            if applied and re.search(r"no\s+(?:se\s+)?(?:realizaron|hicieron|hubo)\s+cambios|no changes were made",
+                                     str(args.get("text") or ""), re.IGNORECASE):
+                paths = ", ".join(path.replace("geometry.", "").replace("_", " ").replace(".", " ")
+                                   for path in applied["paths"])
+                args["text"] = (f"Sí hubo cambios en el diseño: se creó la versión {applied['version']}"
+                                 f" ({applied['summary']}). Campos actualizados: {paths}.")
             return True, {"ok": True}
 
         result = runtime.run_tool_agent(client, model_for("AGENT_ORCHESTRATOR_MODEL"), messages, tools, handlers,

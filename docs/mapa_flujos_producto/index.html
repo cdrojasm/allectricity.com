@@ -102,30 +102,30 @@ ol.order{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;m
 
 <div class="wrap">
 <header>
-  <span class="eyebrow">Recorrido de producto · 14 nov 2026 · perfil diseñador · stack local · estado actualizado 15 nov 2026</span>
+  <span class="eyebrow">Recorrido de producto · 15 nov 2026 · perfil diseñador · stack local · segunda corrida</span>
   <h1>Mapa de flujos Terra</h1>
-  <p class="lede">Recorrí la app como lo haría un ingeniero que llega por primera vez: crear un proyecto, pedirle al agente una malla de 40 × 30 m, llevarla a cumplir IEEE 80 y compartir el estudio con un cliente. Cada paso tiene su pantallazo y lo que encontré.</p>
-  <p class="lede">Pantallazos y hallazgos son del recorrido del 14 nov. La columna «Estado» y la sección <a href="#estado">Estado de resolución</a> recogen lo que se hizo después, revisado contra el código y los commits del 15 nov. Todavía no se ha vuelto a recorrer la app.</p>
+  <p class="lede">Repetí el recorrido del 14 nov sobre la rama actual, como lo haría un ingeniero que llega por primera vez: crear un proyecto, pedirle al agente una malla de 40 × 30 m, intentar llevarla a cumplir IEEE 80 (con el agente y con el optimizador de topologías) y compartir el estudio. Cada paso tiene su pantallazo de esta corrida.</p>
+  <p class="lede">La columna «Estado» de los hallazgos compara con el recorrido del 14 nov: qué se verificó resuelto en la app y qué sigue roto. La sección <a href="#cambios">Qué cambió</a> lo resume.</p>
   <div class="verdict">
     <div>
       <span class="eyebrow">Veredicto</span>
-      <p><strong>El tramo chat → malla → resultado tiene sentido y es rápido. El producto se rompe en dos puntos: el diseño nunca llega a «Cumple» y las vistas se contradicen entre sí.</strong></p>
+      <p><strong>Desde el 14 nov el producto avanzó mucho: los formularios leen el diseño, el estudio público ya no se contradice y publicar un «No cumple» pide confirmación. Lo que sigue sin funcionar es el centro de la promesa: el diseño no llega a «Cumple» por ningún camino.</strong></p>
     </div>
     <div>
       <span class="eyebrow">Lo que funciona</span>
       <ul>
-        <li>De proyecto vacío a malla dibujada en unos 30 segundos.</li>
-        <li>El agente declara supuestos y pide confirmar los datos críticos.</li>
-        <li>Cada cambio queda como versión con «Deshacer».</li>
-        <li>El resultado explica la restricción dominante y por qué.</li>
+        <li>De proyecto vacío a resultado calculado en menos de 2 minutos.</li>
+        <li>Parámetros, Suelo, Resumen e Inicio muestran el mismo diseño y el mismo veredicto.</li>
+        <li>Publicar: confirmación de «no conforme», resumen fiel al resultado, PDF listo para descargar.</li>
+        <li>El estudio trae lista de materiales y aviso de prefactibilidad.</li>
       </ul>
     </div>
     <div>
       <span class="eyebrow">Lo que impide usarlo de verdad</span>
       <ul>
-        <li>Tres iteraciones con el agente y sigue en «No cumple» (−119,6 %).</li>
-        <li>Parámetros y Suelo dicen «Falta» aunque el artefacto ya tiene esos datos.</li>
-        <li>Se puede publicar un estudio que no cumple, sin aviso, con un resumen que contradice el resultado.</li>
+        <li>«Optimizar hasta cumplir» responde sin iterar; el optimizador de topologías falla sin perfil normativo revisado.</li>
+        <li>El editor de plano no muestra la malla del agente («0 elementos»).</li>
+        <li>El agente dice «no se realizaron cambios» justo después de crear la versión 3.</li>
       </ul>
     </div>
   </div>
@@ -139,45 +139,39 @@ ol.order{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;m
 
 <section>
   <h2>Pantallas conectadas</h2>
-  <p>Cada flecha sale del control que se pulsa y llega a la pantalla que abre. El borde de cada pantalla indica su estado. Abajo, las tres pestañas donde el diseño del agente no coincide con lo que se ve. Desliza hacia la derecha para seguir el camino.</p>
+  <p>Cada flecha sale del control que se pulsa y llega a la pantalla que abre. El borde de cada pantalla indica su estado. Abajo, las pestañas que se abren desde el resultado: Resumen y Parámetros ya coinciden con el diseño; el plano y el optimizador no. Desliza hacia la derecha para seguir el camino.</p>
   <div class="board" id="board" tabindex="0" aria-label="Tablero de pantallas conectadas"></div>
 </section>
 
-<section id="steps"><h2>Paso a paso</h2><p>Estado de la app el 14 nov, antes de los cambios. Lo que ya se resolvió está en la columna «Estado» de los hallazgos.</p></section>
+<section id="steps"><h2>Paso a paso</h2><p>Estado de la app el 15 nov, rama <code>p1-motor-potencial</code> en <code>82e3a13</code>.</p></section>
 
 <section>
   <h2>Hallazgos priorizados</h2>
   <div class="tablewrap"><table>
-    <thead><tr><th>Prioridad</th><th>Hallazgo</th><th>Qué haría</th><th>Estado · 15 nov</th></tr></thead>
+    <thead><tr><th>Prioridad</th><th>Hallazgo</th><th>Qué haría</th><th>Estado · recorrido 15 nov</th></tr></thead>
     <tbody id="prio"></tbody>
   </table></div>
 </section>
 
 <section id="estrategia">
   <h2>Estrategia por hallazgo</h2>
-  <p>Propuesta del 14 nov 2026; buena parte ya se implementó (ver <a href="#estado">Estado de resolución</a>). Casi todo lo que falló figura como «Implementada» en <code>docs/BACKLOG_PRODUCTO.md</code>: las piezas existen, pero no se validan de punta a punta. Por eso la mayoría de las estrategias consiste en conectar y cerrar lo que ya hay.</p>
+  <p>Propuesta del 14 nov, ajustada con lo que mostró este recorrido. Casi todo lo que falla ya tiene las piezas construidas; la estrategia sigue siendo conectar y cerrar lo que hay.</p>
   <div id="strat" style="display:flex;flex-direction:column;gap:18px"></div>
-  <h3 id="estado">Estado de resolución · 15 nov 2026</h3>
-  <p>Revisado contra el código y los commits <code>04f1e5c</code>, <code>f920359</code>, <code>27f923f</code>, <code>04f4ee9</code> (14 nov) y <code>0f883c1</code>, <code>8038481</code>, <code>1b88d64</code>, <code>1fd1516</code> (15 nov).</p>
+  <h3 id="cambios">Qué cambió desde el 14 nov · verificado en la app</h3>
   <ul class="order" style="list-style:disc">
-    <li><strong>1 · Cumplir · parcial:</strong> ya está el botón «Optimizar hasta cumplir» en Resultado (modo autónomo, 3 intentos). La búsqueda de topologías corre como trabajo en cola y se puede cancelar; el editor de plano tiene un panel que compara alternativas por costo, Rg, contacto y paso, muestra cada una sobre el diseño base y la aplica como versión nueva. <em>Pendiente:</em> un diagnóstico antes de iterar (¿se puede llegar a «Cumple»?), cerrar siempre con una conclusión, acciones sugeridas que recuerden lo que ya se aplicó y pedir la optimización desde el chat.</li>
-    <li><strong>2 · Una sola verdad · parcial:</strong> Parámetros, Suelo y Mediciones se llenan desde la última versión guardada y guardan versiones del mismo diseño. Los formularios leen los límites de contacto y paso y no aceptan duraciones por encima del límite de la norma. El editor de plano conserva la longitud de cada varilla. <em>Pendiente:</em> el editor de plano solo dibuja conductores explícitos (<code>geometry.conductors</code>), así que una retícula del agente sin convertir sigue sin aparecer. Las reglas de conflicto del editor y del generador siguen siendo distintas.</li>
-    <li><strong>3 · Chat vs panel · pendiente:</strong> lo único que cambió es que una justificación corta ya no impide calcular. Ningún cambio hace que el estado del cálculo tenga un solo dueño ni impide que el agente diga si el cálculo corrió.</li>
-    <li><strong>4 · Estudio público · casi resuelto:</strong> el resumen sale del resultado fijado y, si niega resultados que existen, se usa el veredicto guardado. El resultado se lee igual que en el panel del espacio de trabajo (sin JSON crudo) e indica el material del conductor y la norma de dimensionamiento. Publicar un «No cumple» exige confirmación (409 <code>non_compliant</code>) y el estudio lleva la banda «Diseño no conforme». Las referencias están en lenguaje de ingeniería, con un detalle plegado para auditoría. <em>Pendiente:</em> poner el plano de la malla en el estudio y tratar como supuestos los valores predeterminados.</li>
-    <li><strong>5 · Veredicto · resuelto:</strong> el proyecto tiene un estado de diseño (sin diseño, borrador, no cumple, cumple, publicado) que se ve como insignia en Inicio, Proyectos y la cabecera del espacio. El Resumen muestra el veredicto del cálculo.</li>
-    <li><strong>6 · Editor de estudio · casi resuelto:</strong> «Publicar estudio» es la acción principal y hay «Ver estudio», enlace visible, estado del PDF (en cola, generando, listo, falló) con «Descargar» y estados en español. <em>Pendiente:</em> el guardado sigue siendo manual («Guardar borrador»).</li>
-    <li><strong>7 · Vocabulario · casi resuelto:</strong> login en español, glosario de campos en <code>labels.js</code>, «editor de plano» en lugar de «drawer» y el rótulo «OP-03 / Abastecimiento» retirado. <em>Pendiente:</em> etiquetas para materiales y tipos de unión, y «artefacto» todavía aparece en el editor de estudio.</li>
-    <li><strong>8 · Formato del agente · parcial:</strong> las burbujas muestran listas y negritas (<code>RichText</code>). <em>Pendiente:</em> usar en el chat la misma tarjeta de interpretación del panel.</li>
-    <li><strong>9 · Detalles · casi resuelto:</strong> Esc cierra la vista 3D, las flechas de pestañas solo aparecen si hay desborde, «Cargar mensajes anteriores» aparece solo con 30 mensajes o más, la ciudad escrita se respeta, la actividad ya no muestra proyectos borrados y se retiró la ayuda de una línea. <em>Pendiente:</em> «Tokens consumidos» y «Estado del sistema» se siguen mostrando a todos los perfiles.</li>
-    <li><strong>10 · Catálogo y borrado · parcial:</strong> el diálogo de borrado avisa cuántos estudios publicados dejarán de funcionar. <em>Pendiente:</em> al catálogo solo se entra desde el menú lateral y sin proyecto elegido, aunque el código ya admite abrirlo con un proyecto.</li>
+    <li><strong>Resuelto y comprobado:</strong> login en español; Inicio sin actividad fantasma; la ciudad escrita se respeta; insignia de estado (Sin diseño → Borrador → No cumple · publicado); Resumen con veredicto; Parámetros y Suelo leen la versión guardada; sin «Cargar mensajes anteriores» en un chat vacío; catálogo accesible desde el proyecto con el proyecto ya elegido; borrado que avisa del estudio publicado.</li>
+    <li><strong>Estudio:</strong> «Publicar estudio» es la acción principal, publicar un «No cumple» exige confirmación y deja la banda «Diseño no conforme», el resumen con IA usa los valores reales, hay «Ver estudio», enlace visible y estado del PDF con «Descargar». El estudio trae lista de materiales.</li>
+    <li><strong>Chat:</strong> el estado del cálculo ya no se contradice («en curso» → «terminado» → resultado), y las respuestas muestran listas.</li>
+    <li><strong>Sigue roto:</strong> llegar a «Cumple» (agente y optimizador), el plano vacío y el agente negando cambios que sí hizo.</li>
+    <li><strong>Nuevo:</strong> el optimizador de topologías no se puede usar desde una cuenta nueva: exige un perfil normativo revisado que la interfaz no deja elegir, y el error sale en inglés con códigos internos.</li>
   </ul>
-  <p>Esto se revisó en el código, no recorriendo la app. Según la regla de «Que no vuelva a pasar», nada se da por cerrado hasta repetir el recorrido completo.</p>
   <h3>Orden recomendado</h3>
   <ol class="order">
-    <li><strong>Hallazgo 3 y el plano del hallazgo 2.</strong> Son lo que queda de «una sola verdad» (H1) y casi no han avanzado.</li>
-    <li><strong>Lo que falta del hallazgo 1:</strong> diagnóstico y conclusión. El optimizador ya existe, pero el camino principal todavía no termina en «Cumple».</li>
-    <li><strong>Repetir el recorrido</strong> para confirmar los hallazgos 4 a 7 y actualizar <code>docs/BACKLOG_PRODUCTO.md</code>, que no se toca desde el 8 oct.</li>
-    <li>El resto: plano y supuestos en el estudio, catálogo, tarjeta de interpretación y guardado automático.</li>
+    <li><strong>Hallazgo 11 y 1 · llegar a «Cumple»:</strong> un perfil IEEE 80 revisado por defecto (OP-20) y que «Optimizar hasta cumplir» use la búsqueda de topologías (PR-33) en vez de responder con texto. Sin esto la promesa no se cumple.</li>
+    <li><strong>Hallazgo 2 · plano:</strong> que el editor dibuje la retícula del agente (convertir <code>geometry</code> paramétrica en conductores al abrirlo).</li>
+    <li><strong>Hallazgo 3 · el agente niega lo que hizo:</strong> la respuesta final debe salir del diff de la versión creada, no de la opinión del modelo.</li>
+    <li><strong>Hallazgo 4 · estudio:</strong> referencias sin claves internas, marca de borrador cuando hay supuestos y el plano de la malla.</li>
+    <li>El resto: vocabulario (<code>bolted</code>, <code>copper_hard_drawn</code>, <code>study</code>, <code>PDF: none</code>), Inicio por perfil, tokens consumidos.</li>
   </ol>
 </section>
 
@@ -185,31 +179,33 @@ ol.order{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;m
   <h2>Sobre el método</h2>
   <div class="cols">
     <div>
-      <h3>No hace falta Figma</h3>
-      <p>Figma sirve para diseñar pantallas que aún no existen. Aquí la app ya corre, así que el mapa se arma sobre el producto real: recorrerlo con un usuario de prueba, capturar cada estado y anotar dónde fluye y dónde se rompe. Este mismo recorrido se puede repetir después de cada cambio grande.</p>
+      <h3>Repetir tras cada hito</h3>
+      <p>El mapa se arma sobre el producto real: recorrerlo con un usuario de prueba, capturar cada estado y anotar dónde fluye y dónde se rompe. Esta es la segunda corrida; la primera fue el 14 nov y su lista de hallazgos se reutilizó para medir el avance.</p>
     </div>
     <div>
       <h3>Lo que no recorrí</h3>
       <ul>
         <li>Perfiles <code>viewer</code> y <code>user_admin</code>.</li>
         <li>Carga de archivos en Fuentes y mediciones de campo.</li>
-        <li>El PDF generado y el estudio con contraseña.</li>
+        <li>El contenido del PDF descargado y el estudio con contraseña.</li>
         <li>Ancho de teléfono.</li>
-        <li>El agente cotizador del catálogo.</li>
+        <li>El agente cotizador y la búsqueda de proveedores.</li>
+        <li>El optimizador con un perfil revisado (el smoke <code>05-optimizador-topologia</code> lo siembra por API).</li>
       </ul>
     </div>
     <div>
       <h3>Datos de la corrida</h3>
       <ul>
-        <li>Usuario <code>designer</code> creado con <code>make smoke-ui-seed</code>.</li>
-        <li>Proyecto <code>zz-smoke-20261114-pmflow</code>, borrado al terminar.</li>
-        <li>Entrada: 40 × 30 m, retícula 5 m, 8 kA, 0,5 s, suelo 100 Ω·m.</li>
+        <li>Stack reconstruido con <code>make local-up</code>; usuario <code>designer</code> creado con <code>make smoke-ui-seed</code>.</li>
+        <li>Proyecto <code>zz-smoke-20261115-mapa</code>, borrado al terminar.</li>
+        <li>Entrada: 40 × 30 m, retícula 5 m, 8 kA, 0,5 s, suelo 100 Ω·m, capa superficial 3.000 Ω·m · 0,1 m.</li>
+        <li>Tarifas del optimizador escritas a mano (valores de prueba).</li>
       </ul>
     </div>
   </div>
 </section>
 
-<footer>Pantallazos tomados en <code>127.0.0.1:3001</code> a 1456 × 830. Toca cualquiera para verlo en grande.</footer>
+<footer>Pantallazos tomados en <code>127.0.0.1:3001</code> con una ventana de 1456 × 830. Toca cualquiera para verlo en grande.</footer>
 </div>
 
 <dialog id="zoom"><img id="zoomimg" alt=""></dialog>
@@ -218,68 +214,74 @@ ol.order{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;m
 const LABEL={ok:"Fluye",warn:"Con fricción",bad:"Se rompe"};
 const SEV={bad:"Grave",warn:"Fricción",ok:"Menor"};
 const STEPS=[
- {id:"entrar",t:"Entrar",s:"warn",
+ {id:"entrar",t:"Entrar",s:"ok",
   want:"Iniciar sesión y entender dónde estoy.",
-  got:"El login está en inglés y el resto de la app en español. No hay «olvidé mi contraseña». El inicio saluda y muestra el estado de la infraestructura.",
-  shots:[["s49","Login en inglés: «Welcome back», «Sign in with your local account»."],["s0","Inicio con cuenta nueva: 0 proyectos, pero la lista de actividad muestra proyectos que ya no existen."]],
-  finds:[["warn","Idioma mezclado: login en inglés, app en español."],["warn","«Funciones usadas recientemente» lista actividad de proyectos borrados; una cuenta sin proyectos no debería tener historial."],["ok","«Estado del sistema» (base de datos, antivirus, OCR) es información de operación, no del diseñador."],["ok","«Tokens consumidos» siguió en 0 después de usar el agente varias veces."]]},
+  got:"El login ya está en español. Una cuenta nueva ve un Inicio limpio: 0 proyectos y sin actividad heredada.",
+  shots:[["f01","Login en español."],["f02","Inicio de una cuenta nueva, sin actividad fantasma."]],
+  finds:[["warn","No hay «¿Olvidaste tu contraseña?», aunque el backend ya tiene el flujo de restablecimiento."],["ok","«Tokens consumidos» y «Estado del sistema» se muestran al diseñador; los tokens siguen en 0 después de usar el agente."]]},
  {id:"crear",t:"Crear proyecto",s:"ok",
   want:"Registrar la subestación y su ubicación.",
-  got:"Un diálogo corto con nombre, descripción y mapa. El proyecto aparece en la tabla con aviso de confirmación. Clic en el nombre abre el espacio de trabajo.",
-  shots:[["s1","Portafolio vacío con llamada clara a crear."],["s3","Diálogo de creación. Escribí «Bogotá» y el buscador lo cambió a «Bogotá ciudad»."],["s4","Proyecto creado."]],
-  finds:[["ok","El buscador del mapa reescribe lo que el usuario tecleó en Ciudad («Bogotá ciudad») y así sale luego en el estudio público."],["ok","El ícono para abrir el espacio es un globo de chat; el nombre también abre, pero no parece enlace."]]},
- {id:"espacio",t:"Espacio vacío",s:"warn",
+  got:"Diálogo corto con nombre, ubicación y mapa. La ciudad escrita se conserva y el proyecto aparece con la insignia «Sin diseño».",
+  shots:[["f03","Diálogo de creación: «Bogotá» se queda como se escribió."],["f04","Proyecto creado con su estado de diseño."]],
+  finds:[["ok","«Crear proyecto» en Inicio lleva al portafolio vacío y hay que pulsar «Nuevo proyecto» otra vez."]]},
+ {id:"espacio",t:"Espacio vacío",s:"ok",
   want:"Saber por dónde empezar.",
-  got:"Pantalla partida: chat a la izquierda, artefacto a la derecha con siete pestañas. El artefacto vacío da un ejemplo de qué pedir, y eso orienta. El chat, en cambio, habla de «refinamiento» cuando todavía no hay nada que refinar.",
-  shots:[["s5","Primer vistazo al espacio del proyecto."],["s7","Mediciones: dice «Valores de ejemplo: reemplázalos», pero los campos dicen «Falta»."],["s10","Plano: el botón se llama «Abrir drawer de dibujo»."]],
-  finds:[["warn","Vocabulario interno a la vista: «Refinamiento del artefacto», «artefacto», «drawer», «SPAT», «Memoria del proyecto · 0»."],["ok","«Cargar mensajes anteriores» aparece en un chat que no tiene mensajes."],["ok","Las flechas para desplazar pestañas están siempre, aunque las siete caben."],["ok","«Ayuda del espacio» solo muestra un aviso de una línea."]]},
+  got:"Chat a la izquierda y diseño a la derecha. El panel vacío sugiere qué pedir. El catálogo de materiales ya está en la cabecera del proyecto.",
+  shots:[["f05","Espacio del proyecto recién creado."]],
+  finds:[["ok","El panel se sigue llamando «Artefacto de puesta a tierra»."]]},
  {id:"pedir",t:"Pedir la malla",s:"ok",
   want:"Describir la subestación en una frase y ver una malla.",
-  got:"El agente responde en unos 20 segundos: dibuja la malla, lista lo que registró y pregunta por la capa superficial antes de calcular. Este es el mejor momento del producto.",
-  shots:[["s13","Mensaje enviado: «Empecé a trabajar en tu solicitud…» con opción de cancelar."],["s15","Malla creada con tarjeta de cambios, «Deshacer» y pregunta de confirmación."]],
-  finds:[["ok","La tarjeta de cambios muestra exactamente qué se registró y permite deshacer. Vale la pena conservar este patrón en todo el producto."]]},
- {id:"resultado",t:"Ver el resultado",s:"bad",
+  got:"En unos 30 segundos el agente dibuja la malla, lista lo que registró y pide confirmar la capa superficial antes de calcular.",
+  shots:[["f06","Versión 1 con tarjeta de cambios, «Deshacer» y la pregunta de confirmación."]],
+  finds:[["warn","La tarjeta de cambios todavía muestra valores crudos: «bolted», «copper_hard_drawn»."]]},
+ {id:"resultado",t:"Ver el resultado",s:"ok",
   want:"Saber si el diseño cumple y por qué.",
-  got:"El panel de resultado es claro: «No cumple», restricción dominante, margen y dos acciones sugeridas. El chat, al mismo tiempo, dice tres cosas incompatibles.",
-  shots:[["s16","A la derecha hay resultado. A la izquierda: «Cálculo de seguridad terminado», luego «No se pudo lanzar el cálculo» y «El resultado quedó desactualizado»."],["s17","Mapa de potencial superficial y advertencias del modelo."],["s21","Vista 3D de la tensión de contacto. La tecla Esc no la cierra."]],
-  finds:[["bad","El chat contradice al panel: anuncia cálculo terminado, luego que no se pudo lanzar, mientras el resultado ya está en pantalla. El usuario no sabe a cuál creerle."],["warn","Las respuestas largas del agente salen como un párrafo corrido con guiones; se pierde el formato de lista."],["ok","Las advertencias citan el backlog interno: «(P1 del backlog)»."]]},
+  got:"Tras confirmar, el chat dice «en curso», luego «Cálculo de seguridad terminado» y entrega el resultado en listas. El panel coincide: «No cumple» por contacto (2.266 V frente a 681 V, −233 %), con la restricción dominante y acciones sugeridas.",
+  shots:[["f07","Resultado v2: chat y panel cuentan lo mismo."],["f07b","Tarjeta de confirmación de la capa superficial y mensaje de cálculo en curso."]],
+  finds:[["ok","El chat repite el resultado en texto libre en vez de usar la tarjeta de interpretación del panel."]]},
  {id:"iterar",t:"Llevarlo a cumplir",s:"bad",
   want:"Que el diseño pase la norma.",
-  got:"Probé la acción sugerida («Agrega varillas en el perímetro y recalcula») y después pedí «optimiza hasta que cumpla». La tensión de contacto bajó de 2.218 V a 1.495 V; el límite es 681 V. Tras cada intento el panel ofrece las mismas dos acciones.",
-  shots:[["s25","Versión 3, con varillas: 1.658 V, margen −143,6 %."],["s27","Versión 4, «optimizada»: 1.495 V, margen −119,6 %. El agente pregunta qué más cambiar."]],
-  finds:[["bad","El camino principal no converge. «Optimiza hasta que cumpla» hace un solo ajuste y devuelve la pregunta al usuario. No vi en la interfaz una forma de lanzar una optimización que termine en «Cumple»."],["warn","Las acciones sugeridas no cambian aunque ya se aplicaron y no bastaron."],["warn","Con un margen de −120 % el problema es de planteamiento (falta el factor de división de corriente que el propio modelo advierte). El producto debería decirlo antes de invitar a agregar varillas."]]},
+  got:"«Optimizar hasta cumplir» envía la petición al agente, que contesta en texto sin probar nada: dice que no es posible cumplir «solo con la geometría» y a la vez propone cambios de geometría. Luego «Agrega varillas en el perímetro» crea la versión 3 con 28 varillas (contacto 1.697 V, −149 %), pero el agente responde «No se realizaron cambios en el diseño».",
+  shots:[["f08","«Optimizar hasta cumplir»: respuesta sin iteración y sin versión nueva."],["f09","Versión 3 calculada; el agente dice que no hubo cambios."]],
+  finds:[["bad","El camino principal sigue sin llegar a «Cumple»: el modo autónomo no itera y no concluye qué dato habría que cambiar."],["bad","El agente contradice al sistema: niega una versión que acaba de crear y que el panel ya muestra."],["warn","Las acciones sugeridas no cambian después de aplicarlas."],["warn","Con −233 % el agente menciona revisar S_f entre otras cosas, pero no lo destaca como la causa probable antes de invitar a iterar."]]},
  {id:"revisar",t:"Revisar entradas",s:"bad",
   want:"Comprobar y ajustar a mano lo que el agente puso.",
-  got:"El Resumen muestra la malla y las entradas con su estado («Confirmado», «Predeterminado»). Al abrir las pestañas de entrada, los formularios están vacíos y el plano marca conflictos sobre el diseño que hizo el propio agente.",
-  shots:[["s30","Resumen: entradas con estado de confirmación, pero sin el veredicto «No cumple»."],["s33","Parámetros: corriente y tiempo dicen «Falta» aunque el artefacto tiene 8.000 A y 0,5 s."],["s35","Suelo: «Hay 0 lecturas» aunque el cálculo usó 100 Ω·m."],["s32","Plano: 36 electrodos, ningún conductor dibujado y «7 conflictos»."]],
-  finds:[["bad","Dos verdades: los formularios manuales no leen el artefacto. Quien entre a Parámetros creerá que no hay datos y puede sobrescribirlos."],["bad","El editor de plano no dibuja los conductores de la malla y reporta 7 conflictos («Ya existe un electrodo en esta celda») en un diseño generado por el agente."],["warn","El Resumen omite lo más importante: si cumple o no."],["ok","Valores crudos a la vista: «copper_hard_drawn», «unión bolted»."]]},
- {id:"compartir",t:"Compartir estudio",s:"warn",
+  got:"Resumen, Parámetros y Suelo ya muestran el diseño guardado y el veredicto. El plano no: la pestaña dice «0 elementos» y el editor abre el terreno vacío, mientras Resumen dibuja la retícula de 40 × 30 m.",
+  shots:[["f10","Resumen con malla y «No cumple»."],["f11","Parámetros lee 8.000 A, 0,5 s y la capa superficial."],["f12","Suelo muestra 100 Ω·m, pero el material de la capa dice «Falta»."],["f13","Plano: «0 elementos» y «La malla aparecerá aquí al dibujarla»."],["f14","Editor de plano: terreno de 40 × 30 m sin conductores ni varillas."]],
+  finds:[["bad","El editor de plano no muestra la malla generada por el agente. Quien la edite a mano parte de cero y puede sobrescribirla."],["ok","«El perfil se guardará en el artefacto cuando ejecutes el cálculo»: vocabulario interno en Suelo."]]},
+ {id:"optimizador",t:"Optimizador de topologías",s:"bad",
+  want:"Buscar una malla que cumpla al menor costo.",
+  got:"El panel está dentro del editor de plano, bajo «Restricciones de optimización». Pide variables y «Hechos de aplicabilidad» en JSON, clase de exposición, estándares y seis tarifas escritas a mano con su fuente. Con todo lleno, la corrida falla: «OP-05 context is blocked: normative_profile_not_selected».",
+  shots:[["f15","Formulario: tarifas a mano, presupuesto de llamadas al solver."],["f16","Error en inglés y con códigos internos; no hay dónde elegir el perfil."]],
+  finds:[["bad","Una cuenta nueva no puede usar el optimizador: exige un perfil normativo revisado (OP-20) y la interfaz no permite elegirlo ni explica cómo conseguirlo."],["warn","El formulario expone piezas internas: JSON de hechos de aplicabilidad, nombres de variables (translate_x_m), «OP-05»."],["warn","Marcar el estándar con un clic programático no lo registra; hay que hacer clic dos veces (estado del checkbox desincronizado)."]]},
+ {id:"compartir",t:"Compartir estudio",s:"ok",
   want:"Preparar un entregable para el cliente.",
-  got:"Se crea un borrador, se puede generar texto con IA por sección y publicar. Funciona, pero el editor se ve sin terminar y publicar ocurre sin confirmación ni vista previa.",
-  shots:[["s37","Punto de partida."],["s38","Editor del estudio con controles sin estilo y estado «v4 · draft»."],["s40","Publicado: aparecen «Republicar», «Revocar», «Generar PDF» y «Copiar enlace», sin aviso ni enlace visible."],["s41","«PDF en cola. Consulta el estado en unos segundos», pero no hay dónde consultarlo."]],
-  finds:[["bad","Se publicó un diseño que no cumple sin advertencia ni confirmación."],["warn","Jerarquía invertida: «Guardar configuración» es el botón grande y «Publicar estudio» uno pequeño debajo."],["warn","No hay vista previa ni forma de abrir el estudio; solo copiar el enlace."],["warn","El editor usa controles nativos del navegador y rompe con el resto de la app. Estados en inglés («draft», «published»)."]]},
- {id:"publico",t:"Estudio público",s:"bad",
+  got:"Crear borrador, generar el resumen con IA (fiel al resultado) y publicar. Al ser «No cumple» pide confirmación. Ya publicado aparecen «Ver estudio», el enlace y el estado del PDF; en unos 20 s queda «Listo · Descargar».",
+  shots:[["f17","Punto de partida."],["f18","Editor con el resumen generado y «Publicar estudio» como acción principal."],["f19","Confirmación al publicar un diseño no conforme."],["f20","Publicado: enlace visible y PDF listo para descargar."]],
+  finds:[["warn","Antes de generar el PDF el estado dice «PDF: none»."],["ok","El logo usa el selector de archivos nativo del navegador; el guardado sigue siendo manual."]]},
+ {id:"publico",t:"Estudio público",s:"warn",
   want:"Que el cliente abra el enlace y confíe en lo que lee.",
-  got:"La página es limpia y la tabla de resultados se entiende. El resumen generado y la sección de referencias le restan credibilidad.",
-  shots:[["s42","Encabezado, resumen y entradas. El resumen nombra el proyecto por su id interno."],["s43","Resultado: tabla por criterio y mapa de potencial."]],
-  finds:[["bad","El resumen de IA afirma que «no se cuenta aún con resultados de tensiones de contacto, paso, GPR» y justo debajo está la tabla con esos resultados y el «No cumple»."],["bad","«Referencias y trazabilidad» muestra claves internas: «geometry.length_m · 04bc2c42-…», «schema_default». Un cliente no puede leer eso."],["warn","No vi marca de borrador aunque el conductor y otros 20 campos son valores predeterminados sin confirmar."],["ok","El estudio no incluye el plano de la malla, solo el mapa de calor."]]},
- {id:"laterales",t:"Catálogo y cierre",s:"warn",
+  got:"La banda «Diseño no conforme», el resumen, las entradas, la tabla por criterio, el mapa de potencial, la lista de materiales y el aviso de prefactibilidad se leen bien y no se contradicen. Las referencias todavía no están listas para un cliente.",
+  shots:[["f21","Banda de no conformidad, resumen y entradas legibles."],["f22","Resultado por criterio y mapa de potencial."],["f23","Lista de materiales y referencias con claves internas."]],
+  finds:[["warn","«Referencias y trazabilidad» lista «schema version», «geometry structures», «geometry snap m» y repite «Confirmado por el usuario · Confirmado por el usuario»."],["warn","Hay 8 supuestos (material, sección, unión, temperaturas, profundidad…) y el estudio no lleva marca de borrador."],["ok","El resumen cita el código «no_cumple» entre comillas y llama al proyecto por el título del estudio."],["ok","El estudio sigue sin el plano de la malla, solo el mapa de calor."]]},
+ {id:"laterales",t:"Catálogo y cierre",s:"ok",
   want:"Estimar costos y dejar todo ordenado.",
-  got:"El catálogo de materiales es un módulo aparte: pide elegir proyecto otra vez y no se llega a él desde el espacio del proyecto. Al borrar el proyecto, el enlace público del estudio deja de existir.",
-  shots:[["s45","Catálogo: rótulo «OPTIMIZADOR · OP-03» y migas «Terra > Abastecimiento»."],["s47","Inicio después del recorrido: el proyecto no muestra si cumple; la actividad registra «study»."],["s48","Confirmación de borrado. No avisa que hay un estudio publicado."]],
-  finds:[["warn","El catálogo no está conectado al flujo de diseño ni al estudio; tres nombres distintos para lo mismo (Catálogo, Abastecimiento, Optimizador OP-03)."],["warn","Borrar el proyecto tumba el enlace público (comprobé que responde 404) y el diálogo no lo advierte."],["ok","El inicio no muestra el estado de cada diseño (borrador, no cumple, publicado)."]]}
+  got:"El catálogo se abre desde el proyecto con el proyecto ya elegido. Inicio muestra «No cumple · publicado». Al borrar, el diálogo avisa que el enlace público dejará de funcionar.",
+  shots:[["f24","Catálogo abierto desde el proyecto."],["f25","Inicio con el estado del proyecto."],["f26","El borrado avisa del estudio publicado."]],
+  finds:[["ok","El catálogo propone Medellín como ciudad aunque el proyecto está en Bogotá."],["ok","La actividad reciente muestra «study» sin traducir."]]}
 ];
 const PRIO=[
- ["bad","P0","El diseño no llega a «Cumple» por el camino principal.","Conectar el optimizador al chat y a un botón «Optimizar hasta cumplir», o explicar por qué no es alcanzable y qué dato cambiar.",["warn","Parcial","Botón «Optimizar hasta cumplir» y búsqueda de topologías en el editor de plano. Faltan el diagnóstico previo y la conclusión."]],
- ["bad","P0","Formularios de Parámetros, Suelo y Plano no reflejan el artefacto.","Que todas las pestañas lean y escriban la misma versión del artefacto. Es la misma deuda «una sola verdad» de la visión de producto.",["warn","Parcial","Parámetros, Suelo y Mediciones leen la versión guardada. El plano todavía no dibuja la retícula del agente."]],
- ["bad","P0","El chat y el panel de resultado se contradicen.","Un solo origen para el estado del cálculo; el agente no debería opinar sobre si corrió.",["bad","Pendiente","Solo se quitó el rechazo por justificación corta."]],
- ["bad","P0","El estudio público sale con resumen falso, claves internas y sin freno al publicar un «No cumple».","Generar el resumen desde el resultado fijado, traducir referencias a lenguaje de ingeniería, pedir confirmación y marcar borrador.",["ok","Casi resuelto","Resumen desde el resultado fijado, confirmación y banda «no conforme», referencias legibles. Faltan el plano y los supuestos."]],
- ["warn","P1","El Resumen y el Inicio no muestran el veredicto del diseño.","Estado visible por proyecto y en la primera pestaña.",["ok","Resuelto","Insignia de estado en Inicio, Proyectos y cabecera; veredicto en Resumen."]],
- ["warn","P1","Editor de estudio sin terminar: estilos, jerarquía de botones, vista previa, estado del PDF.","Aplicar los componentes de la app, «Publicar» como acción principal, botón «Ver estudio».",["ok","Casi resuelto","Publicar como acción principal, «Ver estudio», estado y descarga del PDF. Falta el guardado automático."]],
- ["warn","P1","Vocabulario interno y mezcla de idiomas.","Glosario de cara al usuario: artefacto, refinamiento, drawer, SPAT, OP-03, enums en inglés, login.",["ok","Casi resuelto","Login en español y glosario. Faltan las etiquetas de materiales y tipos de unión."]],
- ["warn","P1","Respuestas del agente sin formato y acciones sugeridas repetidas.","Renderizar listas; no ofrecer una acción que ya se aplicó sin efecto suficiente.",["warn","Parcial","Listas y negritas en el chat. Faltan la tarjeta de interpretación y las acciones con memoria."]],
- ["ok","P2","Detalles: Esc en la vista 3D, flechas de pestañas, «Cargar mensajes anteriores», ciudad reescrita, ayuda de una línea, tokens en 0, actividad de proyectos borrados.","Agrupar en una pasada de pulido.",["ok","Casi resuelto","Esc, flechas, mensajes anteriores, ciudad, actividad, ayuda. Faltan los tokens y el estado del sistema."]],
- ["ok","P2","Catálogo desconectado y borrado que rompe enlaces públicos sin avisar.","Entrar al catálogo desde el proyecto; advertir en el diálogo de borrado.",["warn","Parcial","El borrado ya avisa. Falta entrar al catálogo desde el proyecto."]]
+ ["bad","P0","El diseño no llega a «Cumple» por el camino principal.","Conectar «Optimizar hasta cumplir» a la búsqueda de topologías (PR-33) o iterar de verdad; cerrar siempre con «Cumple en vN» o «no alcanzable: cambia X».",["bad","Sigue roto","El botón existe, pero el agente responde en texto sin iterar ni crear versiones."]],
+ ["bad","P0","El optimizador de topologías no se puede usar desde una cuenta nueva.","Perfil IEEE 80 revisado por defecto (OP-20) o selector de perfil; errores en español; ocultar JSON y variables; tarifas desde el catálogo.",["bad","Nuevo","Falla con «OP-05 context is blocked: normative_profile_not_selected»."]],
+ ["bad","P0","Formularios de Parámetros, Suelo y Plano no reflejan el artefacto.","Que todas las pestañas lean y escriban la misma versión del artefacto.",["warn","Parcial","Parámetros, Suelo y Resumen correctos. El plano sigue vacío («0 elementos»)."]],
+ ["bad","P0","El chat y el panel de resultado se contradicen.","Un solo origen para el estado del cálculo y para lo que cambió en cada versión.",["warn","Parcial","El estado del cálculo ya es coherente. El agente niega cambios que sí hizo (v3)."]],
+ ["bad","P0","El estudio público sale con resumen falso, claves internas y sin freno al publicar un «No cumple».","Resumen desde el resultado fijado, referencias en lenguaje de ingeniería, confirmación y marca de borrador.",["warn","Casi resuelto","Resumen fiel, confirmación y banda verificados. Faltan referencias legibles, marca de borrador con supuestos y plano."]],
+ ["warn","P1","El Resumen y el Inicio no muestran el veredicto del diseño.","Estado visible por proyecto y en la primera pestaña.",["ok","Resuelto","Verificado: insignia en Inicio, Proyectos y cabecera; veredicto en Resumen."]],
+ ["warn","P1","Editor de estudio sin terminar: estilos, jerarquía de botones, vista previa, estado del PDF.","Componentes de la app, «Publicar» como acción principal, «Ver estudio».",["ok","Casi resuelto","Verificado. Faltan «PDF: none», el selector de logo nativo y el guardado automático."]],
+ ["warn","P1","Vocabulario interno y mezcla de idiomas.","Glosario de cara al usuario y una tabla de etiquetas para valores técnicos.",["warn","Parcial","Login en español. Siguen «bolted», «copper_hard_drawn», «study», «artefacto», «OP-05» y el error en inglés."]],
+ ["warn","P1","Respuestas del agente sin formato y acciones sugeridas repetidas.","Renderizar listas; no ofrecer una acción que ya se aplicó sin efecto suficiente.",["warn","Parcial","Listas verificadas. Las acciones sugeridas no cambian tras aplicarlas."]],
+ ["ok","P2","Detalles sueltos (Esc en 3D, flechas, mensajes anteriores, ciudad, ayuda, tokens, actividad).","Una pasada de pulido.",["ok","Casi resuelto","Ciudad, actividad y mensajes verificados. Tokens en 0 y estado del sistema visibles al diseñador; «Crear proyecto» en Inicio pide dos clics."]],
+ ["ok","P2","Catálogo desconectado y borrado que rompe enlaces públicos sin avisar.","Entrar al catálogo desde el proyecto; advertir en el borrado.",["ok","Resuelto","Verificado. Detalle: el catálogo propone Medellín para un proyecto en Bogotá."]]
 ];
 const el=(tag,cls,txt)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e};
 const line=document.getElementById("line"),steps=document.getElementById("steps");
@@ -301,8 +303,11 @@ STEPS.forEach((st,i)=>{
 });
 (function(){
   const NS="http://www.w3.org/2000/svg",FW=260,FH=148,GX=110,PX=20,TOP=60,BY=TOP+FH+150;
-  const MAIN=[["s49","Login","warn",[727,587],"Sign in"],["s0","Inicio","ok",[1270,86],"Ver proyectos"],["s1","Proyectos","ok",[1276,86],"Nuevo proyecto"],["s3","Crear proyecto","ok",[918,755],"Crear proyecto"],["s4","Proyecto creado","ok",[286,284],"Nombre del proyecto"],["s5","Espacio vacío","warn",[390,730],"Enviar pedido al agente"],["s15","Malla creada","ok",[390,724],"Confirmar y calcular"],["s16","Resultado v2 · no cumple","bad",[835,515],"Agrega varillas y recalcula"],["s27","Resultado v4 · no cumple","bad",[1211,8],"Compartir estudio"],["s37","Compartir","ok",[1134,321],"Crear borrador"],["s38","Editor del estudio","warn",[412,815],"Publicar estudio"],["s40","Publicado","warn",[730,742],"Copiar enlace"],["s42","Estudio público","bad",null,null]];
-  const BR=[["s30","Resumen · sin veredicto","warn",[770,154]],["s33","Parámetros · dice «Falta»","bad",[1170,154]],["s32","Plano · 7 conflictos","bad",[1250,154]]];
+  // [imagen, título, estado, coordenada del control pulsado sobre 1456 × 830, rótulo del clic]
+  const MAIN=[["f01","Login","ok",[727,587],"Iniciar sesión"],["f02","Inicio","ok",[546,475],"Crear proyecto"],["f03","Crear proyecto","ok",[918,755],"Crear proyecto"],["f04","Proyecto · Sin diseño","ok",[282,284],"Nombre del proyecto"],["f05","Espacio vacío","ok",[390,730],"Enviar pedido al agente"],["f06","Malla creada · v1","warn",[390,750],"Confirmar y calcular"],["f07","Resultado v2 · no cumple","ok",[805,543],"Optimizar hasta cumplir"],["f08","Respuesta sin iterar","bad",[836,576],"Agrega varillas y recalcula"],["f09","v3 · «no hubo cambios»","bad",[1209,31],"Compartir estudio"],["f17","Compartir","ok",[1134,324],"Crear borrador"],["f18","Editor del estudio","ok",[411,741],"Publicar estudio"],["f19","Confirmar no conforme","ok",[450,801],"Publicar de todos modos"],["f20","Publicado · PDF listo","ok",[399,711],"Ver estudio"],["f21","Estudio público","warn",null,null]];
+  // Pestañas que se abren desde el resultado (MAIN[ANCHOR])
+  const ANCHOR=6;
+  const BR=[["f10","Resumen · con veredicto","ok",[746,201]],["f11","Parámetros · lee el diseño","ok",[1139,201]],["f13","Plano · 0 elementos","bad",[1219,201]],["f16","Optimizador · bloqueado","bad",[1219,201]]];
   const W=PX*2+MAIN.length*FW+(MAIN.length-1)*GX,H=BY+FH+44;
   const s=(t,a,txt)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(txt!=null)e.textContent=txt;return e};
   const svg=s("svg",{width:W,height:H,viewBox:`0 0 ${W} ${H}`,role:"img"});
@@ -317,9 +322,9 @@ STEPS.forEach((st,i)=>{
     if(h){const [hx,hy]=hot(x,TOP,h),tx=xOf(i+1)-4,ty=TOP+FH/2;
       svg.append(s("text",{x,y:TOP-11,class:"clk"},"clic: "+c+" →"));
       wires.append(s("circle",{cx:hx,cy:hy,r:9,class:"hot"}),s("path",{d:`M${hx} ${hy}C${hx+90} ${hy} ${tx-80} ${ty} ${tx} ${ty}`,class:"wire","marker-end":"url(#ah)"}))}});
-  BR.forEach(([f,t,st,h],j)=>{const x=xOf(8)+(j-1)*(FW+40);node(f,x,BY,st,t);
+  BR.forEach(([f,t,st,h],j)=>{const x=xOf(ANCHOR)+(j-1.5)*(FW+40);node(f,x,BY,st,t);
     svg.append(s("text",{x,y:BY+FH+22,class:"ttl"},t));
-    const [hx,hy]=hot(xOf(8),TOP,h),tx=x+FW/2,ty=BY-4;
+    const [hx,hy]=hot(xOf(ANCHOR),TOP,h),tx=x+FW/2,ty=BY-4;
     wires.append(s("circle",{cx:hx,cy:hy,r:7,class:"hot"}),s("path",{d:`M${hx} ${hy}C${hx} ${hy+150} ${tx} ${ty-110} ${tx} ${ty}`,class:"wire","marker-end":"url(#ah)"}))});
   svg.append(wires);document.getElementById("board").append(svg);
 })();
@@ -327,53 +332,33 @@ const prio=document.getElementById("prio");
 PRIO.forEach(([sv,p,h,q,[ss,sl,st]])=>{const tr=el("tr"),td=el("td");td.append(el("span","pill s-"+sv,p));const tdS=el("td");tdS.append(el("span","pill s-"+ss,sl),el("div",null,st));tdS.lastChild.style.marginTop="6px";tr.append(td,el("td",null,h),el("td",null,q),tdS);prio.append(tr)});
 const STRAT=[
  ["bad","P0","1. El diseño no llega a «Cumple»",[
-  "Exponer la iteración automática que ya existe (PR-33): un botón «Optimizar hasta cumplir» en Resultado y la frase equivalente en el chat activan el modo autónomo, hoy limitado a 3 intentos.",
-  "Diagnosticar antes de iterar: con margen pequeño el caso es ajustable con geometría; con margen grande es un problema de planteamiento y hay que pedir el dato que falta, como el factor de división de corriente.",
+  "«Optimizar hasta cumplir» no debe ser un mensaje de chat: debe lanzar la búsqueda de topologías ya revalidada (PR-33) o el modo autónomo con iteraciones reales y versiones nuevas.",
+  "Diagnosticar antes de iterar: con margen muy negativo (−233 %) decir primero qué dato es probable que falte, como el factor de división de corriente S_f.",
   "Terminar siempre con una conclusión: «Cumple en la versión N» o «No es alcanzable con estas entradas; esto habría que cambiar».",
   "Acciones sugeridas con memoria: no repetir una acción que ya se aplicó sin efecto suficiente."]],
- ["bad","P0","2. Formularios y plano no reflejan el artefacto",[
-  "Una regla única: toda pestaña lee la versión vigente del artefacto y al guardar crea una versión nueva. Los formularios se enlazan, no se rehacen.",
-  "«Falta» solo cuando de verdad falta. Si el artefacto tiene el valor, el campo lo muestra con el chip de procedencia que ya usa el Resumen.",
-  "Plano: dibujar los conductores de la malla generada por el agente y usar las mismas reglas de conflicto en el editor y en el generador.",
-  "Orden sugerido: Parámetros, Suelo, Plano."]],
- ["bad","P0","3. El chat contradice al panel de resultado",[
-  "Un solo dueño del estado del cálculo: el sistema. Los mensajes «calculando», «terminado» y «falló» salen del estado real del trabajo.",
-  "El agente solo interpreta un resultado ya terminado; no afirma si el cálculo corrió.",
-  "Los errores de validación se resuelven antes de encolar, con un valor válido por defecto o una pregunta previa.",
-  "«Resultado desactualizado» se retira solo cuando llega el cálculo de esa versión."]],
- ["bad","P0","4. Estudio público poco confiable",[
-  "Resumen generado desde el resultado fijado, con una comprobación: si el texto niega resultados que existen, se rechaza.",
-  "Compuerta al publicar un «No cumple»: extender la de PR-57 con confirmación explícita y una banda visible de «Diseño no conforme».",
-  "Referencias en lenguaje de ingeniería; claves técnicas e identificadores en un detalle plegado para auditoría.",
-  "Tratar como supuestos los valores predeterminados que le importan al cliente, para que activen la marca de borrador.",
-  "Incluir el plano de la malla con el componente de vista previa existente."]],
- ["warn","P1","5. El veredicto no se ve en Resumen ni en Inicio",[
-  "Definir un estado por proyecto: sin diseño, borrador, no cumple, cumple, publicado.",
-  "Mostrarlo como insignia en la cabecera del espacio (en lugar de «Proyecto activo»), en Resumen y en la lista del Inicio."]],
- ["warn","P1","6. Editor de estudio sin terminar",[
-  "Aplicar los componentes de formulario del resto de la app.",
-  "«Publicar» como acción principal y guardado automático.",
-  "Botón «Ver estudio» y enlace visible una vez publicado.",
-  "Estado del PDF en la misma pantalla (en cola, listo, descargar); el backend ya entrega la URL firmada (PR-55).",
-  "Estados en español: borrador, publicado, revocado."]],
- ["warn","P1","7. Vocabulario interno e idiomas mezclados",[
-  "Glosario de una página: término interno y término de cara al usuario (artefacto → diseño, refinamiento → conversación, drawer → editor de plano; SPAT y OP-03 fuera).",
-  "Una tabla de etiquetas para valores técnicos (material, tipo de unión, nombres de actividad) usada en todas las vistas.",
-  "Login en español.",
-  "Una pasada de textos por pantalla usando este mapa como lista de verificación."]],
- ["warn","P1","8. Respuestas del agente sin formato",[
-  "Renderizar listas y negritas en las burbujas del chat.",
-  "Cuando el agente resume un resultado, usar la misma tarjeta de Interpretación del panel en vez de texto libre."]],
- ["ok","P2","9. Detalles sueltos",[
-  "Una sola pasada: Esc en la vista 3D, flechas de pestañas solo con desborde, «Cargar mensajes anteriores» solo si existen, respetar la ciudad escrita, ayuda con contenido real o retirar el botón.",
-  "Inicio: decidir si «Tokens consumidos» y «Estado del sistema» son para el diseñador o solo para el administrador; limpiar la actividad de proyectos borrados."]],
- ["ok","P2","10. Catálogo desconectado y borrado que rompe enlaces",[
-  "Catálogo: entrar desde el proyecto con el proyecto ya elegido y un solo nombre para el módulo. Decisión pendiente: ocultarlo del menú mientras no alimente los costos del estudio.",
-  "Borrado: avisar cuántos enlaces publicados dejarán de funcionar. Alternativa a evaluar: archivar en lugar de borrar."]],
+ ["bad","P0","11. El optimizador no arranca sin perfil revisado",[
+  "Publicar un perfil IEEE 80-2013 revisado como predeterminado (OP-20, con el especialista) y fijarlo al crear el proyecto.",
+  "Si falta el perfil, decirlo en español y con la acción para resolverlo, no con el código del contexto.",
+  "Ocultar «Hechos de aplicabilidad (JSON)» y «Variables solicitadas» tras un modo avanzado; precargar tarifas desde el catálogo aprobado.",
+  "Corregir el checkbox de estándares para que su estado visual y el del formulario coincidan."]],
+ ["bad","P0","2. El plano no refleja el artefacto",[
+  "Al abrir el editor, convertir la retícula paramétrica del agente en conductores y varillas explícitos.",
+  "Contar en la pestaña Plano los mismos elementos que dibuja Resumen.",
+  "Usar las mismas reglas de conflicto en el editor y en el generador."]],
+ ["bad","P0","3. El agente contradice al sistema",[
+  "La respuesta final después de un cambio se arma desde el diff de la versión creada (lo que muestra la tarjeta «Se editó el artefacto»), no desde lo que el modelo cree que pasó.",
+  "Si el modelo afirma «no hubo cambios» y existe una versión nueva, la respuesta se rechaza o se corrige antes de enviarse."]],
+ ["warn","P1","4. Estudio público: lo que falta",[
+  "Referencias: traducir u ocultar las rutas internas (schema version, geometry.*) y no repetir la nota cuando es igual a la etiqueta.",
+  "Tratar como supuestos los valores predeterminados que importan al cliente para que activen la marca de borrador.",
+  "Incluir el plano de la malla con el componente de vista previa existente.",
+  "Que el resumen con IA no cite códigos («no_cumple») ni use el título del estudio como nombre del proyecto."]],
+ ["warn","P1","7. Vocabulario",[
+  "Usar las etiquetas de labels.js también en la tarjeta de cambios del chat (material, tipo de unión) y en la actividad reciente.",
+  "Estados del PDF en español desde el inicio («sin generar»)."]],
  ["warn","Proceso","Que no vuelva a pasar",[
   "Una tarea del backlog se marca implementada solo si el recorrido completo (crear, pedir malla, cumplir, publicar, abrir estudio) pasa sin contradicciones.",
-  "Revisar las tareas marcadas como implementadas que este recorrido desmintió y devolverlas a parcial.",
-  "Repetir este mapa tras cada hito."]]
+  "Repetir este mapa tras cada hito; la próxima corrida debería incluir carga de archivos y el perfil viewer."]]
 ];
 const strat=document.getElementById("strat");
 STRAT.forEach(([sv,p,t,items])=>{const a=el("article","strat"),l=el("div"),r=el("div"),ul=el("ul");
