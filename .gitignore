@@ -13,3 +13,4 @@ test-results/
 playwright-report/
 
 app/.env.smoke-ui
+backups/

@@ -112,6 +112,12 @@ templates:
 # GUI smoke test: logs in as each profile from SMOKE_<ROLE>_EMAIL/_PASSWORD and drives the real UI.
 # Against a non-local URL it also needs SMOKE_CONFIRM_REMOTE=yes. ARGS narrows the run (e.g. ARGS='-g "ciclo"').
 .PHONY: smoke-ui-seed smoke-ui smoke-ui-sweep
+backup-local:
+	sh scripts/backup_local.sh backup
+
+backup-verify:
+	sh scripts/backup_local.sh verify $(BACKUP)
+
 smoke-ui-seed:
 	node app/smoke-ui/seed-local-users.mjs
 
