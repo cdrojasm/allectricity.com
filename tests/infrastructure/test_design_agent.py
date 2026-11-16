@@ -931,3 +931,45 @@ def test_rejection_reasons_reach_the_user_in_spanish():
     assert _spanish_reason("fault.current_a: not applied, Input should be greater than or equal to 1") == (
         "fault.current_a: debe ser mayor o igual que 1")
     assert _spanish_reason("geometry.foo: Extra inputs are not permitted") == "geometry.foo: no es un campo admitido"
+
+
+def _budget_for(services, admin_actor, client, tokens, total, used=0):
+    user_id = client.get("/api/v1/auth/me", headers=headers(tokens)).json()["id"]
+    budget = services.budgets.create(admin_actor, {"user_id": user_id, "name": "Piloto", "total_tokens": total})
+    if used:
+        with services.store.transaction(write=True) as db:
+            db.change("budget", budget["id"], used_tokens=used)
+    return budget
+
+
+def test_agent_does_not_call_the_model_when_the_budget_is_exhausted(chat):
+    services, client, tokens, project, conversation, _, admin_actor = chat
+    _budget_for(services, admin_actor, client, tokens, total=10_000, used=9_500)
+    sent = send(client, tokens, conversation, "Diseña una malla de 40 x 30 m")
+    llm = step(services, sent["run_id"], [])  # no model call at all
+    assert llm.requests == []
+    assert run_of(client, tokens, sent["run_id"])["status"] == "completed"
+    answer = [m for m in messages(client, tokens, conversation) if m["source"] == "agent"][-1]["text"]
+    assert "bolsa de tokens tiene 500 disponibles" in answer and "2.000" in answer
+
+
+def test_agent_requires_a_budget_when_configured(chat, monkeypatch):
+    services, client, tokens, project, conversation, _, _ = chat
+    monkeypatch.setenv("AGENT_REQUIRE_BUDGET", "true")
+    sent = send(client, tokens, conversation, "Diseña una malla de 40 x 30 m")
+    llm = step(services, sent["run_id"], [])
+    assert llm.requests == []
+    answer = [m for m in messages(client, tokens, conversation) if m["source"] == "agent"][-1]["text"]
+    assert "no tiene una bolsa de tokens asignada" in answer
+
+
+def test_agent_with_budget_left_runs_and_debits_its_usage(chat):
+    services, client, tokens, project, conversation, _, admin_actor = chat
+    budget = _budget_for(services, admin_actor, client, tokens, total=100_000)
+    sent = send(client, tokens, conversation, "¿Qué falta?")
+    step(services, sent["run_id"], [("respond_to_user", {"text": "Falta todo.", "waits_for": "nothing"})])
+    with services.store.transaction() as db:
+        used = db.one("budget", id=budget["id"])["used_tokens"]
+        ledger = db.many("budget_usage", budget_id=budget["id"], limit=None)
+    assert used > 0 and sum(row["total_tokens"] for row in ledger) == used
+    assert {row["action"] for row in ledger} == {"grounding_design_agent"}

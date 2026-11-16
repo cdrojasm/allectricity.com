@@ -70,6 +70,13 @@ class Budgets:
             audit(db, actor.user_id, "budget.consume", usage["id"])
             return usage
 
+    def agent_capacity(self, user_id) -> dict:
+        """Active budgets of the user and the largest remaining balance among them (a step debits one budget)."""
+        with self.store.transaction() as db:
+            budgets = db.many("budget", user_id=user_id, active=True, limit=None)
+        remaining = max((budget["total_tokens"] - budget["used_tokens"] for budget in budgets), default=0)
+        return {"budgets": len(budgets), "remaining": max(0, remaining)}
+
     def consume_agent_usage(self, user_id, project_id, run_id, step, model, input_tokens, output_tokens):
         """Debit an agent invocation from the user's active budget, if one has capacity."""
         total = int(input_tokens) + int(output_tokens)

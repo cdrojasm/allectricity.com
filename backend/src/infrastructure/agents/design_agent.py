@@ -1015,6 +1015,9 @@ class GroundingDesignAgent:
         self.store, self._client, self._prompts, self._storage = store, client, prompts, storage
 
     def __call__(self, run, runs) -> StepOutcome:
+        blocked = self._budget_block(run, runs)
+        if blocked is not None:
+            return blocked
         client = self._client or runtime.clients()[1]
         prompts = self._prompts or load_prompts()
         workspace = ArtifactWorkspace(self.store, runs, run, storage=self._storage)
@@ -1034,6 +1037,29 @@ class GroundingDesignAgent:
                     )
                 except Exception:
                     logger.exception("Could not debit agent token usage for run %s", run["id"])
+
+    def _budget_block(self, run, runs) -> StepOutcome | None:
+        """Stop before calling the model when the user's token budget cannot pay for a step.
+
+        With budgets, a step needs AGENT_MIN_STEP_TOKENS left in one of them (otherwise its usage could not be
+        debited at all). Without any budget the agent runs unless AGENT_REQUIRE_BUDGET=true (pilot cost control).
+        """
+        capacity = Budgets(self.store).agent_capacity(run["created_by"])
+        minimum = int(os.getenv("AGENT_MIN_STEP_TOKENS", "2000"))
+        required = os.getenv("AGENT_REQUIRE_BUDGET", "false").lower() in {"1", "true", "yes"}
+        if capacity["budgets"] and capacity["remaining"] >= minimum:
+            return None
+        if not capacity["budgets"] and not required:
+            return None
+        reason = "budget_exhausted" if capacity["budgets"] else "budget_required"
+        runs.progress(run["id"], EventType.STEP_COMPLETED, "Sin tokens disponibles para el agente",
+                      level=EventLevel.WARNING, payload={"reason": reason, **capacity, "minimum": minimum})
+        if capacity["budgets"]:
+            return StepOutcome(f"No puedo seguir: tu bolsa de tokens tiene {capacity['remaining']:,} disponibles y "
+                               f"cada paso del agente necesita al menos {minimum:,}. Pide al administrador que la "
+                               "amplíe; tus datos y versiones del diseño siguen guardados.".replace(",", "."))
+        return StepOutcome("No puedo trabajar todavía: tu cuenta no tiene una bolsa de tokens asignada para el "
+                           "agente. Pide al administrador que te asigne una; tus datos siguen guardados.")
 
     def _history(self, run) -> list[dict]:
         with self.store.transaction() as db:
