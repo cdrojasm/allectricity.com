@@ -123,7 +123,7 @@ ol.order{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;m
     <div>
       <span class="eyebrow">Lo que impide usarlo de verdad</span>
       <ul>
-        <li>El optimizador de topologías falla sin perfil normativo revisado.</li>
+        <li>El optimizador de topologías permite seleccionar perfiles, pero no hay perfiles revisados cargados para elegir.</li>
         <li>El recorrido capturado muestra el plano vacío y una respuesta del agente que niega cambios; el código actual incluye correcciones para ambos casos, pendientes de repetir en la app.</li>
       </ul>
     </div>
@@ -163,11 +163,11 @@ ol.order{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;m
     <li><strong>Chat:</strong> el estado del cálculo ya no se contradice («en curso» → «terminado» → resultado), y las respuestas muestran listas.</li>
     <li><strong>Corregido en código; falta repetir el recorrido:</strong> «Optimizar hasta cumplir» inicia el modo autónomo desde el cálculo vigente; el agente realiza hasta <code>DESIGN_MAX_ITERATIONS</code> (3 por defecto), guarda cada mejora como versión y recalcula. Al recibir un cálculo no conforme continúa el ciclo. El cierre todavía depende de la salida del agente si no puede proponer una mejora y el candidato de mejor margen se registra, pero no se restaura automáticamente.</li>
     <li><strong>Corregido en código; falta repetir el recorrido:</strong> el editor materializa la retícula y las varillas paramétricas al abrir el plano cuando no hay elementos explícitos; la respuesta final del agente corrige una negación de cambios si ya se creó una versión.</li>
-    <li><strong>Sigue bloqueado:</strong> el optimizador de topologías necesita un perfil normativo revisado y la interfaz no permite seleccionarlo. Esta dependencia requiere revisión normativa antes de activar un perfil por defecto.</li>
+    <li><strong>Sigue bloqueado:</strong> el optimizador de topologías ya permite seleccionar perfiles revisados, pero el catálogo no tiene ninguno disponible. El perfil de Colombia está en borrador y necesita revisión normativa antes de publicarse.</li>
   </ul>
   <h3>Orden recomendado</h3>
   <ol class="order">
-    <li><strong>Hallazgo 11 · optimizador:</strong> resolver la selección del perfil normativo revisado para cuentas nuevas, con la revisión de especialista requerida.</li>
+    <li><strong>Hallazgo 11 · optimizador:</strong> completar la revisión especializada y publicar un perfil normativo revisado que aparezca en el catálogo; después verificar la corrida con una cuenta nueva.</li>
     <li><strong>Hallazgo 1 · llegar a «Cumple»:</strong> probar en la app el bucle autónomo ya implementado; comprobar que mejora, crea versiones y recalcula, y cerrar correctamente al cumplir, agotar iteraciones o no poder mejorar.</li>
     <li><strong>Hallazgos 2 y 3 · plano y respuesta:</strong> repetir en la app para validar que la malla paramétrica se dibuja y que el agente reconoce la versión creada.</li>
     <li><strong>Hallazgo 4 · estudio:</strong> referencias sin claves internas, marca de borrador cuando hay supuestos y el plano de la malla.</li>
@@ -272,7 +272,7 @@ const STEPS=[
 ];
 const PRIO=[
  ["bad","P0","El diseño no llega a «Cumple» por el camino principal.","Validar el bucle autónomo con iteraciones reales y versiones nuevas; cerrar al cumplir, agotar intentos o no encontrar una mejora.",["warn","Implementado; E2E pendiente","El código inicia modo autónomo desde el cálculo vigente, itera y recalcula. Falta repetir el recorrido; el mejor candidato se registra pero no se restaura automáticamente."]],
- ["bad","P0","El optimizador de topologías no se puede usar desde una cuenta nueva.","Perfil IEEE 80 revisado por defecto (OP-20) o selector de perfil; errores en español; ocultar JSON y variables; tarifas desde el catálogo.",["bad","Nuevo","Falla con «OP-05 context is blocked: normative_profile_not_selected»."]],
+ ["bad","P0","El optimizador de topologías no se puede usar desde una cuenta nueva.","Publicar un perfil revisado disponible en el catálogo; pulir los errores, el modo avanzado y el origen de tarifas.",["warn","Selector implementado; catálogo pendiente","La interfaz ya deja fijar perfiles revisados al proyecto. El catálogo no tiene ninguno cargado; el perfil CO sigue como borrador para revisión experta."]],
  ["bad","P0","Formularios de Parámetros, Suelo y Plano no reflejan el artefacto.","Que todas las pestañas lean y escriban la misma versión del artefacto.",["warn","Corregido en código; E2E pendiente","El plano materializa la geometría paramétrica al abrir. Parámetros, Suelo y Resumen ya coincidían en el recorrido anterior."]],
  ["bad","P0","El chat y el panel de resultado se contradicen.","Un solo origen para el estado del cálculo y para lo que cambió en cada versión.",["warn","Corregido en código; E2E pendiente","La respuesta final sustituye la negación de cambios si el agente ya creó una versión."]],
  ["bad","P0","El estudio público sale con resumen falso, claves internas y sin freno al publicar un «No cumple».","Resumen desde el resultado fijado, referencias en lenguaje de ingeniería, confirmación y marca de borrador.",["warn","Casi resuelto","Resumen fiel, confirmación y banda verificados. Faltan referencias legibles, marca de borrador con supuestos y plano."]],
@@ -337,8 +337,8 @@ const STRAT=[
   "Terminar siempre con una conclusión: «Cumple en la versión N» o «No es alcanzable con estas entradas; esto habría que cambiar».",
   "Acciones sugeridas con memoria: no repetir una acción que ya se aplicó sin efecto suficiente."]],
  ["bad","P0","11. El optimizador no arranca sin perfil revisado",[
-  "Publicar un perfil IEEE 80-2013 revisado como predeterminado (OP-20, con el especialista) y fijarlo al crear el proyecto.",
-  "Si falta el perfil, decirlo en español y con la acción para resolverlo, no con el código del contexto.",
+  "Completar la revisión experta del perfil jurisdiccional y publicarlo como revisado en el catálogo (OP-20); la interfaz ya permite fijarlo al proyecto.",
+  "Si no hay un perfil aplicable disponible, explicar en español que el catálogo requiere revisión normativa y no sugerir un perfil inseguro por defecto.",
   "Ocultar «Hechos de aplicabilidad (JSON)» y «Variables solicitadas» tras un modo avanzado; precargar tarifas desde el catálogo aprobado.",
   "Corregir el checkbox de estándares para que su estado visual y el del formulario coincidan."]],
  ["bad","P0","2. El plano no refleja el artefacto",[
