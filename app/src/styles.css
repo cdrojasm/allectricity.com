@@ -2599,3 +2599,5 @@ h2 {
 .topology-preview figcaption { display: grid; gap: 2px; font-size: 12px; }
 .topology-preview .legend.added { color: #1f8a5b; }
 .topology-preview .legend.removed { color: #c0392b; }
+.users-admin-page td strong, .users-admin-page td small { display: block; }
+.users-admin-page td small { color: #667681; font-size: 12px; margin-top: 2px; }
