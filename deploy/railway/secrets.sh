@@ -25,12 +25,21 @@ put neo4j NEO4J_PASSWORD "$NEO4J_PASSWORD"
 put neo4j NEO4J_AUTH "neo4j/$NEO4J_PASSWORD"
 unset NEO4J_PASSWORD
 
+# A variable exported in this shell wins over the .env file (e.g. SMTP_* of a real provider).
+value_of() { eval "exported=\${$1:-}"; [ -n "$exported" ] && printf '%s' "$exported" || from_env "$1"; }
 missing=""
-for key in LLM_API_KEY LLM_MODEL LLM_BASE_URL LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY LANGFUSE_BASE_URL \
-           SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD SMTP_FROM; do
-  value=$(from_env "$key")
+for key in LLM_API_KEY LLM_MODEL LLM_BASE_URL LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY LANGFUSE_BASE_URL; do
+  value=$(value_of "$key")
   if [ -n "$value" ]; then put api "$key" "$value"; else missing="$missing $key"; fi
 done
+# The local stack mails to Mailpit: never copy a local SMTP host to production.
+smtp_host=$(value_of SMTP_HOST)
+case "$smtp_host" in
+  ""|mailpit|localhost|127.0.0.1) missing="$missing SMTP_*(proveedor real)" ;;
+  *) for key in SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD SMTP_FROM; do
+       value=$(value_of "$key"); [ -n "$value" ] && put api "$key" "$value" || missing="$missing $key"
+     done ;;
+esac
 put api LANGFUSE_PROMPT_LABEL "${LANGFUSE_PROMPT_LABEL:-production}"
 put api SMTP_STARTTLS "true"
 
