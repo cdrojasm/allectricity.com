@@ -8,4 +8,4 @@ COPY services/ocr/main.py ./main.py
 RUN useradd --create-home --uid 10002 ocr
 USER ocr
 EXPOSE 8080
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["sh", "-c", "exec uvicorn main:app --host \"${BIND_HOST:-0.0.0.0}\" --port \"${PORT:-8080}\""]

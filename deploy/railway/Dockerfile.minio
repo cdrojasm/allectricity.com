@@ -1,0 +1,9 @@
+# MinIO for Railway with the bucket setup of the local minio-init folded in: Railway has no one-shot
+# dependency ordering, so the server runs the idempotent setup itself once it answers.
+FROM pgsty/mc:RELEASE.2026-09-16T00-00-00Z AS mc
+
+FROM pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+COPY --from=mc /usr/bin/mc /usr/bin/mc
+COPY resources/minio /seed
+COPY deploy/railway/minio-start.sh /usr/local/bin/minio-start.sh
+ENTRYPOINT ["/bin/sh", "/usr/local/bin/minio-start.sh"]

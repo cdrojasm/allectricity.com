@@ -4,13 +4,23 @@
 
 Las tareas Celery están separadas por colas: `agent`, `documents`, `calculations`, `mail` y `render`. Cada worker escucha únicamente su cola, por lo que una extracción documental pesada no bloquea al agente ni a los cálculos.
 
-## Orden recomendado
+## Despliegue con el CLI (piloto)
 
-1. Importa `docker-compose.yml` en un proyecto vacío o crea los servicios equivalentes desde el repositorio.
-2. Para producción, sustituye `postgres` y `redis` por los plugins administrados de Railway y conecta `DATABASE_URL` y `CELERY_BROKER_URL` mediante variables de referencia.
-3. Añade volúmenes a Postgres, Neo4j y MinIO si mantienes esas imágenes; el manifiesto ya declara los cuatro volúmenes necesarios.
-4. Genera dominio público únicamente para `frontend`. Configura el healthcheck de `api` como `/ready` y el de `potential-engine`/`ocr` como `/health`.
-5. Carga `railway.env.example` como base y reemplaza todos los valores marcados `replace-*` por secretos reales.
+Desde la raíz del repositorio, con `railway login` hecho:
+
+1. `sh deploy/railway/setup.sh [nombre]`: crea el proyecto, Postgres y Redis administrados, los servicios, los
+   volúmenes de MinIO y Neo4j, los dominios públicos (frontend y MinIO) y todas las variables que no son
+   secretas. Los procesos backend referencian los secretos del servicio `api` (`${{api.X}}`).
+2. `sh deploy/railway/secrets.sh [.env]`: **lo corre el dueño de las credenciales.** Genera los secretos
+   internos sin mostrarlos y copia LLM, Langfuse y SMTP desde el `.env` indicado.
+3. `sh deploy/railway/deploy.sh [servicio ...]`: sube el código y lanza los builds.
+4. Crear el primer `super_admin`: `railway ssh -s api python -m src.infrastructure.entrypoint.bootstrap_admin`
+   (pide correo y contraseña; lo hace el dueño).
+
+Cada imagen elige su proceso por variables, sin comandos de arranque en el panel: `WORKER_TARGET` (etapa del
+worker), `SPAT_ROLE` (`api`, `scheduler` o `migrate`; el API aplica migraciones al arrancar con
+`RUN_MIGRATIONS=true`), `BIND_HOST=::` para la red privada y `PORT`. MinIO crea sus buckets y el webhook al
+arrancar (`minio-start.sh`), y el frontend genera su configuración de nginx con el DNS privado de Railway.
 
 ## Imágenes reducidas
 

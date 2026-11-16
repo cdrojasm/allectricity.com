@@ -1,0 +1,10 @@
+# Build context of Dockerfile.frontend (BuildKit reads <Dockerfile>.dockerignore before the root .dockerignore,
+# which excludes app/ for the backend images).
+**
+!app/package.json
+!app/package-lock.json
+!app/index.html
+!app/vite.config.*
+!app/public/**
+!app/src/**
+!deploy/railway/nginx.conf.template

@@ -27,7 +27,9 @@ class ObjectStorage:
         public_endpoint = os.getenv("MINIO_PUBLIC_ENDPOINT")
         # Con región fija el firmante no consulta el bucket: el endpoint público no es
         # alcanzable desde el contenedor y solo se usa para firmar URLs del navegador.
-        self.signer = Minio(public_endpoint, access_key=access_key, secret_key=secret_key, secure=secure,
+        # The public host can be HTTPS while the private one is plain HTTP (Railway public domains).
+        public_secure = os.getenv("MINIO_PUBLIC_SECURE", str(secure)).lower() == "true"
+        self.signer = Minio(public_endpoint, access_key=access_key, secret_key=secret_key, secure=public_secure,
                             region=os.getenv("MINIO_REGION", "us-east-1")) if public_endpoint else self.client
         self.quarantine_bucket = os.getenv("MINIO_QUARANTINE_BUCKET", "quarantine")
         self.allowed_buckets = {

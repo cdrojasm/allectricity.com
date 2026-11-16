@@ -1,3 +1,6 @@
+# Railway builds the last stage: API_TARGET picks the runtime there; compose sets explicit targets.
+ARG API_TARGET=runtime
+
 FROM gcc:14-bookworm AS potential-builder
 WORKDIR /build
 COPY services/potential_engine/src/main.cpp ./main.cpp
@@ -27,7 +30,8 @@ RUN pip install --no-cache-dir --no-deps . && rm -rf build ./*.egg-info
 RUN useradd --create-home --uid 10001 spat
 USER spat
 EXPOSE 8000
-CMD ["uvicorn", "src.infrastructure.entrypoint.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# SPAT_ROLE selects the process in single-image platforms (Railway); compose sets its own commands.
+CMD ["sh", "-c", "case \"${SPAT_ROLE:-api}\" in scheduler) exec celery -A src.infrastructure.entrypoint.worker.tasks:celery_app beat --loglevel=INFO --schedule=/tmp/spat-celerybeat ;; migrate) exec alembic -c alembic.ini upgrade head ;; *) if [ \"${RUN_MIGRATIONS:-false}\" = true ]; then alembic -c alembic.ini upgrade head || exit 1; fi; exec uvicorn src.infrastructure.entrypoint.api.main:app --host \"${BIND_HOST:-0.0.0.0}\" --port \"${PORT:-8000}\" ;; esac"]
 
 FROM runtime-deps AS test-deps
 RUN mkdir src && touch src/__init__.py \
@@ -57,3 +61,6 @@ COPY docs/documentos_prueba ./docs/documentos_prueba
 COPY evaluation ./evaluation
 USER spat
 CMD ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+
+# Railway entry stage (see the note at the top).
+FROM ${API_TARGET} AS railway
