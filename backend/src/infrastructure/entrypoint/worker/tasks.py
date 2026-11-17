@@ -114,16 +114,64 @@ def render_study_pdf(study_id):
         raise
 
 
-RESET_SUBJECT = "Restablecer contraseña — SPAT"
+# The same mail serves an invitation (new engineer) and a forgotten password, so the copy fits both.
+RESET_SUBJECT = "Tu enlace de acceso a Terra"
+
+
+def _reset_minutes():
+    return max(1, int(os.getenv("AUTH_RESET_SECONDS", "1800")) // 60)
 
 
 def reset_body(reset_url):
     return (
-        "Recibimos una solicitud para restablecer tu contraseña.\n\n"
+        "Hola,\n\n"
+        "Usa este enlace para crear o cambiar tu contraseña de Terra:\n\n"
         + reset_url
-        + "\n\nEl enlace expira y solo puede usarse una vez. "
-        "Si no hiciste esta solicitud, puedes ignorar este correo."
+        + f"\n\nEl enlace vence en {_reset_minutes()} minutos y solo sirve una vez.\n"
+        "Si no lo pediste, ignora este correo: tu cuenta sigue igual.\n\n"
+        "— Terra · Diseño de puesta a tierra"
     )
+
+
+def reset_html(reset_url):
+    from html import escape
+
+    url = escape(reset_url, quote=True)
+    minutes = _reset_minutes()
+    font = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+    return f"""<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light"><title>{RESET_SUBJECT}</title></head>
+<body style="margin:0;padding:0;background:#edf0ee;">
+<div style="display:none;max-height:0;overflow:hidden;">Crea o cambia tu contraseña. El enlace vence en {minutes} minutos.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#edf0ee;padding:32px 16px;">
+<tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e5ebe8;">
+    <tr><td style="background:#247c6c;padding:22px 32px;font-family:{font};">
+      <span style="color:#ffffff;font-size:20px;font-weight:700;letter-spacing:.3px;">Terra</span>
+      <span style="color:#cfe6e1;font-size:13px;padding-left:8px;">Diseño de puesta a tierra</span>
+    </td></tr>
+    <tr><td style="padding:32px 32px 8px;font-family:{font};color:#1f2a30;">
+      <h1 style="margin:0 0 12px;font-size:22px;line-height:1.3;font-weight:700;">Tu enlace de acceso</h1>
+      <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#5d6b74;">
+        Usa este botón para crear o cambiar tu contraseña y entrar a Terra.</p>
+      <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+        <td style="border-radius:10px;background:#247c6c;">
+          <a href="{url}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;">Elegir mi contraseña</a>
+        </td></tr></table>
+      <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:#746f66;">
+        El enlace vence en <strong>{minutes} minutos</strong> y solo sirve una vez.</p>
+    </td></tr>
+    <tr><td style="padding:20px 32px 28px;font-family:{font};">
+      <p style="margin:0 0 6px;font-size:12px;color:#8b97a2;">¿El botón no funciona? Copia este enlace en tu navegador:</p>
+      <p style="margin:0;font-size:12px;line-height:1.5;word-break:break-all;"><a href="{url}" style="color:#247c6c;">{url}</a></p>
+    </td></tr>
+    <tr><td style="padding:16px 32px;background:#fbfcfb;border-top:1px solid #e5ebe8;font-family:{font};font-size:12px;line-height:1.5;color:#8b97a2;">
+      Si no pediste este correo, ignóralo: tu cuenta sigue igual.
+    </td></tr>
+  </table>
+</td></tr></table>
+</body></html>"""
 
 
 class SMTPMailer:
@@ -144,6 +192,7 @@ class SMTPMailer:
         message["To"] = recipient
         message["Message-ID"] = f"<{message_id}@spat.local>"
         message.set_content(reset_body(reset_url))
+        message.add_alternative(reset_html(reset_url), subtype="html")
         with smtplib.SMTP(host, port, timeout=20) as smtp:
             if starttls:
                 smtp.starttls(context=ssl.create_default_context())
@@ -171,6 +220,7 @@ class ResendMailer:
             "to": [recipient],
             "subject": RESET_SUBJECT,
             "text": reset_body(reset_url),
+            "html": reset_html(reset_url),
         }).encode()
         request = urllib.request.Request(self.url, data=body, method="POST", headers={
             "Authorization": f"Bearer {os.environ['RESEND_API_KEY']}",

@@ -44,6 +44,15 @@ def test_resend_posts_the_reset_mail_with_an_idempotency_key(monkeypatch):
     assert request.get_header("Idempotency-key") == "reset-m1"
     assert payload["from"] == "Terra <no-reply@example.test>" and payload["to"] == ["eng@example.test"]
     assert "https://app.test/reset-password#token=t" in payload["text"] and timeout == 20
+    assert 'href="https://app.test/reset-password#token=t"' in payload["html"]
+
+
+def test_reset_mail_html_escapes_the_link_and_states_the_expiry(monkeypatch):
+    monkeypatch.setenv("AUTH_RESET_SECONDS", "1800")
+    url = 'https://app.test/reset-password#token=a"b<c'
+    html = tasks.reset_html(url)
+    assert 'href="https://app.test/reset-password#token=a&quot;b&lt;c"' in html and url not in html
+    assert "30 minutos" in html and "30 minutos" in tasks.reset_body(url)
 
 
 def test_resend_falls_back_to_smtp_from_and_fails_on_error_status(monkeypatch):
