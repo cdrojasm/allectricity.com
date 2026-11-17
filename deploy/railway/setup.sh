@@ -43,7 +43,8 @@ backend_common() {
     "SPAT_POTENTIAL_ENGINE_URL=http://potential-engine.railway.internal:8080" \
     "PUBLIC_APP_URL=https://$FRONTEND" "AUTH_RESET_URL=https://$FRONTEND/reset-password" \
     "AUTH_JWT_ISSUER=spat-api" "AUTH_JWT_AUDIENCE=spat-workspace" \
-    "DESIGN_MAX_ITERATIONS=3" "AGENT_REQUIRE_BUDGET=true" "AGENT_MIN_STEP_TOKENS=2000"
+    "DESIGN_MAX_ITERATIONS=3" "AGENT_REQUIRE_BUDGET=true" "AGENT_MIN_STEP_TOKENS=2000" \
+    "MAIL_PROVIDER=resend"
   if [ "$1" != api ]; then
     set_vars "$1" \
       'AUTH_JWT_SECRET=${{api.AUTH_JWT_SECRET}}' 'AUTH_MAIL_ENCRYPTION_KEY=${{api.AUTH_MAIL_ENCRYPTION_KEY}}' \
@@ -53,7 +54,8 @@ backend_common() {
       'LANGFUSE_PUBLIC_KEY=${{api.LANGFUSE_PUBLIC_KEY}}' 'LANGFUSE_SECRET_KEY=${{api.LANGFUSE_SECRET_KEY}}' \
       'LANGFUSE_BASE_URL=${{api.LANGFUSE_BASE_URL}}' 'LANGFUSE_PROMPT_LABEL=${{api.LANGFUSE_PROMPT_LABEL}}' \
       'SMTP_HOST=${{api.SMTP_HOST}}' 'SMTP_PORT=${{api.SMTP_PORT}}' 'SMTP_USERNAME=${{api.SMTP_USERNAME}}' \
-      'SMTP_PASSWORD=${{api.SMTP_PASSWORD}}' 'SMTP_FROM=${{api.SMTP_FROM}}' 'SMTP_STARTTLS=${{api.SMTP_STARTTLS}}'
+      'SMTP_PASSWORD=${{api.SMTP_PASSWORD}}' 'SMTP_FROM=${{api.SMTP_FROM}}' 'SMTP_STARTTLS=${{api.SMTP_STARTTLS}}' \
+      'RESEND_API_KEY=${{api.RESEND_API_KEY}}' 'MAIL_FROM=${{api.MAIL_FROM}}'
   fi
 }
 

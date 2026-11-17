@@ -114,7 +114,21 @@ def render_study_pdf(study_id):
         raise
 
 
+RESET_SUBJECT = "Restablecer contraseña — SPAT"
+
+
+def reset_body(reset_url):
+    return (
+        "Recibimos una solicitud para restablecer tu contraseña.\n\n"
+        + reset_url
+        + "\n\nEl enlace expira y solo puede usarse una vez. "
+        "Si no hiciste esta solicitud, puedes ignorar este correo."
+    )
+
+
 class SMTPMailer:
+    """Local stack (Mailpit) and any host that allows outbound SMTP."""
+
     def send_reset(self, recipient, reset_url, message_id):
         host = os.environ["SMTP_HOST"]
         port = int(os.getenv("SMTP_PORT", "587"))
@@ -125,16 +139,11 @@ class SMTPMailer:
         }:
             raise ValueError("SMTP STARTTLS is required outside local/test")
         message = EmailMessage()
-        message["Subject"] = "Restablecer contraseña — SPAT"
+        message["Subject"] = RESET_SUBJECT
         message["From"] = os.environ["SMTP_FROM"]
         message["To"] = recipient
         message["Message-ID"] = f"<{message_id}@spat.local>"
-        message.set_content(
-            "Recibimos una solicitud para restablecer tu contraseña.\n\n"
-            + reset_url
-            + "\n\nEl enlace expira y solo puede usarse una vez. "
-            "Si no hiciste esta solicitud, puedes ignorar este correo."
-        )
+        message.set_content(reset_body(reset_url))
         with smtplib.SMTP(host, port, timeout=20) as smtp:
             if starttls:
                 smtp.starttls(context=ssl.create_default_context())
@@ -143,11 +152,52 @@ class SMTPMailer:
             smtp.send_message(message)
 
 
+class ResendMailer:
+    """HTTPS API of Resend: for hosts that block outbound SMTP (Railway below Pro)."""
+
+    url = "https://api.resend.com/emails"
+
+    def __init__(self, opener=None):
+        import urllib.request
+
+        self.opener = opener or urllib.request.urlopen
+
+    def send_reset(self, recipient, reset_url, message_id):
+        import json
+        import urllib.request
+
+        body = json.dumps({
+            "from": os.getenv("MAIL_FROM") or os.environ["SMTP_FROM"],
+            "to": [recipient],
+            "subject": RESET_SUBJECT,
+            "text": reset_body(reset_url),
+        }).encode()
+        request = urllib.request.Request(self.url, data=body, method="POST", headers={
+            "Authorization": f"Bearer {os.environ['RESEND_API_KEY']}",
+            "Content-Type": "application/json",
+            "User-Agent": "spat-mail-worker",
+            # Resend drops a repeated send with the same key, so a retry after a lost response is harmless.
+            "Idempotency-Key": f"reset-{message_id}",
+        })
+        with self.opener(request, timeout=20) as response:
+            if response.status >= 300:
+                raise RuntimeError(f"Resend respondió {response.status}")
+
+
+def mailer():
+    provider = os.getenv("MAIL_PROVIDER", "smtp").lower()
+    if provider == "resend":
+        return ResendMailer()
+    if provider == "smtp":
+        return SMTPMailer()
+    raise ValueError(f"MAIL_PROVIDER desconocido: {provider}")
+
+
 @lru_cache
 def dependencies():
     store = SQLIdentityStore(os.environ["DATABASE_URL"])
     return store, DeliverResetMail(
-        store, FernetMessages(os.environ["AUTH_MAIL_ENCRYPTION_KEY"]), SMTPMailer()
+        store, FernetMessages(os.environ["AUTH_MAIL_ENCRYPTION_KEY"]), mailer()
     )
 
 

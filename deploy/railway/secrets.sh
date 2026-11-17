@@ -28,14 +28,15 @@ railway variable set -s neo4j --skip-deploys 'NEO4J_AUTH=neo4j/${{GRAPH_PASSWORD
 # A variable exported in this shell wins over the .env file (e.g. SMTP_* of a real provider).
 value_of() { eval "exported=\${$1:-}"; [ -n "$exported" ] && printf '%s' "$exported" || from_env "$1"; }
 missing=""
-for key in LLM_API_KEY LLM_MODEL LLM_BASE_URL LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY LANGFUSE_BASE_URL; do
+for key in LLM_API_KEY LLM_MODEL LLM_BASE_URL LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY LANGFUSE_BASE_URL \
+           RESEND_API_KEY MAIL_FROM; do
   value=$(value_of "$key")
   if [ -n "$value" ]; then put api "$key" "$value"; else missing="$missing $key"; fi
 done
 # The local stack mails to Mailpit: never copy a local SMTP host to production.
 smtp_host=$(value_of SMTP_HOST)
 case "$smtp_host" in
-  ""|mailpit|localhost|127.0.0.1) missing="$missing SMTP_*(proveedor real)" ;;
+  ""|mailpit|localhost|127.0.0.1) [ -n "$(value_of RESEND_API_KEY)" ] || missing="$missing RESEND_API_KEY" ;;
   *) for key in SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD SMTP_FROM; do
        value=$(value_of "$key"); [ -n "$value" ] && put api "$key" "$value" || missing="$missing $key"
      done ;;

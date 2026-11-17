@@ -12,7 +12,14 @@ Desde la raíz del repositorio, con `railway login` hecho:
    volúmenes de MinIO y Neo4j, los dominios públicos (frontend y MinIO) y todas las variables que no son
    secretas. Los procesos backend referencian los secretos del servicio `api` (`${{api.X}}`).
 2. `sh deploy/railway/secrets.sh [.env]`: **lo corre el dueño de las credenciales.** Genera los secretos
-   internos sin mostrarlos y copia LLM, Langfuse y SMTP desde el `.env` indicado.
+   internos sin mostrarlos y copia LLM, Langfuse y correo (`RESEND_API_KEY`, `MAIL_FROM`) desde el `.env`
+   indicado. **Vuelve a generar todos los secretos internos**: no se repite sobre un proyecto en uso (la
+   contraseña de Neo4j queda fijada en su volumen); para cambiar una clave externa usar
+   `printf '%s' valor | railway variable set -s api --stdin CLAVE`.
+
+   Correo: Railway bloquea el SMTP saliente por debajo del plan Pro, así que producción usa la API HTTPS de
+   Resend (`MAIL_PROVIDER=resend`). `MAIL_FROM` debe ser de un dominio verificado en Resend. En local sigue
+   `MAIL_PROVIDER=smtp` contra Mailpit.
 3. `sh deploy/railway/deploy.sh [servicio ...]`: sube el código y lanza los builds.
 4. Crear el primer `super_admin`: `railway ssh -s api python -m src.infrastructure.entrypoint.bootstrap_admin`
    (pide correo y contraseña; lo hace el dueño).

@@ -60,7 +60,7 @@ make smoke-local
 |---|---|---|
 | El agente contesta «No puedo seguir: tu bolsa de tokens…» | Bolsa agotada (o `AGENT_REQUIRE_BUDGET=true` sin bolsa) | Un `super_admin` amplía o asigna la bolsa en **Usuarios** o con `PATCH /api/v1/budgets/{id}`. |
 | Un ingeniero no puede crear proyectos | Su cuenta solo tiene el rol `viewer` | Invitarlo desde **Usuarios** (asigna `designer`) o `POST /api/v1/user-roles`. |
-| Un ingeniero no recibe el enlace de acceso | SMTP mal configurado o worker `mail` caído | Revisar `SMTP_*`, logs del `mail-worker`; «Reenviar enlace» en **Usuarios**. Local: Mailpit en `/mailpit/`. |
+| Un ingeniero no recibe el enlace de acceso | Correo mal configurado o worker `mail` caído | Producción: `MAIL_PROVIDER=resend`, `RESEND_API_KEY`, `MAIL_FROM` de un dominio verificado; logs del `mail-worker` (un fallo a los 20 s exactos = conexión bloqueada; Railway bloquea SMTP fuera de Pro). «Reenviar enlace» en **Usuarios**. Local: Mailpit en `/mailpit/`. |
 | Corridas del agente en espera mucho tiempo | Worker `agent` caído o LLM sin respuesta | `/api/v1/system/queues`; reiniciar el worker; revisar `LLM_*`. |
 | Logs con «Returning fallback prompt … label 'staging'» | `LANGFUSE_PROMPT_LABEL` apunta a una etiqueta sin prompts publicados | Usar `production` o publicar los prompts con `make sync-prompts` en esa etiqueta. Mientras tanto se usan los prompts locales. |
 | El optimizador dice «Optimización bloqueada» | No hay perfil normativo revisado fijado al proyecto | Correcto mientras T0 siga abierto: solo un especialista puede publicar el perfil revisado. |
