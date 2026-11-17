@@ -20,10 +20,10 @@ put api MINIO_WEBHOOK_AUTH_TOKEN "$(rand 32)"
 put api STUDY_RENDER_TOKEN "$(rand 32)"
 put minio MINIO_ROOT_USER "terra$(python3 -c 'import secrets; print(secrets.token_hex(4))')"
 put minio MINIO_ROOT_PASSWORD "$(rand 32)"
-NEO4J_PASSWORD=$(rand 24)
-put neo4j NEO4J_PASSWORD "$NEO4J_PASSWORD"
-put neo4j NEO4J_AUTH "neo4j/$NEO4J_PASSWORD"
-unset NEO4J_PASSWORD
+# The neo4j image turns every NEO4J_* variable into a server setting (NEO4J_PASSWORD → "PASSWORD", which makes
+# it refuse to start), so the password lives in GRAPH_PASSWORD and NEO4J_AUTH references it.
+put neo4j GRAPH_PASSWORD "$(rand 24)"
+railway variable set -s neo4j --skip-deploys 'NEO4J_AUTH=neo4j/${{GRAPH_PASSWORD}}' >/dev/null
 
 # A variable exported in this shell wins over the .env file (e.g. SMTP_* of a real provider).
 value_of() { eval "exported=\${$1:-}"; [ -n "$exported" ] && printf '%s' "$exported" || from_env "$1"; }

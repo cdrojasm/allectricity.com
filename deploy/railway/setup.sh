@@ -38,7 +38,7 @@ backend_common() {
     "MINIO_ENDPOINT=minio.railway.internal:9000" "MINIO_SECURE=false" \
     "MINIO_PUBLIC_ENDPOINT=$MINIO_HOST" "MINIO_PUBLIC_SECURE=true" \
     'MINIO_ACCESS_KEY=${{minio.MINIO_ROOT_USER}}' 'MINIO_SECRET_KEY=${{minio.MINIO_ROOT_PASSWORD}}' \
-    "NEO4J_URI=bolt://neo4j.railway.internal:7687" "NEO4J_USER=neo4j" 'NEO4J_PASSWORD=${{neo4j.NEO4J_PASSWORD}}' \
+    "NEO4J_URI=bolt://neo4j.railway.internal:7687" "NEO4J_USER=neo4j" 'NEO4J_PASSWORD=${{neo4j.GRAPH_PASSWORD}}' \
     "CLAMAV_HOST=clamav.railway.internal" "OCR_SERVICE_URL=http://ocr.railway.internal:8080" \
     "SPAT_POTENTIAL_ENGINE_URL=http://potential-engine.railway.internal:8080" \
     "PUBLIC_APP_URL=https://$FRONTEND" "AUTH_RESET_URL=https://$FRONTEND/reset-password" \
