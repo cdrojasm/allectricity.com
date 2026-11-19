@@ -14,4 +14,4 @@ services:
   agent-worker:
     environment:
       DESIGN_MAX_ITERATIONS: ${SMOKE_DESIGN_MAX_ITERATIONS:-3}
-      LLM_BASE_URL: ${SMOKE_LLM_BASE_URL:-}
+      OPENROUTER_BASE_URL: ${SMOKE_LLM_BASE_URL:-}

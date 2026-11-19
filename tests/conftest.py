@@ -19,5 +19,14 @@ SLOW_FIRST = (
 )
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def openrouter_model(monkeypatch):
+    """Agent tests use fake LLM clients, but the code requires a configured model name."""
+    monkeypatch.setenv("OPENROUTER_MODEL", "openai/test-model")
+
+
 def pytest_collection_modifyitems(config, items):
     items.sort(key=lambda item: next((i for i, name in enumerate(SLOW_FIRST) if name in item.nodeid), len(SLOW_FIRST)))

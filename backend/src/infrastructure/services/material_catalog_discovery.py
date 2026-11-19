@@ -17,6 +17,8 @@ import urllib.request
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 
+from src.infrastructure.agents import llm_provider
+
 
 MAX_RESULTS = 10
 MAX_PAGE_BYTES = 350_000
@@ -205,7 +207,11 @@ def _tavily_search(query: str, country: str, max_results: int) -> list[dict]:
 
 
 def _has_llm() -> bool:
-    return bool(os.getenv("LLM_API_KEY", "").strip())
+    return llm_provider.configured()
+
+
+def _search_model() -> str:
+    return llm_provider.model(os.getenv("MATERIAL_CATALOG_SEARCH_MODEL"))
 
 
 def _response_search_candidates(response, limit=MAX_RESULTS) -> tuple[list[dict], str]:
@@ -272,52 +278,15 @@ def _search_prompt(query: str, limit=MAX_RESULTS) -> str:
     )
 
 
-def _openai_web_search(query: str, country: str, city: str, limit=MAX_RESULTS) -> tuple[list[dict], str]:
-    """Run native Responses web search and return only URLs actually cited by it."""
-    try:
-        from src.infrastructure.agents import runtime
-
-        if os.getenv("LLM_BASE_URL", "").strip():
-            raise DiscoveryNotConfigured
-        _, client = runtime.clients()
-        model = os.getenv("MATERIAL_CATALOG_SEARCH_MODEL") or os.getenv("LLM_MODEL", "gpt-4o-mini")
-        location = {"type": "approximate"}
-        if city:
-            location["city"] = city
-        if len(country) == 2:
-            location["country"] = country.upper()
-        response = client.responses.create(
-            model=model,
-            tools=[{"type": "web_search", "search_context_size": "medium", "user_location": location}],
-            tool_choice="required",
-            input=_search_prompt(query, limit),
-        )
-        return _response_search_candidates(response, limit)
-    except DiscoveryNotConfigured:
-        raise
-    except Exception as exc:
-        raise DiscoveryProviderError(
-            "Falló OpenAI Responses con web_search. Verifica acceso del modelo configurado a Responses y web_search, "
-            "o configura TAVILY_API_KEY."
-        ) from exc
-
-
 def _openrouter_web_search(query: str, country: str, city: str, limit=MAX_RESULTS) -> tuple[list[dict], str]:
-    """Search through OpenRouter's Responses server tool without changing the global LLM URL."""
+    """Search through OpenRouter's Responses server tool `openrouter:web_search`."""
     try:
-        from openai import OpenAI
-
-        model = os.getenv("MATERIAL_CATALOG_SEARCH_MODEL") or os.getenv("LLM_MODEL", "gpt-4o-mini")
-        if "/" not in model:
-            model = f"openai/{model}"
+        model = _search_model()
         location_text = ", ".join(part for part in (city.strip(), country.strip()) if part)
         prompt = _search_prompt(query, limit)
         if location_text:
             prompt += f" Prioriza proveedores en {location_text}."
-        client = OpenAI(
-            api_key=os.environ["OPENROUTER_API_KEY"].strip(),
-            base_url="https://openrouter.ai/api/v1",
-        )
+        client = llm_provider.client()
         response = client.responses.create(
             model=model,
             tools=[{"type": "openrouter:web_search"}],
@@ -349,7 +318,7 @@ def _extract_tavily_fields(pages: list[dict], *, query: str, category: str, limi
         from src.infrastructure.agents import runtime
 
         _, client = runtime.clients()
-        model = os.getenv("MATERIAL_CATALOG_SEARCH_MODEL") or os.getenv("LLM_MODEL", "gpt-4o-mini")
+        model = _search_model()
         source_material = [{"url": page["url"], "title": page["title"], "text": page["text"][:3500]}
                            for page in pages]
         response = client.chat.completions.create(
@@ -434,7 +403,6 @@ def discover(*, geography: dict, category: str, query: str, max_results=8) -> di
     search_query = " ".join(part for part in (user_query, category, location, "materiales puesta a tierra proveedor") if part)
     now = datetime.now(timezone.utc).isoformat()
     tavily = bool(os.getenv("TAVILY_API_KEY", "").strip())
-    openrouter = bool(os.getenv("OPENROUTER_API_KEY", "").strip())
     if tavily:
         found = _tavily_search(search_query, country, limit)
         leads = []
@@ -458,7 +426,9 @@ def discover(*, geography: dict, category: str, query: str, max_results=8) -> di
         page_urls = {page["url"] for page in pages}
         proposed = [item for item in extracted if item.get("source_url") in page_urls] or leads
         provider = "tavily"
-    elif openrouter:
+    else:
+        if not _has_llm():
+            raise DiscoveryNotConfigured
         proposed, _response_id = _openrouter_web_search(search_query, country, city, limit)
         pages = []
         for item in proposed:
@@ -470,22 +440,6 @@ def discover(*, geography: dict, category: str, query: str, max_results=8) -> di
                 pages.append({"url": url, "title": page_title, "text": page_text,
                               "snippet": "", "contacts": contacts})
         provider = "openrouter_web_search"
-    else:
-        if not _has_llm():
-            raise DiscoveryNotConfigured
-        if os.getenv("LLM_BASE_URL", "").strip():
-            raise DiscoveryNotConfigured
-        proposed, _response_id = _openai_web_search(search_query, country, city, limit)
-        pages = []
-        for item in proposed:
-            url = str(item.get("source_url") or "")
-            if not _public_http_url(url):
-                continue
-            page_title, page_text, contacts = _fetch_public_page_details(url)
-            if page_text:
-                pages.append({"url": url, "title": page_title, "text": page_text,
-                              "snippet": "", "contacts": contacts})
-        provider = "openai_web_search"
 
     results = []
     pages_fetched = len(pages)

@@ -14,6 +14,7 @@ from src.domain.knowledge_graph.contract import (
 )
 from src.domain.knowledge_graph.taxonomy import taxonomy_summary
 from src.domain.knowledge_graph.validation import validate_extraction
+from src.infrastructure.agents import llm_provider
 from src.infrastructure.agents.runtime import (
     clients as _clients, load_prompt as _load_prompt, new_usage as _new_usage,
     TokenLimitExceeded, run_tool_agent as _run_tool_agent, tool as _tool,
@@ -30,13 +31,13 @@ def enabled() -> bool:
     if setting in {"false", "0", "no"}:
         return False
     return bool((os.getenv("PHOENIX_ENDPOINT") or os.getenv("PHOENIX_COLLECTOR_ENDPOINT"))
-                and os.getenv("LLM_API_KEY"))
+                and llm_provider.configured())
 
 
 def model_name(prompt: tuple | None = None) -> str:
-    """Use Phoenix's model selection, with the configured LLM model as fallback."""
+    """Use Phoenix's model selection, with OPENROUTER_MODEL as fallback."""
     selected = getattr(prompt[1], "model_name", None) if prompt else None
-    return selected or os.getenv("LLM_MODEL", "gpt-4o-mini")
+    return llm_provider.model(selected)
 
 
 def load_prompts() -> dict:

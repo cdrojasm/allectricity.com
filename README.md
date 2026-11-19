@@ -163,8 +163,8 @@ y, si la instancia lo requiere, `PHOENIX_API_KEY` en `.env`; ejecuta
 `make sync-prompts` para crear nuevas versiones bajo la etiqueta `staging` y
 promuévelas a `production` en Phoenix cuando estén revisadas. Sin acceso a Phoenix,
 los agentes usan las semillas del repositorio como respaldo. Luego
-configura `LLM_API_KEY` y `LLM_MODEL` (opcional: `LLM_BASE_URL` para una API
-compatible); con `DOCUMENT_AGENTS_ENABLED=auto` se activarán cuando estén el
+configura `OPENROUTER_API_KEY` y `OPENROUTER_MODEL` (OpenRouter es el único
+proveedor LLM); con `DOCUMENT_AGENTS_ENABLED=auto` se activarán cuando estén el
 endpoint de Phoenix y las credenciales del proveedor LLM. Se pueden fijar
 versiones individuales con `DOCUMENT_EXTRACTOR_PROMPT_VERSION` y
 `DOCUMENT_CONSOLIDATOR_PROMPT_VERSION`. Usa `DOCUMENT_AGENTS_ENABLED=false`

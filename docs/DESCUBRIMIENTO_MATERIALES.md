@@ -6,13 +6,10 @@ la búsqueda fuera de la petición HTTP. Consulta `GET /api/v1/material-catalog/
 con la misma sesión para obtener `queued`, `running`, `completed` o `failed`; al completar,
 `result` contiene resultados y metadata, y ante un fallo `error` contiene el mensaje. Cada
 trabajo solo puede consultarlo su creador. Requiere sesión autenticada.
-Prioriza Tavily cuando existe `TAVILY_API_KEY`; luego OpenRouter cuando existe
-`OPENROUTER_API_KEY`; si no, usa la búsqueda web nativa de OpenAI Responses cuando
-`LLM_API_KEY` esté configurada y `LLM_BASE_URL` esté vacío. OpenRouter usa su herramienta
-`openrouter:web_search` con el modelo `MATERIAL_CATALOG_SEARCH_MODEL` o `LLM_MODEL` (si no
-incluye proveedor, se asume `openai/`). La opción OpenAI requiere que el proyecto y modelo
-tengan acceso a Responses `web_search`. Si no hay proveedor elegible, devuelve HTTP 503;
-nunca simula resultados.
+Prioriza Tavily cuando existe `TAVILY_API_KEY`; si no, usa OpenRouter (`OPENROUTER_API_KEY`
+y `OPENROUTER_MODEL`) con su herramienta `openrouter:web_search` y el modelo
+`MATERIAL_CATALOG_SEARCH_MODEL` o `OPENROUTER_MODEL` (si no incluye proveedor, se asume
+`openai/`). Si no hay proveedor elegible, devuelve HTTP 503; nunca simula resultados.
 
 Solicitud:
 
@@ -46,7 +43,7 @@ fragmento de fuente. `price` permanece `null` salvo que importe y código ISO de
 aparezcan literalmente juntos en el texto. El usuario debe revisar la fuente y registrar
 una cotización verificable antes de usarla como costo.
 
-Para búsqueda OpenAI se reutiliza `LLM_API_KEY`; para OpenRouter configura
-`OPENROUTER_API_KEY`; para Tavily configura `TAVILY_API_KEY`. `MATERIAL_CATALOG_SEARCH_MODEL`
-permite elegir otro modelo (por defecto `LLM_MODEL`). `MATERIAL_CATALOG_SEARCH_URL` permite
+Para OpenRouter se reutilizan `OPENROUTER_API_KEY` y `OPENROUTER_MODEL`, los mismos del
+agente; para Tavily configura `TAVILY_API_KEY`. `MATERIAL_CATALOG_SEARCH_MODEL`
+permite elegir otro modelo (por defecto `OPENROUTER_MODEL`). `MATERIAL_CATALOG_SEARCH_URL` permite
 usar un endpoint compatible con Tavily.

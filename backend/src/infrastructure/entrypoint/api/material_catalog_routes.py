@@ -12,7 +12,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from src.infrastructure.agents import runtime
+from src.infrastructure.agents import llm_provider, runtime
 from src.infrastructure.services import material_catalog_discovery
 from src.infrastructure.security.middleware import require
 
@@ -113,7 +113,7 @@ def material_catalog_assistant(payload: CatalogAssistantRequest, _actor=Depends(
     messages.extend({"role": message.role, "content": message.content} for message in payload.messages)
     try:
         response = client.chat.completions.create(
-            model=os.getenv("MATERIAL_CATALOG_AGENT_MODEL") or os.getenv("LLM_MODEL", "gpt-4o-mini"),
+            model=llm_provider.model(os.getenv("MATERIAL_CATALOG_AGENT_MODEL")),
             messages=messages,
             response_format={"type": "json_object"},
             temperature=0.2,

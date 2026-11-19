@@ -19,7 +19,9 @@ PROMPTS = {
 
 def main() -> None:
     prompt_dir = Path(__file__).resolve().parents[1] / "prompts" / "phoenix"
-    model = os.getenv("LLM_MODEL", "openai-compatible")
+    model = os.getenv("OPENROUTER_MODEL", "").strip()
+    if not model:
+        raise SystemExit("Define OPENROUTER_MODEL (por ejemplo openai/gpt-4.1)")
     tag = os.getenv("PHOENIX_SEED_TAG", "staging")
     client = Client()
     for name, filename in PROMPTS.items():

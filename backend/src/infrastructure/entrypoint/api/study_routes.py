@@ -350,9 +350,10 @@ def generate_study_section(project_id: str, study_id: str, section_id: str, data
     from src.infrastructure.agents.calculation_summary import summarize
     outcome = summarize(latest) if latest else None
     try:
+        from src.infrastructure.agents import llm_provider
         from src.infrastructure.agents.runtime import clients
         _, client = clients()
-        response = client.chat.completions.create(model=os.getenv("STUDY_WRITER_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini")), temperature=0.2, max_tokens=500, messages=[
+        response = client.chat.completions.create(model=llm_provider.model(os.getenv("STUDY_WRITER_MODEL")), temperature=0.2, max_tokens=500, messages=[
             {"role": "system", "content": "Escribe un párrafo técnico breve en español para un estudio de puesta a tierra. No inventes valores: si faltan datos, dilo explícitamente. Si se entrega un resultado de cálculo, es la fuente de verdad: cita su veredicto (cumple / no cumple) tal cual y nunca digas que faltan resultados. No uses identificadores internos ni ids; nombra el proyecto por su título. Devuelve solo el párrafo."},
             {"role": "user", "content": f"Sección: {section_id}. Proyecto: {(project or {}).get('name') or study['title']}. Título del estudio: {study['title']}. Artefacto: {artifact['snapshot']}. Resultado del cálculo fijado: {outcome if outcome else 'sin cálculo para esta versión'}. Instrucción: {data.instruction or 'Resume esta sección para un revisor técnico.'}"},
         ])

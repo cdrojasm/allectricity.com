@@ -21,14 +21,10 @@ def read_prompt_seed(filename: str) -> str:
 
 @lru_cache
 def clients():
-    from openai import OpenAI
-
+    from src.infrastructure.agents import llm_provider
     from src.infrastructure.agents.phoenix_prompt_catalog import PhoenixPromptCatalog
 
-    options = {"api_key": os.environ["LLM_API_KEY"]}
-    if os.getenv("LLM_BASE_URL"):
-        options["base_url"] = os.environ["LLM_BASE_URL"]
-    return PhoenixPromptCatalog(), OpenAI(**options)
+    return PhoenixPromptCatalog(), llm_provider.client()
 
 
 def load_prompt(name_env: str, default_name: str, fallback: str | None = None):

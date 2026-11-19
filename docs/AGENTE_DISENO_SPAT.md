@@ -33,7 +33,7 @@ y siempre queda sujeto a revisión de un profesional competente.
   nunca con más.
 - **Proyecto** existente con una conversación (`conversations`).
 - Proveedor LLM y Arize Phoenix configurados (mismo patrón que `document_agents.py`:
-  `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`, prompts por nombre/label). Si no lo están,
+  `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, prompts por nombre/label). Si no lo están,
   el agente responde con un mensaje explícito y no simula trabajo.
 - **Presupuesto** de tokens activo del usuario (`budget`). Sin presupuesto, el run no arranca.
 
@@ -391,7 +391,7 @@ la orquestación vive en el caso de uso y las rutas solo autorizan y delegan.
 | AG-01 | P0 · ✅ | Dominio del run y eventos | Máquina de estados con transiciones válidas y pruebas; catálogo de eventos | — |
 | AG-02 | P0 · ✅ | Migración 0010 y repositorios | Tablas `agent_runs`, `agent_events` (seq por conversación), `agent_conversation_state`, `origin` (con `provenance` por campo) en artefactos; prueba en SQLite y PostgreSQL | AG-01 |
 | AG-03 | P0 · ✅ (falta `resume` y propuestas, van con AG-06/AG-08) | API de polling, SSE y control | Endpoints §6.2–6.4 con autorización; `messages/since`; criterios 1–3 | AG-02 |
-| AG-04 | P0 · ◐ (runtime compartido y modelo por subagente; falta descontar `budget`) | Runtime LLM compartido | Extraer cliente/prompt/bucle ReAct de `document_agents.py` a `agents/runtime.py` sin romper la ingesta; modelo por subagente (§14) con respaldo en `LLM_MODEL`; contabilidad de tokens contra `budget` | — |
+| AG-04 | P0 · ◐ (runtime compartido y modelo por subagente; falta descontar `budget`) | Runtime LLM compartido | Extraer cliente/prompt/bucle ReAct de `document_agents.py` a `agents/runtime.py` sin romper la ingesta; modelo por subagente (§14) con respaldo en `OPENROUTER_MODEL`; contabilidad de tokens contra `budget` | — |
 | AG-05 | P0 · ◐ (borrador, procedencia, validación, propuesta y versión; faltan herramientas de cálculo, documentos y grafo) | Herramientas del artefacto | §8 lectura, borrador, validación, procedencia por campo y regla de datos críticos, commit con concurrencia optimista; criterios 6–9 | AG-02 |
 | AG-06 | P0 · ◐ (pasos reanudables, espera de usuario, cancelación; falta espera de cálculo y plan) | Orquestador reanudable | `spat.agent_run_step`, inbox, suspensión por cálculo y por pregunta, cancelación, límites; criterios 2, 4, 10, 11 | AG-03, AG-04, AG-05 |
 | AG-07 | P0 · ◐ (orquestador, diseñador de malla y modelador de suelo; faltan recolector, seguridad y normativo) | Subagentes MVP 1–5 | Prompts Phoenix sincronizados (`sync_phoenix_prompts.py`), herramientas por subagente, salida estructurada; criterio 12 con LLM falso | AG-06 |
@@ -485,8 +485,9 @@ interpreta, decide la siguiente herramienta y redacta.
 | Revisor normativo | `gpt-5-nano` | `AGENT_COMPLIANCE_REVIEWER_MODEL` | Copia evidencia a criterios con reglas deterministas detrás |
 | Resumen de memoria de conversación | `gpt-5-nano` | `AGENT_SUMMARY_MODEL` | Resumen rodante al cierre del run |
 
-- Cada variable cae en `LLM_MODEL` si no está definida (hoy `gpt-4o-mini`), así el
-  agente funciona sin configuración extra.
+- Cada variable cae en `OPENROUTER_MODEL` si no está definida, así el agente funciona
+  sin configuración extra. Un nombre sin proveedor (`gpt-5-nano`) se envía a OpenRouter
+  como `openai/gpt-5-nano`.
 - Si un subagente en `nano` falla de forma recurrente en la evaluación (AG-11), se
   sube solo ese a `mini`; la decisión se toma con métricas, no a priori.
 - El modelo y la versión del prompt de cada llamada quedan en el run; Phoenix conserva el historial editable.

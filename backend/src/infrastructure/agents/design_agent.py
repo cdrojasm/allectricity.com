@@ -35,7 +35,7 @@ from src.domain.spat.grid_geometry import (
 from src.domain.knowledge_graph.artifact_mapping import map_claims_to_artifact
 from src.domain.knowledge_graph.conflict_resolution import resolve_conflicts
 from src.domain.agent.run import AgentMode
-from src.infrastructure.agents import runtime
+from src.infrastructure.agents import llm_provider, runtime
 from src.infrastructure.entrypoint.api.schemas import (
     ArtifactFaultRequest, ArtifactGeometryRequest, ArtifactSoilLayerRequest, GroundingArtifactRequest,
     GroundingConductorRequest, PotentialCalculationRequest,
@@ -67,12 +67,12 @@ def enabled() -> bool:
         return True
     if setting in {"false", "0", "no"}:
         return False
-    return bool(os.getenv("LLM_API_KEY"))
+    return llm_provider.configured()
 
 
 def model_for(env: str, prompt_model: str | None = None) -> str:
     """Use the model saved on the active Phoenix prompt version when available."""
-    return prompt_model or os.getenv(env) or os.getenv("LLM_MODEL", "gpt-4o-mini")
+    return llm_provider.model(prompt_model, os.getenv(env))
 
 
 @dataclass(frozen=True)

@@ -71,8 +71,8 @@ def discover_materials_job(job_id):
             db.change("material_discovery_jobs", job_id, status="completed", result=result,
                       error=None, updated_at=int(now()))
     except material_catalog_discovery.DiscoveryNotConfigured:
-        error = ("Búsqueda de materiales no configurada. Define TAVILY_API_KEY, OPENROUTER_API_KEY, "
-                 "o configura LLM_API_KEY con LLM_BASE_URL vacío para usar OpenAI Responses y web_search.")
+        error = ("Búsqueda de materiales no configurada. Define OPENROUTER_API_KEY y OPENROUTER_MODEL "
+                 "(o TAVILY_API_KEY).")
         with store.transaction(write=True) as db:
             db.change("material_discovery_jobs", job_id, status="failed", error=error, updated_at=int(now()))
     except material_catalog_discovery.DiscoveryProviderError as exc:

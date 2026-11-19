@@ -5,6 +5,8 @@ import json
 import os
 import math
 
+from src.infrastructure.agents import llm_provider
+
 
 def propose_plan_from_image(client, data: bytes, mime_type: str, geometry: dict) -> dict:
     if mime_type not in {"image/png", "image/jpeg"}:
@@ -18,7 +20,7 @@ def propose_plan_from_image(client, data: bytes, mime_type: str, geometry: dict)
         "extent_m": {"length": geometry.get("length_m"), "width": geometry.get("width_m")},
     }
     response = client.chat.completions.create(
-        model=os.getenv("PLAN_VISION_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini")),
+        model=llm_provider.model(os.getenv("PLAN_VISION_MODEL")),
         messages=[{"role": "system", "content": "Return only valid JSON. This is a proposal for human review."},
                   {"role": "user", "content": [{"type": "text", "text": json.dumps(prompt, ensure_ascii=False)},
                                                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64.b64encode(data).decode('ascii')}"}}]}],
