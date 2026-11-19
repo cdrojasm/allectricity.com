@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import re
-from pathlib import Path
+from dataclasses import dataclass
 from time import time
 
 from pydantic import TypeAdapter, ValidationError
@@ -70,8 +70,23 @@ def enabled() -> bool:
     return bool(os.getenv("LLM_API_KEY"))
 
 
-def model_for(env: str) -> str:
-    return os.getenv(env) or os.getenv("LLM_MODEL", "gpt-4o-mini")
+def model_for(env: str, prompt_model: str | None = None) -> str:
+    """Use the model saved on the active Phoenix prompt version when available."""
+    return prompt_model or os.getenv(env) or os.getenv("LLM_MODEL", "gpt-4o-mini")
+
+
+@dataclass(frozen=True)
+class AgentPrompt:
+    messages: list[dict]
+    model_name: str | None = None
+
+
+def _prompt_messages(prompt) -> list[dict]:
+    return prompt.messages if isinstance(prompt, AgentPrompt) else prompt
+
+
+def _prompt_model(prompt) -> str | None:
+    return prompt.model_name if isinstance(prompt, AgentPrompt) else None
 
 
 def max_design_iterations() -> int:
@@ -168,15 +183,11 @@ def reconcile_final_response(text: str, applied: dict | None, rejected: list | N
 
 
 def _prompt_file(name: str) -> str:
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / "prompts" / "langfuse" / name
-        if candidate.exists():
-            return candidate.read_text()
-    raise FileNotFoundError(name)
+    return runtime.read_prompt_seed(name)
 
 
 def load_prompts() -> dict:
-    """System prompts from Langfuse, falling back to the checked-in seeds."""
+    """System prompts from Phoenix, falling back to the checked-in seeds."""
     prompts = {}
     for key, env, name, file in (
         ("orchestrator", "AGENT_ORCHESTRATOR_PROMPT_NAME", "spat-agent-orchestrator", "agent-orchestrator.md"),
@@ -185,11 +196,12 @@ def load_prompts() -> dict:
         ("safety_analyst", "AGENT_SAFETY_ANALYST_PROMPT_NAME", "spat-agent-safety-analyst", "agent-safety-analyst.md"),
     ):
         seed = _prompt_file(file)
+        snapshot = None
         try:
-            _, _, messages = runtime.load_prompt(env, name, fallback=seed)
+            _, snapshot, messages = runtime.load_prompt(env, name, fallback=seed)
         except Exception:
             messages = [{"role": "system", "content": seed}]
-        prompts[key] = messages
+        prompts[key] = AgentPrompt(messages, getattr(snapshot, "model_name", None))
     return prompts
 
 
@@ -868,7 +880,8 @@ def _field_guide() -> dict:
 
 def run_grid_designer(client, prompts, workspace: ArtifactWorkspace, task: str, usage: dict) -> dict:
     """Subagent: returns geometry/conductor changes and applies them to the draft."""
-    messages = [*prompts["grid_designer"], {"role": "user", "content": json.dumps({
+    prompt = prompts["grid_designer"]
+    messages = [*_prompt_messages(prompt), {"role": "user", "content": json.dumps({
         "task": task, "draft": workspace.get_draft(), "fields": _field_guide()}, ensure_ascii=False)}]
     submit = runtime.tool("submit_grid_design", "Return the field changes for the grid and conductor.", {
         "changes": {"type": "array", "items": {"type": "object", "properties": {
@@ -910,7 +923,7 @@ def run_grid_designer(client, prompts, workspace: ArtifactWorkspace, task: str, 
         outcome.update(result, rationale=args.get("rationale", ""))
         return not result["errors"], result
 
-    runtime.run_tool_agent(client, model_for("AGENT_GRID_DESIGNER_MODEL"), messages, tools,
+    runtime.run_tool_agent(client, model_for("AGENT_GRID_DESIGNER_MODEL", _prompt_model(prompt)), messages, tools,
                            {"get_draft": workspace.get_draft, "explode_grid": workspace.explode_grid,
                             "clip_zone": workspace.clip_zone, "grid_in_areas": workspace.grid_in_areas},
                            "submit_grid_design", finalize, usage,
@@ -976,7 +989,8 @@ def run_soil_modeler(client, prompts, workspace: ArtifactWorkspace, task: str, u
                 "preview_table": workspace.preview_table, "stage_from_table": workspace.stage_from_table,
                 "stage_from_message": workspace.stage_from_message, "stage_from_artifact": workspace.stage_from_artifact,
                 "fit_soil": workspace.fit_soil, "lookup_soil_material": workspace.lookup_material}
-    messages = [*prompts["soil_modeler"], {"role": "user", "content": json.dumps({
+    prompt = prompts["soil_modeler"]
+    messages = [*_prompt_messages(prompt), {"role": "user", "content": json.dumps({
         "task": task, "recent_user_messages": workspace.user_messages(), "soil": workspace.soil_state(),
         "files": workspace.list_tables()["files"]},
         ensure_ascii=False)}]
@@ -987,7 +1001,7 @@ def run_soil_modeler(client, prompts, workspace: ArtifactWorkspace, task: str, u
         outcome.update(result, rationale=args.get("rationale", ""), layer_notes=args.get("layer_notes") or [])
         return "error" not in result, result
 
-    runtime.run_tool_agent(client, model_for("AGENT_SOIL_MODELER_MODEL"), messages, tools, handlers,
+    runtime.run_tool_agent(client, model_for("AGENT_SOIL_MODELER_MODEL", _prompt_model(prompt)), messages, tools, handlers,
                            "submit_soil_model", finalize, usage, max_rounds=SOIL_ROUNDS)
     return outcome
 
@@ -998,12 +1012,13 @@ def run_safety_analyst(client, prompts, workspace: ArtifactWorkspace, result: di
     snapshot = workspace.draft
     context = {"calculation": result, "geometry": snapshot.get("geometry"), "soil_layers": snapshot.get("soil_layers"),
                "fault": snapshot.get("fault"), "conductor": snapshot.get("conductor")}
-    messages = [*prompts["safety_analyst"], {"role": "user", "content": json.dumps(context, ensure_ascii=False)}]
+    prompt = prompts["safety_analyst"]
+    messages = [*_prompt_messages(prompt), {"role": "user", "content": json.dumps(context, ensure_ascii=False)}]
     submit = runtime.tool("submit_safety_report", "Explain the result and recommend the next actions.", {
         "explanation": {"type": "string"}, "dominant_constraint": {"type": "string"},
         "recommendations": {"type": "array", "items": {"type": "string"}}},
         ["explanation", "dominant_constraint", "recommendations"])
-    report = runtime.run_tool_agent(client, model_for("AGENT_SAFETY_ANALYST_MODEL"), messages, [submit], {},
+    report = runtime.run_tool_agent(client, model_for("AGENT_SAFETY_ANALYST_MODEL", _prompt_model(prompt)), messages, [submit], {},
                                     "submit_safety_report", lambda args: (True, {"ok": True}), usage, max_rounds=3)
     return {"verdict": result.get("verdict"), "summary": result, **report}
 
@@ -1146,7 +1161,8 @@ class GroundingDesignAgent:
             if loop is not None:
                 return loop
             context["design_loop"] = self._design_loop_context(run, finished, best_candidate)
-        messages = [*prompts["orchestrator"],
+        orchestrator_prompt = prompts["orchestrator"]
+        messages = [*_prompt_messages(orchestrator_prompt),
                     {"role": "system", "content": "Context: " + json.dumps(context, ensure_ascii=False) +
                      "\nConstruction rule: when artifact_inputs contain confirmed values, build in this order: "
                      "map inputs, delegate soil_modeler for resistivity readings, delegate grid_designer for geometry, "
@@ -1293,7 +1309,7 @@ class GroundingDesignAgent:
             workspace.rejected_changes.clear()
             return True, {"ok": True}
 
-        result = runtime.run_tool_agent(client, model_for("AGENT_ORCHESTRATOR_MODEL"), messages, tools, handlers,
+        result = runtime.run_tool_agent(client, model_for("AGENT_ORCHESTRATOR_MODEL", _prompt_model(orchestrator_prompt)), messages, tools, handlers,
                                         "respond_to_user", finalize, usage, max_rounds=ORCHESTRATOR_ROUNDS)
         text = str(result.get("text") or "").strip() or "Listo."
         if workspace.queued_calculation:

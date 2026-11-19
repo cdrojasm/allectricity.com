@@ -11,7 +11,7 @@ python scripts/generate_test_documents.py            # escribe en docs/documento
 **Cómo probar:** crea un proyecto, sube los documentos **en orden (01 → 06)** al mismo
 proyecto y revisa `GET /api/v1/projects/{id}/knowledge-graph/claims`, `/questions`,
 `/runs` y `/entities`. Con `DOCUMENT_AGENTS_ENABLED=false` solo corren las reglas
-(ver «Solo reglas» abajo); con Langfuse y el proveedor LLM configurados corren también los
+(ver «Solo reglas» abajo); con Phoenix y el proveedor LLM configurados corren también los
 agentes. Publica antes los prompts nuevos con `make sync-prompts`.
 
 | # | Archivo | Formato / ruta de parseo | Qué pone a prueba |

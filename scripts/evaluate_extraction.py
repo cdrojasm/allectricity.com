@@ -7,7 +7,7 @@ Uso:
 
 El informe guardado con --output sirve como línea base. Con --baseline compara contra esa línea base con evaluation/extraction/thresholds.json y sale
 con código 1 si alguna métrica cae más de lo permitido. El modelo y los prompts son los del
-entorno (LLM_MODEL, LANGFUSE_PROMPT_LABEL); para comparar modelos, ejecútalo con cada uno.
+entorno (LLM_MODEL, PHOENIX_PROMPT_TAG); para comparar modelos, ejecútalo con cada uno.
 --rescore vuelve a puntuar un informe guardado con el gold actual, sin llamar al LLM.
 """
 
@@ -47,7 +47,7 @@ def main() -> int:
         report = rescore(json.loads(args.rescore.read_text(encoding="utf-8")), args.dataset)
     elif not args.rules_only and not document_agents.enabled():
         print("Los agentes LLM no están configurados; usa --rules-only o define "
-              "LLM_API_KEY y Langfuse.", file=sys.stderr)
+              "LLM_API_KEY y PHOENIX_ENDPOINT.", file=sys.stderr)
         return 2
     else:
         if args.repeat < 1:

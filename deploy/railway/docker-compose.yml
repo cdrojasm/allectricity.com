@@ -3,6 +3,16 @@ name: spat-railway
 # Import this file into a Railway project as a starting point. Railway maps each
 # service to a Railway service and replaces Compose networking with private DNS.
 services:
+  phoenix:
+    image: arizephoenix/phoenix:version-21.0.0
+    environment:
+      PHOENIX_HOST: "::"
+      PHOENIX_PORT: "6006"
+      PHOENIX_ENABLE_AUTH: "true"
+      PHOENIX_SECRET: ${PHOENIX_SECRET:?Set PHOENIX_SECRET in Railway}
+      PHOENIX_ADMIN_SECRET: ${PHOENIX_ADMIN_SECRET:?Set PHOENIX_ADMIN_SECRET in Railway}
+      PHOENIX_WORKING_DIR: /data
+
   api:
     build:
       context: ../..
@@ -32,6 +42,8 @@ services:
     command: ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "agent"]
     environment:
       MINIO_ENDPOINT: minio:9000
+      PHOENIX_ENDPOINT: http://phoenix:6006
+      PHOENIX_API_KEY: ${PHOENIX_ADMIN_SECRET:?Set PHOENIX_ADMIN_SECRET in Railway}
     depends_on:
       - migrate
       - api
@@ -47,6 +59,8 @@ services:
       OCR_SERVICE_URL: http://ocr:8080
       MINIO_ENDPOINT: minio:9000
       NEO4J_URI: bolt://neo4j:7687
+      PHOENIX_ENDPOINT: http://phoenix:6006
+      PHOENIX_API_KEY: ${PHOENIX_ADMIN_SECRET:?Set PHOENIX_ADMIN_SECRET in Railway}
     depends_on:
       - migrate
       - minio-init

@@ -14,19 +14,23 @@ for service in api scheduler agent-worker document-worker calculation-worker opt
                render-worker frontend potential-engine ocr minio; do
   railway add -s "$service"
 done
+railway add -s phoenix -i arizephoenix/phoenix:version-21.0.0
 railway add -s neo4j -i neo4j:5.26-community
 railway add -s clamav -i clamav/clamav-debian:1.4
 
 # Persistent data.
 railway service link minio && railway volume add -m /data
 railway service link neo4j && railway volume add -m /data
+railway service link phoenix && railway volume add -m /data
 
 # Public domains: the web app, and MinIO for the browser's presigned uploads/downloads.
 railway domain -s frontend -p 8080
 railway domain -s minio -p 9000
+railway domain -s phoenix -p 6006
 FRONTEND=$(railway domain list -s frontend --json | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,list) else d.get("domains") or d.get("serviceDomains") or []; print((d[0].get("domain") if isinstance(d[0],dict) else d[0]))')
 MINIO_HOST=$(railway domain list -s minio --json | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,list) else d.get("domains") or d.get("serviceDomains") or []; print((d[0].get("domain") if isinstance(d[0],dict) else d[0]))')
-echo "frontend: https://$FRONTEND   minio: https://$MINIO_HOST"
+PHOENIX_HOST=$(railway domain list -s phoenix --json | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,list) else d.get("domains") or d.get("serviceDomains") or []; print((d[0].get("domain") if isinstance(d[0],dict) else d[0]))')
+echo "frontend: https://$FRONTEND   minio: https://$MINIO_HOST   phoenix: https://$PHOENIX_HOST"
 
 set_vars() { service=$1; shift; railway variable set -s "$service" --skip-deploys "$@" >/dev/null; }
 
@@ -36,6 +40,7 @@ backend_common() {
   set_vars "$1" \
     "SPAT_ENVIRONMENT=production" "DATABASE_URL=$DB" 'CELERY_BROKER_URL=${{Redis.REDIS_URL}}' \
     "MINIO_ENDPOINT=minio.railway.internal:9000" "MINIO_SECURE=false" \
+    "PHOENIX_ENDPOINT=http://phoenix.railway.internal:6006" 'PHOENIX_API_KEY=${{phoenix.PHOENIX_ADMIN_SECRET}}' \
     "MINIO_PUBLIC_ENDPOINT=$MINIO_HOST" "MINIO_PUBLIC_SECURE=true" \
     'MINIO_ACCESS_KEY=${{minio.MINIO_ROOT_USER}}' 'MINIO_SECRET_KEY=${{minio.MINIO_ROOT_PASSWORD}}' \
     "NEO4J_URI=bolt://neo4j.railway.internal:7687" "NEO4J_USER=neo4j" 'NEO4J_PASSWORD=${{neo4j.GRAPH_PASSWORD}}' \
@@ -51,8 +56,7 @@ backend_common() {
       'OCR_INTERNAL_API_TOKEN=${{api.OCR_INTERNAL_API_TOKEN}}' 'MINIO_WEBHOOK_AUTH_TOKEN=${{api.MINIO_WEBHOOK_AUTH_TOKEN}}' \
       'STUDY_RENDER_TOKEN=${{api.STUDY_RENDER_TOKEN}}' \
       'LLM_API_KEY=${{api.LLM_API_KEY}}' 'LLM_MODEL=${{api.LLM_MODEL}}' 'LLM_BASE_URL=${{api.LLM_BASE_URL}}' \
-      'LANGFUSE_PUBLIC_KEY=${{api.LANGFUSE_PUBLIC_KEY}}' 'LANGFUSE_SECRET_KEY=${{api.LANGFUSE_SECRET_KEY}}' \
-      'LANGFUSE_BASE_URL=${{api.LANGFUSE_BASE_URL}}' 'LANGFUSE_PROMPT_LABEL=${{api.LANGFUSE_PROMPT_LABEL}}' \
+      'PHOENIX_PROMPT_TAG=${{api.PHOENIX_PROMPT_TAG}}' \
       'SMTP_HOST=${{api.SMTP_HOST}}' 'SMTP_PORT=${{api.SMTP_PORT}}' 'SMTP_USERNAME=${{api.SMTP_USERNAME}}' \
       'SMTP_PASSWORD=${{api.SMTP_PASSWORD}}' 'SMTP_FROM=${{api.SMTP_FROM}}' 'SMTP_STARTTLS=${{api.SMTP_STARTTLS}}' \
       'RESEND_API_KEY=${{api.RESEND_API_KEY}}' 'MAIL_FROM=${{api.MAIL_FROM}}'
@@ -63,6 +67,7 @@ API_DF=deploy/local/docker/Dockerfile.api
 WORKER_DF=deploy/local/docker/Dockerfile.worker
 backend_common api
 set_vars api "RAILWAY_DOCKERFILE_PATH=$API_DF" "SPAT_ROLE=api" "RUN_MIGRATIONS=true" "BIND_HOST=::" "PORT=8000" \
+  "PHOENIX_PROMPT_TAG=production" \
   "RAILWAY_HEALTHCHECK_PATH=/ready"
 backend_common scheduler
 set_vars scheduler "RAILWAY_DOCKERFILE_PATH=$API_DF" "SPAT_ROLE=scheduler"
@@ -73,6 +78,9 @@ done
 
 set_vars frontend "RAILWAY_DOCKERFILE_PATH=deploy/railway/Dockerfile.frontend" "PORT=8080" \
   "API_UPSTREAM=api.railway.internal:8000"
+set_vars phoenix "PORT=6006" "PHOENIX_PORT=6006" "PHOENIX_HOST=::" \
+  "PHOENIX_ENABLE_AUTH=true" "PHOENIX_USE_SECURE_COOKIES=true" \
+  "PHOENIX_WORKING_DIR=/data" "RAILWAY_HEALTHCHECK_PATH=/healthz"
 set_vars potential-engine "RAILWAY_DOCKERFILE_PATH=deploy/local/docker/Dockerfile.potential-engine" \
   "BIND_HOST=::" "PORT=8080"
 set_vars ocr "RAILWAY_DOCKERFILE_PATH=deploy/local/docker/Dockerfile.ocr" "BIND_HOST=::" "PORT=8080" \

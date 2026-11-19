@@ -152,14 +152,20 @@ conflictos y formula preguntas. Sus propuestas se validan contra citas literales
 de la fuente y permanecen sujetas a revisión; el constructor las persiste en el
 grafo junto con las preguntas y las versiones exactas de los prompts.
 
-Los prompts de ejecución se leen desde Langfuse con la etiqueta configurada en
-`LANGFUSE_PROMPT_LABEL` (por defecto `production`). Los archivos bajo
-`prompts/langfuse/` son semillas: configura credenciales Langfuse en `.env` y
-ejecuta `make sync-prompts` para crear nuevas versiones bajo la etiqueta
-`staging`; promuévelas a `production` en Langfuse cuando estén revisadas. Luego
+Los prompts de ejecución se leen desde una instancia autoalojada de Arize Phoenix
+usando la etiqueta configurada en `PHOENIX_PROMPT_TAG` (por defecto `production`).
+Cada versión del prompt también define `model_name`: ese es el modelo usado por el
+agente que carga esa versión. Para cambiarlo, edita el modelo en Phoenix, guarda una
+nueva versión y asigna `production`; se aplica después de la caché de hasta cinco minutos.
+El cliente LLM sigue usando el proveedor y endpoint configurados en la aplicación.
+Los archivos bajo `prompts/phoenix/` son semillas: configura `PHOENIX_ENDPOINT`
+y, si la instancia lo requiere, `PHOENIX_API_KEY` en `.env`; ejecuta
+`make sync-prompts` para crear nuevas versiones bajo la etiqueta `staging` y
+promuévelas a `production` en Phoenix cuando estén revisadas. Sin acceso a Phoenix,
+los agentes usan las semillas del repositorio como respaldo. Luego
 configura `LLM_API_KEY` y `LLM_MODEL` (opcional: `LLM_BASE_URL` para una API
-compatible); con `DOCUMENT_AGENTS_ENABLED=auto` se activarán cuando estén las
-credenciales de Langfuse y del proveedor LLM. Se pueden fijar
+compatible); con `DOCUMENT_AGENTS_ENABLED=auto` se activarán cuando estén el
+endpoint de Phoenix y las credenciales del proveedor LLM. Se pueden fijar
 versiones individuales con `DOCUMENT_EXTRACTOR_PROMPT_VERSION` y
 `DOCUMENT_CONSOLIDATOR_PROMPT_VERSION`. Usa `DOCUMENT_AGENTS_ENABLED=false`
 para desactivarlos o `true` para exigirlos. Sin credenciales, Celery conserva la

@@ -1,4 +1,4 @@
-"""Langfuse-prompted extraction and consolidation agents for document ingestion.
+"""Phoenix-prompted extraction and consolidation agents for document ingestion.
 
 The extractor reads the source only through bounded search/read tools and returns a
 payload in the versioned extraction contract; it never writes to Neo4j. The consolidator
@@ -29,19 +29,24 @@ def enabled() -> bool:
         return True
     if setting in {"false", "0", "no"}:
         return False
-    return all(os.getenv(key) for key in (
-        "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LLM_API_KEY"
-    ))
+    return bool((os.getenv("PHOENIX_ENDPOINT") or os.getenv("PHOENIX_COLLECTOR_ENDPOINT"))
+                and os.getenv("LLM_API_KEY"))
 
 
-def model_name() -> str:
-    return os.getenv("LLM_MODEL", "gpt-4o-mini")
+def model_name(prompt: tuple | None = None) -> str:
+    """Use Phoenix's model selection, with the configured LLM model as fallback."""
+    selected = getattr(prompt[1], "model_name", None) if prompt else None
+    return selected or os.getenv("LLM_MODEL", "gpt-4o-mini")
 
 
 def load_prompts() -> dict:
     """Prompts del extractor y consolidador con su versión (forman parte del ID de ejecución)."""
-    extractor = _load_prompt("DOCUMENT_EXTRACTOR_PROMPT_NAME", "spat-document-extractor")
-    consolidator = _load_prompt("DOCUMENT_CONSOLIDATOR_PROMPT_NAME", "spat-document-consolidator")
+    from src.infrastructure.agents.runtime import read_prompt_seed
+
+    extractor = _load_prompt("DOCUMENT_EXTRACTOR_PROMPT_NAME", "spat-document-extractor",
+                             fallback=read_prompt_seed("document-extractor.md"))
+    consolidator = _load_prompt("DOCUMENT_CONSOLIDATOR_PROMPT_NAME", "spat-document-consolidator",
+                                fallback=read_prompt_seed("document-consolidator.md"))
     return {
         "extractor": extractor,
         "consolidator": consolidator,
@@ -50,8 +55,9 @@ def load_prompts() -> dict:
             "extractor_prompt_version": extractor[1].version,
             "consolidator_prompt_name": consolidator[0],
             "consolidator_prompt_version": consolidator[1].version,
-            "prompt_label": os.getenv("LANGFUSE_PROMPT_LABEL", "production"),
-            "model": model_name(),
+            "prompt_label": os.getenv("PHOENIX_PROMPT_TAG", "production"),
+            "model": model_name(extractor),
+            "consolidator_model": model_name(consolidator),
         },
     }
 
@@ -149,7 +155,7 @@ def run_llm_extraction(source, rule_payload: dict, filename: str, prompts: dict,
 
     try:
         payload = _run_tool_agent(
-            client, model_name(),
+            client, model_name(prompts["extractor"]),
             [*extractor_messages, {"role": "user", "content": json.dumps({
                 "filename": filename,
                 "schema_version": SCHEMA_VERSION,
@@ -207,7 +213,7 @@ def run_llm_consolidation(source, claims: list, questions: list, project_context
     )
     try:
         result = _run_tool_agent(
-            client, model_name(),
+            client, model_name(prompts["consolidator"]),
             [*consolidator_messages, {"role": "user", "content": json.dumps({
                 "filename": filename,
                 "claims": [_claim_brief(claim) for claim in claims],

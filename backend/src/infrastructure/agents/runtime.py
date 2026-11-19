@@ -1,42 +1,56 @@
-"""Shared LLM runtime for SPAT agents: OpenAI-compatible client, Langfuse prompts and a
+"""Shared LLM runtime for SPAT agents: OpenAI-compatible client, Phoenix prompts and a
 bounded ReAct tool loop. Used by document ingestion and by the grounding design agent."""
 
 import json
+import logging
 import os
+from copy import deepcopy
 from functools import lru_cache
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+def read_prompt_seed(filename: str) -> str:
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "prompts" / "phoenix" / filename
+        if candidate.exists():
+            return candidate.read_text()
+    raise FileNotFoundError(filename)
 
 
 @lru_cache
 def clients():
-    from langfuse import get_client
     from openai import OpenAI
 
-    langfuse = get_client()
+    from src.infrastructure.agents.phoenix_prompt_catalog import PhoenixPromptCatalog
+
     options = {"api_key": os.environ["LLM_API_KEY"]}
     if os.getenv("LLM_BASE_URL"):
         options["base_url"] = os.environ["LLM_BASE_URL"]
-    return langfuse, OpenAI(**options)
+    return PhoenixPromptCatalog(), OpenAI(**options)
 
 
 def load_prompt(name_env: str, default_name: str, fallback: str | None = None):
-    """Chat prompt from Langfuse; `fallback` (a system prompt) is used if it is not published."""
-    langfuse, _ = clients()
+    """Load a Phoenix chat prompt; use the checked-in seed if Phoenix is unavailable."""
+    catalog, _ = clients()
     name = os.getenv(name_env, default_name)
-    label = os.getenv("LANGFUSE_PROMPT_LABEL", "production")
+    tag = os.getenv("PHOENIX_PROMPT_TAG", "production")
     version_env = name_env.replace("NAME", "VERSION")
-    version = os.getenv(version_env)
-    kwargs = {
-        "label": label,
-        "type": "chat",
-        "cache_ttl_seconds": int(os.getenv("LANGFUSE_PROMPT_CACHE_SECONDS", "300")),
-    }
-    if version:
-        kwargs.pop("label")
-        kwargs["version"] = int(version)
-    if fallback is not None:
-        kwargs["fallback"] = [{"role": "system", "content": fallback}]
-    prompt = langfuse.get_prompt(name, **kwargs)
-    return name, prompt, prompt.compile()
+    version_id = os.getenv(version_env)
+    try:
+        prompt = catalog.load(name, tag=tag, version_id=version_id)
+        return name, prompt, deepcopy(prompt.messages)
+    except Exception:
+        if fallback is None:
+            raise
+        logger.warning("Could not load prompt %s from Phoenix; using the checked-in seed", name,
+                       exc_info=True)
+        from src.application.ports.prompt_catalog import PromptSnapshot
+
+        prompt = PromptSnapshot(name=name, version="local", messages=[{"role": "system",
+                                                                          "content": fallback}])
+        return name, prompt, deepcopy(prompt.messages)
 
 
 def tool(name: str, description: str, properties: dict, required: list[str]):

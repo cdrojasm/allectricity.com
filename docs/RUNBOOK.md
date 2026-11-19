@@ -52,7 +52,8 @@ make smoke-local
 2. MinIO (fuentes, PDF de estudios, logos): volumen con snapshot programado o réplica a un bucket S3 externo
    (`mc mirror`). Sin esto, un fallo del volumen pierde los documentos originales.
 3. Neo4j: reconstruible desde los documentos; respaldar su volumen reduce el tiempo de recuperación.
-4. Secretos: fuera del repositorio y de la imagen (BL-05); guardar una copia en el gestor de secretos del equipo.
+4. Phoenix: respaldar el volumen persistente; guarda las versiones y etiquetas de prompts de producción.
+5. Secretos: fuera del repositorio y de la imagen (BL-05); guardar una copia en el gestor de secretos del equipo.
 
 ## 3. Incidentes frecuentes
 
@@ -62,7 +63,7 @@ make smoke-local
 | Un ingeniero no puede crear proyectos | Su cuenta solo tiene el rol `viewer` | Invitarlo desde **Usuarios** (asigna `designer`) o `POST /api/v1/user-roles`. |
 | Un ingeniero no recibe el enlace de acceso | Correo mal configurado o worker `mail` caído | Producción: `MAIL_PROVIDER=resend`, `RESEND_API_KEY`, `MAIL_FROM` de un dominio verificado; logs del `mail-worker` (un fallo a los 20 s exactos = conexión bloqueada; Railway bloquea SMTP fuera de Pro). «Reenviar enlace» en **Usuarios**. Local: Mailpit en `/mailpit/`. |
 | Corridas del agente en espera mucho tiempo | Worker `agent` caído o LLM sin respuesta | `/api/v1/system/queues`; reiniciar el worker; revisar `LLM_*`. |
-| Logs con «Returning fallback prompt … label 'staging'» | `LANGFUSE_PROMPT_LABEL` apunta a una etiqueta sin prompts publicados | Usar `production` o publicar los prompts con `make sync-prompts` en esa etiqueta. Mientras tanto se usan los prompts locales. |
+| El agente carga un prompt local en lugar del publicado | `PHOENIX_PROMPT_TAG` no existe para ese prompt o Phoenix no responde | Usar `production`, comprobar `PHOENIX_ENDPOINT` y revisar los logs del worker. Si no hay conexión, se usa la semilla local. |
 | El optimizador dice «Optimización bloqueada» | No hay perfil normativo revisado fijado al proyecto | Correcto mientras T0 siga abierto: solo un especialista puede publicar el perfil revisado. |
 | Estudio público devuelve 404 | Proyecto borrado o estudio revocado/expirado | El diálogo de borrado ya lo advierte; republicar desde «Compartir estudio». |
 

@@ -32,7 +32,7 @@ api = [
   "neo4j>=5.26,<7",
   "pillow>=10,<13",
 ]
-agent = ["langfuse>=4,<5", "openai>=1.68,<3"]
+agent = ["arize-phoenix-client>=3,<4", "openai>=1.68,<3"]
 documents = [
   "pypdf>=5.0,<7",
   "pypdfium2>=4.30,<6",
@@ -41,7 +41,7 @@ documents = [
   "python-docx>=1.1,<2",
   "pillow>=10,<13",
   "neo4j>=5.26,<7",
-  "langfuse>=4,<5",
+  "arize-phoenix-client>=3,<4",
   "openai>=1.68,<3",
   "ezdxf>=1.3",
 ]

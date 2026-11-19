@@ -12,10 +12,14 @@ Desde la raíz del repositorio, con `railway login` hecho:
    volúmenes de MinIO y Neo4j, los dominios públicos (frontend y MinIO) y todas las variables que no son
    secretas. Los procesos backend referencian los secretos del servicio `api` (`${{api.X}}`).
 2. `sh deploy/railway/secrets.sh [.env]`: **lo corre el dueño de las credenciales.** Genera los secretos
-   internos sin mostrarlos y copia LLM, Langfuse y correo (`RESEND_API_KEY`, `MAIL_FROM`) desde el `.env`
+   internos sin mostrarlos y copia LLM y correo (`RESEND_API_KEY`, `MAIL_FROM`) desde el `.env`
    indicado. **Vuelve a generar todos los secretos internos**: no se repite sobre un proyecto en uso (la
    contraseña de Neo4j queda fijada en su volumen); para cambiar una clave externa usar
    `printf '%s' valor | railway variable set -s api --stdin CLAVE`.
+
+   Para agregar Phoenix a un proyecto Railway existente, usa una sola vez
+   `sh deploy/railway/add-phoenix.sh` desde la raíz con el proyecto correcto enlazado. Crea el servicio
+   autenticado, genera sus secretos, conecta los workers y reinicia ambos workers.
 
    Correo: Railway bloquea el SMTP saliente por debajo del plan Pro, así que producción usa la API HTTPS de
    Resend (`MAIL_PROVIDER=resend`). `MAIL_FROM` debe ser de un dominio verificado en Resend. En local sigue
@@ -38,6 +42,16 @@ arrancar (`minio-start.sh`), y el frontend genera su configuración de nginx con
 - `frontend`: build Node multietapa y runtime Nginx con los estáticos compilados.
 
 El motor mantiene el protocolo de cálculo existente por stdin/stdout internamente; API y worker lo consumen por `POST /v1/calculate`. En local se usa la misma topología para detectar temprano diferencias con Railway.
+
+Phoenix es otro servicio autoalojado, con autenticación, volumen persistente y dominio propio. Los workers
+consumen su API privada con `PHOENIX_ADMIN_SECRET`; el dominio público se usa para editar y promover prompts
+en la interfaz. El primer ingreso usa `admin@localhost` / `admin` y obliga a cambiar la contraseña. En local,
+abre `http://localhost:6006` (la instancia de desarrollo no exige login).
+
+En cada versión del prompt, `model_name` selecciona el modelo que ejecutará ese agente. Para cambiarlo,
+edita el modelo en Phoenix, guarda una nueva versión y asígnale `production`. El cambio llega a los workers
+en un máximo aproximado de cinco minutos por caché. Phoenix selecciona el nombre del modelo; la clave y el
+proveedor siguen viniendo de `LLM_API_KEY` y `LLM_BASE_URL`.
 
 ## Configuración Railway
 

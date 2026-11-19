@@ -32,7 +32,7 @@ y siempre queda sujeto a revisión de un profesional competente.
   en modo consulta. El agente **actúa con los permisos del usuario que lo activó**,
   nunca con más.
 - **Proyecto** existente con una conversación (`conversations`).
-- Proveedor LLM y Langfuse configurados (mismo patrón que `document_agents.py`:
+- Proveedor LLM y Arize Phoenix configurados (mismo patrón que `document_agents.py`:
   `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`, prompts por nombre/label). Si no lo están,
   el agente responde con un mensaje explícito y no simula trabajo.
 - **Presupuesto** de tokens activo del usuario (`budget`). Sin presupuesto, el run no arranca.
@@ -235,7 +235,7 @@ event: timeout                                data: {"run_id", "status"}   → c
 ## 7. Subagentes
 
 Arquitectura **orquestador + especialistas**. Cada subagente es un bucle ReAct acotado
-(reutiliza `_run_tool_agent`) con su propio prompt Langfuse, su propio subconjunto de
+(reutiliza `_run_tool_agent`) con su propio prompt Phoenix, su propio subconjunto de
 herramientas y una herramienta final que devuelve un resultado estructurado.
 **Los subagentes no escriben el artefacto:** devuelven propuestas (parches tipados +
 justificación + evidencia); solo el orquestador las aplica al borrador.
@@ -320,8 +320,7 @@ autorizadas con el actor del run, y registran `tool.called` cuando son relevante
 5. **Idempotencia:** `agent_run_step` es seguro ante reentrega (`task_acks_late=True`):
    cada paso tiene id y estado; un paso ya completado no se repite; los commits
    usan `base_version`; los eventos se insertan con id determinista por paso.
-6. **Observabilidad:** cada run es una traza Langfuse con spans por subagente y
-   herramienta; `run_id` en logs; nombre y versión de cada prompt guardados en el run.
+6. **Observabilidad:** `run_id` en logs; nombre y versión de cada prompt guardados en el run.
 7. **Seguridad:** prompt injection desde documentos — el contenido de archivos y
    claims se pasa como datos delimitados, nunca como instrucciones; las herramientas
    validan permisos y rutas en backend sin confiar en el LLM.
@@ -342,14 +341,14 @@ backend/src/application/ports/
 backend/src/application/use_cases/
     grounding_design_agent.py   # orquestación: paso a paso, reanudación, límites
 backend/src/infrastructure/agents/
-    runtime.py        # cliente OpenAI-compatible + Langfuse (extraer de document_agents)
+    runtime.py        # cliente OpenAI-compatible + puerto de prompts Phoenix
     tools.py          # implementación de herramientas §8
     subagents.py      # definición de subagentes: prompt, herramientas, salida
 backend/src/infrastructure/entrypoint/api/agent_routes.py
 backend/src/infrastructure/entrypoint/worker/tasks.py   # spat.agent_run_step; resolve_chat_message crea el run
 backend/migrations/versions/0010_agent_runs.py           # agent_runs, agent_events, agent_conversation_state,
                                                          # origin en artefacto_diseno_tierras
-prompts/langfuse/agent-orchestrator.md, agent-input-collector.md, agent-soil-modeler.md,
+prompts/phoenix/agent-orchestrator.md, agent-input-collector.md, agent-soil-modeler.md,
                  agent-grid-designer.md, agent-safety-analyst.md, agent-compliance-reviewer.md
 app/src/components/ProjectChatWorkspace.jsx               # timeline de eventos, preguntas, propuestas
 ```
@@ -395,7 +394,7 @@ la orquestación vive en el caso de uso y las rutas solo autorizan y delegan.
 | AG-04 | P0 · ◐ (runtime compartido y modelo por subagente; falta descontar `budget`) | Runtime LLM compartido | Extraer cliente/prompt/bucle ReAct de `document_agents.py` a `agents/runtime.py` sin romper la ingesta; modelo por subagente (§14) con respaldo en `LLM_MODEL`; contabilidad de tokens contra `budget` | — |
 | AG-05 | P0 · ◐ (borrador, procedencia, validación, propuesta y versión; faltan herramientas de cálculo, documentos y grafo) | Herramientas del artefacto | §8 lectura, borrador, validación, procedencia por campo y regla de datos críticos, commit con concurrencia optimista; criterios 6–9 | AG-02 |
 | AG-06 | P0 · ◐ (pasos reanudables, espera de usuario, cancelación; falta espera de cálculo y plan) | Orquestador reanudable | `spat.agent_run_step`, inbox, suspensión por cálculo y por pregunta, cancelación, límites; criterios 2, 4, 10, 11 | AG-03, AG-04, AG-05 |
-| AG-07 | P0 · ◐ (orquestador, diseñador de malla y modelador de suelo; faltan recolector, seguridad y normativo) | Subagentes MVP 1–5 | Prompts Langfuse sincronizados (`sync_langfuse_prompts.py`), herramientas por subagente, salida estructurada; criterio 12 con LLM falso | AG-06 |
+| AG-07 | P0 · ◐ (orquestador, diseñador de malla y modelador de suelo; faltan recolector, seguridad y normativo) | Subagentes MVP 1–5 | Prompts Phoenix sincronizados (`sync_phoenix_prompts.py`), herramientas por subagente, salida estructurada; criterio 12 con LLM falso | AG-06 |
 | AG-08 | P1 · ✅ | Modo asistido | Propuestas con diff, aprobar/rechazar; criterio 5 | AG-06 |
 | AG-09 | P1 · ◐ (progreso en el chat, tarjeta de propuesta, vista de la malla; falta timeline completo y SSE en el cliente) | Frontend | Timeline de eventos del run, plan con pasos, preguntas con opciones, tarjetas de propuesta con diff, enlace a la versión creada, cancelar | AG-03, AG-08 |
 | AG-10 | P1 | Confirmación de datos críticos | Integrar con la bandeja de BL-15; criterio 7 | AG-07, BL-15 |
@@ -490,5 +489,5 @@ interpreta, decide la siguiente herramienta y redacta.
   agente funciona sin configuración extra.
 - Si un subagente en `nano` falla de forma recurrente en la evaluación (AG-11), se
   sube solo ese a `mini`; la decisión se toma con métricas, no a priori.
-- El modelo y la versión del prompt de cada llamada quedan en el run y en Langfuse.
+- El modelo y la versión del prompt de cada llamada quedan en el run; Phoenix conserva el historial editable.
 - Verificar disponibilidad y precio vigentes en OpenAI al implementar AG-04.

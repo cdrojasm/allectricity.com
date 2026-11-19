@@ -22,7 +22,7 @@ se sobrescribe silenciosamente con otra extracción.
   imágenes PNG/JPEG, con localizadores. Admite reintento, reconciliación y
   reprocesamiento.
 - Un extractor ReAct, que navega el documento por segmentos con herramientas, y
-  un consolidador opcional usan Langfuse y un proveedor LLM compatible con
+  un consolidador opcional usan Arize Phoenix y un proveedor LLM compatible con
   OpenAI. Sus salidas pasan validación determinista de contrato, cita, evidencia
   y localizador. Cada ejecución registra tokens, coste y límites.
 - El pipeline persiste ejecuciones y afirmaciones idempotentes en Neo4j. La UI
@@ -164,7 +164,7 @@ estrategia de extracción. Los códigos son estables y no se reutilizan.
 | Validación contra la fuente | `backend/src/domain/knowledge_graph/validation.py` |
 | Consolidación determinista (duplicados, conflictos, alias) | `backend/src/domain/knowledge_graph/consolidation.py` |
 | Parseo con localizadores (PDF/OCR, CSV, XLSX, DOCX, imagen) | `backend/src/infrastructure/processing/document_sources.py` |
-| Reglas y agentes LLM en el contrato | `processing/rule_extraction.py`, `processing/document_agents.py`, `prompts/langfuse/` |
+| Reglas y agentes LLM en el contrato | `processing/rule_extraction.py`, `processing/document_agents.py`, `prompts/phoenix/` |
 | Orquestación del pipeline | `processing/knowledge_extraction.py` (invocado desde `spat.scan_file_upload`) |
 | Neo4j: migraciones, escritura atómica, lecturas | `backend/src/infrastructure/persistence/knowledge_graph_store.py` |
 | Revisión humana y API | `application/use_cases/knowledge_review.py`, `entrypoint/api/knowledge_graph_routes.py` (`/api/v1/projects/{id}/knowledge-graph/...`) |

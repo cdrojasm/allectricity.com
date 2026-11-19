@@ -1,9 +1,9 @@
 #!/bin/sh
-# Local backup of the three data stores and a non-destructive restore check.
-#   scripts/backup_local.sh backup            → backups/<UTC stamp>/ with postgres.dump, minio-data.tgz, neo4j-data.tgz
+# Local backup of the data stores and a non-destructive restore check.
+#   scripts/backup_local.sh backup            → backups/<UTC stamp>/ with postgres.dump and service data archives
 #   scripts/backup_local.sh verify [dir]      → restores postgres.dump into a temporary database, compares the table
 #                                               row counts with the live database and drops it; checks the archives.
-# PostgreSQL is dumped consistently (pg_dump). MinIO and Neo4j are copied from their volumes while running:
+# PostgreSQL is dumped consistently (pg_dump). MinIO, Neo4j and Phoenix are copied from their volumes while running:
 # good for a local stack; Neo4j Community has no online backup, and the graph can be rebuilt by reprocessing
 # the documents. Production backups are described in docs/RUNBOOK.md.
 set -eu
@@ -17,11 +17,11 @@ backup() {
   dir="backups/$stamp"
   mkdir -p "$dir"
   docker exec "$PG" sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$dir/postgres.dump"
-  for store in minio neo4j; do
+  for store in minio neo4j phoenix; do
     docker run --rm --user 0 --entrypoint tar -v "grounding-design-ai-$store-data:/data:ro" -v "$PWD/$dir:/backup" \
       "$HELPER_IMAGE" -czf "/backup/$store-data.tgz" -C /data .
   done
-  (cd "$dir" && shasum -a 256 postgres.dump minio-data.tgz neo4j-data.tgz > SHA256SUMS)
+  (cd "$dir" && shasum -a 256 postgres.dump minio-data.tgz neo4j-data.tgz phoenix-data.tgz > SHA256SUMS)
   echo "Respaldo listo: $dir"
   ls -lh "$dir"
 }
@@ -35,7 +35,7 @@ verify() {
   dir=${dir%/}
   [ -n "$dir" ] && [ -f "$dir/postgres.dump" ] || { echo "No hay respaldo para verificar"; exit 1; }
   (cd "$dir" && shasum -a 256 -c SHA256SUMS)
-  for archive in minio-data.tgz neo4j-data.tgz; do tar -tzf "$dir/$archive" > /dev/null; done
+  for archive in minio-data.tgz neo4j-data.tgz phoenix-data.tgz; do tar -tzf "$dir/$archive" > /dev/null; done
   scratch="restore_check_$(date +%s)"
   docker exec "$PG" sh -c "createdb -U \"\$POSTGRES_USER\" $scratch"
   trap 'docker exec "$PG" sh -c "dropdb -U \"\$POSTGRES_USER\" --if-exists '"$scratch"'" >/dev/null' EXIT

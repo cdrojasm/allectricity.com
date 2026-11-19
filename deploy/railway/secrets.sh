@@ -2,7 +2,7 @@
 # Sets the secrets of the Railway project. Run it YOURSELF (the owner of the credentials), after setup.sh:
 #   sh deploy/railway/secrets.sh [path/to/.env]
 # - Internal secrets (JWT, mail encryption, MinIO, Neo4j, service tokens) are generated here and never printed.
-# - Third-party keys (LLM, Langfuse, SMTP) are copied from the given .env (default: ./.env); missing ones are
+# - Third-party keys (LLM, SMTP) are copied from the given .env (default: ./.env); missing ones are
 #   reported so you can set them with `railway variable set -s api KEY=...`.
 # Values travel through stdin, so they do not appear in the process list or in the shell history.
 set -eu
@@ -24,11 +24,14 @@ put minio MINIO_ROOT_PASSWORD "$(rand 32)"
 # it refuse to start), so the password lives in GRAPH_PASSWORD and NEO4J_AUTH references it.
 put neo4j GRAPH_PASSWORD "$(rand 24)"
 railway variable set -s neo4j --skip-deploys 'NEO4J_AUTH=neo4j/${{GRAPH_PASSWORD}}' >/dev/null
+put phoenix PHOENIX_SECRET "$(rand 48)"
+put phoenix PHOENIX_ADMIN_SECRET "$(rand 48)"
+railway service redeploy -s phoenix -y >/dev/null
 
 # A variable exported in this shell wins over the .env file (e.g. SMTP_* of a real provider).
 value_of() { eval "exported=\${$1:-}"; [ -n "$exported" ] && printf '%s' "$exported" || from_env "$1"; }
 missing=""
-for key in LLM_API_KEY LLM_MODEL LLM_BASE_URL LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY LANGFUSE_BASE_URL \
+for key in LLM_API_KEY LLM_MODEL LLM_BASE_URL \
            RESEND_API_KEY MAIL_FROM; do
   value=$(value_of "$key")
   if [ -n "$value" ]; then put api "$key" "$value"; else missing="$missing $key"; fi
@@ -41,7 +44,7 @@ case "$smtp_host" in
        value=$(value_of "$key"); [ -n "$value" ] && put api "$key" "$value" || missing="$missing $key"
      done ;;
 esac
-put api LANGFUSE_PROMPT_LABEL "${LANGFUSE_PROMPT_LABEL:-production}"
+put api PHOENIX_PROMPT_TAG "production"
 put api SMTP_STARTTLS "true"
 
 echo "Secretos internos generados y claves copiadas desde $ENV_FILE."

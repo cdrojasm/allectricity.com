@@ -18,7 +18,7 @@ COPY backend/src /app/src
 COPY backend/migrations /app/migrations
 COPY backend/alembic.ini /app/alembic.ini
 COPY prompts /app/prompts
-COPY scripts/sync_langfuse_prompts.py /app/scripts/sync_langfuse_prompts.py
+COPY scripts/sync_phoenix_prompts.py /app/scripts/sync_phoenix_prompts.py
 
 # Each *-deps stage installs only third-party packages: the stub package lets pip resolve the extras,
 # then the project itself is installed from the real sources with --no-deps.

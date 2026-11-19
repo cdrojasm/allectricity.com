@@ -35,7 +35,7 @@ help:
 	  '  smoke-ui-sweep Delete leftover zz-smoke-* projects through the GUI' \
 	  '  smoke-local    Verify frontend, health per component and templates (temporary viewer)' \
 	  '  templates      Regenerate the soil-resistivity templates seeded into MinIO' \
-	  '  sync-prompts   Publish new Langfuse prompt versions with the staging label' \
+	  '  sync-prompts   Publish prompt seeds as new Phoenix versions tagged staging' \
 	  '  eval-extraction Evaluate document extraction against the gold set (ARGS=...)'
 
 .PHONY: local-up local-down local-build test lint
@@ -92,7 +92,7 @@ create-admin:
 	$(COMPOSE) exec api python -m src.infrastructure.entrypoint.bootstrap_admin
 
 sync-prompts:
-	$(COMPOSE) run --rm --no-deps agent-worker python scripts/sync_langfuse_prompts.py
+	$(COMPOSE) run --rm --no-deps agent-worker python scripts/sync_phoenix_prompts.py
 
 eval-extraction:
 	$(COMPOSE) run --rm --no-deps -v "$(CURDIR):/workspace" -w /workspace --entrypoint python document-worker scripts/evaluate_extraction.py $(ARGS)

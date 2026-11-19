@@ -23,6 +23,7 @@ x-backend: &backend
     NEO4J_URI: bolt://neo4j:7687
     NEO4J_USER: ${NEO4J_USER:-neo4j}
     NEO4J_PASSWORD: ${NEO4J_PASSWORD:-local-neo4j-password-change-me}
+    PHOENIX_ENDPOINT: http://phoenix:6006
 
 x-worker: &worker
   env_file:
@@ -42,8 +43,27 @@ x-worker: &worker
     NEO4J_URI: bolt://neo4j:7687
     NEO4J_USER: ${NEO4J_USER:-neo4j}
     NEO4J_PASSWORD: ${NEO4J_PASSWORD:-local-neo4j-password-change-me}
+    PHOENIX_ENDPOINT: http://phoenix:6006
 
 services:
+  phoenix:
+    container_name: grounding-design-ai-phoenix
+    image: arizephoenix/phoenix:version-21.0.0
+    environment:
+      PHOENIX_HOST: 0.0.0.0
+      PHOENIX_ENABLE_AUTH: ${PHOENIX_ENABLE_AUTH:-false}
+      PHOENIX_WORKING_DIR: /data
+    ports:
+      - "127.0.0.1:${PHOENIX_PORT:-6006}:6006"
+    volumes:
+      - phoenix-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:6006/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   ocr:
     container_name: grounding-design-ai-ocr
     build:
@@ -239,6 +259,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      phoenix:
+        condition: service_healthy
     restart: unless-stopped
 
   document-worker:
@@ -252,6 +274,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      phoenix:
+        condition: service_healthy
       minio-init:
         condition: service_completed_successfully
       clamav:
@@ -374,6 +398,8 @@ volumes:
     name: grounding-design-ai-minio-data
   neo4j-data:
     name: grounding-design-ai-neo4j-data
+  phoenix-data:
+    name: grounding-design-ai-phoenix-data
 
 networks:
   default:

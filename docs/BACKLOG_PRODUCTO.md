@@ -69,7 +69,7 @@ Lo que ya existe y el papel que toma en el producto nuevo.
 | Formularios de mediciones, suelo y parámetros; gráfica de ajuste | `GroundingCalculations.jsx`, `SoilFitChart` | Editores dentro de las secciones del Nivel 1 |
 | Vista de malla, resultados, mapa de potencial, 3D | `ArtifactGrid`, `AgentResultsPanel`, `SurfacePotentialMap`, `Surface3D.jsx` | Nivel 2 y bloques del estudio |
 | Carga presignada, cuarentena, OCR, rasterizado de PDF | `file_routes.py`, `services/ocr`, `pypdfium2` | Fuentes, logo del estudio, plano de fondo |
-| Prompts por nombre en Langfuse + cliente LLM | `document_agents.py`, `design_agent.py` | Párrafos con IA del estudio, lectura del plano |
+| Prompts versionados en Arize Phoenix + cliente LLM | `document_agents.py`, `design_agent.py` | Párrafos con IA del estudio, lectura del plano |
 | Evaluación de extracción | `domain/knowledge_graph/evaluation.py`, `processing/extraction_evaluation.py`, `docs/documentos_prueba` | Medir la interrogación antes de mostrarla |
 | Celery + MinIO | `worker/tasks.py`, `storage/object_storage.py` | Generación y almacenamiento del PDF |
 | Playwright (ya en `devDependencies`) | `app/package.json` | Render HTML → PDF desde la misma vista web |
