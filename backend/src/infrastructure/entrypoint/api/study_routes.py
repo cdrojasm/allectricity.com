@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from src.domain.agent.patches import unconfirmed_critical
+from src.infrastructure.agents import uow
 from src.infrastructure.security.middleware import require
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/studies", tags=["studies"])
@@ -349,15 +350,17 @@ def generate_study_section(project_id: str, study_id: str, section_id: str, data
     if not study or not artifact: raise HTTPException(404, "Study or artifact not found")
     from src.infrastructure.agents.calculation_summary import summarize
     outcome = summarize(latest) if latest else None
+    work = uow.UnitOfWork("spat-study-writer", uow.WorkContext(
+        user_id=actor.user_id, project_id=project_id, session_id=f"study:{study_id}",
+        entity=f"study:{study_id}:{section_id}"), store=request.app.state.services.store)
     try:
-        from src.infrastructure.agents import llm_provider
-        from src.infrastructure.agents.runtime import clients
-        _, client = clients()
-        response = client.chat.completions.create(model=llm_provider.model(os.getenv("STUDY_WRITER_MODEL")), temperature=0.2, max_tokens=500, messages=[
-            {"role": "system", "content": "Escribe un párrafo técnico breve en español para un estudio de puesta a tierra. No inventes valores: si faltan datos, dilo explícitamente. Si se entrega un resultado de cálculo, es la fuente de verdad: cita su veredicto (cumple / no cumple) tal cual y nunca digas que faltan resultados. No uses identificadores internos ni ids; nombra el proyecto por su título. Devuelve solo el párrafo."},
+        work.require_capacity()
+        response = work.complete([
             {"role": "user", "content": f"Sección: {section_id}. Proyecto: {(project or {}).get('name') or study['title']}. Título del estudio: {study['title']}. Artefacto: {artifact['snapshot']}. Resultado del cálculo fijado: {outcome if outcome else 'sin cálculo para esta versión'}. Instrucción: {data.instruction or 'Resume esta sección para un revisor técnico.'}"},
-        ])
+        ], temperature=0.2, max_tokens=500)
         text = _plain_codes((response.choices[0].message.content or "").strip())
+    except uow.BudgetUnavailable as exc:
+        raise HTTPException(402, exc.message) from exc
     except Exception as exc:
         raise HTTPException(503, "El generador de texto no está disponible") from exc
     if outcome and outcome["verdict"] in {"cumple", "no_cumple"} and _denies_results(text):

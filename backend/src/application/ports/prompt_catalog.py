@@ -1,6 +1,6 @@
 """Application contract for loading immutable, versioned chat prompts."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 
@@ -10,6 +10,8 @@ class PromptSnapshot:
     version: str
     messages: list[dict[str, str]]
     model_name: str | None = None
+    # Invocation parameters saved on the prompt version (temperature, max_tokens, ...).
+    parameters: dict = field(default_factory=dict)
 
 
 class PromptCatalog(Protocol):

@@ -6,15 +6,10 @@ from pathlib import Path
 from phoenix.client import Client
 from phoenix.client.types import PromptVersion
 
+from src.infrastructure.agents.uow import APPLICATIONS
 
-PROMPTS = {
-    "spat-document-extractor": "document-extractor.md",
-    "spat-document-consolidator": "document-consolidator.md",
-    "spat-agent-orchestrator": "agent-orchestrator.md",
-    "spat-agent-grid-designer": "agent-grid-designer.md",
-    "spat-agent-soil-modeler": "agent-soil-modeler.md",
-    "spat-agent-safety-analyst": "agent-safety-analyst.md",
-}
+# One Phoenix prompt per unit-of-work application (name → checked-in seed).
+PROMPTS = APPLICATIONS
 
 
 def main() -> None:

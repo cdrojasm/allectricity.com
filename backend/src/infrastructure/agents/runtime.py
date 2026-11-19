@@ -1,10 +1,8 @@
-"""Shared LLM runtime for SPAT agents: OpenAI-compatible client, Phoenix prompts and a
-bounded ReAct tool loop. Used by document ingestion and by the grounding design agent."""
+"""Shared LLM runtime: OpenRouter client, Phoenix prompt catalog, seeds and the bounded ReAct tool loop.
+Invocations go through uow.UnitOfWork, which adds Phoenix configuration, tracing and budget debits."""
 
 import json
 import logging
-import os
-from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
 
@@ -25,28 +23,6 @@ def clients():
     from src.infrastructure.agents.phoenix_prompt_catalog import PhoenixPromptCatalog
 
     return PhoenixPromptCatalog(), llm_provider.client()
-
-
-def load_prompt(name_env: str, default_name: str, fallback: str | None = None):
-    """Load a Phoenix chat prompt; use the checked-in seed if Phoenix is unavailable."""
-    catalog, _ = clients()
-    name = os.getenv(name_env, default_name)
-    tag = os.getenv("PHOENIX_PROMPT_TAG", "production")
-    version_env = name_env.replace("NAME", "VERSION")
-    version_id = os.getenv(version_env)
-    try:
-        prompt = catalog.load(name, tag=tag, version_id=version_id)
-        return name, prompt, deepcopy(prompt.messages)
-    except Exception:
-        if fallback is None:
-            raise
-        logger.warning("Could not load prompt %s from Phoenix; using the checked-in seed", name,
-                       exc_info=True)
-        from src.application.ports.prompt_catalog import PromptSnapshot
-
-        prompt = PromptSnapshot(name=name, version="local", messages=[{"role": "system",
-                                                                          "content": fallback}])
-        return name, prompt, deepcopy(prompt.messages)
 
 
 def tool(name: str, description: str, properties: dict, required: list[str]):
@@ -70,24 +46,28 @@ class TokenLimitExceeded(RuntimeError):
 
 
 def run_tool_agent(client, model, messages, tools, handlers, final_tool, finalize, usage,
-                    max_rounds=10, max_tokens=None):
+                    max_rounds=10, max_tokens=None, parameters=None, on_response=None):
     """Bucle ReAct acotado. `finalize(args)` devuelve (terminado, respuesta para el agente).
 
     Si el modelo responde con texto en lugar de herramientas se le recuerda la herramienta
     final, y en la última ronda se le obliga a llamarla. `max_tokens` corta el bucle cuando
-    los tokens acumulados en `usage` lo superan.
+    los tokens acumulados en `usage` lo superan. `parameters` (temperatura, etc.) viene del
+    prompt en Phoenix; `on_response(response)` se llama tras cada respuesta del modelo.
+    Úsalo a través de `uow.UnitOfWork.run_tools`, que cobra y traza cada llamada.
     """
     reminders = 0
     for round_number in range(max_rounds):
         forced = round_number == max_rounds - 1 or reminders >= 2
         response = client.chat.completions.create(
+            **{"temperature": 0, **(parameters or {})},
             model=model,
             messages=messages,
             tools=tools,
             tool_choice=({"type": "function", "function": {"name": final_tool}}
                          if forced else "auto"),
-            temperature=0,
         )
+        if on_response is not None:
+            on_response(response)
         usage["rounds"] += 1
         if getattr(response, "usage", None):
             prompt_tokens = response.usage.prompt_tokens or 0

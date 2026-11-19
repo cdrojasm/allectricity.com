@@ -475,19 +475,19 @@ Proveedor OpenAI (cliente OpenAI-compatible existente). Se privilegia costo: el
 trabajo numérico lo hacen las herramientas deterministas, así que el LLM solo
 interpreta, decide la siguiente herramienta y redacta.
 
-| Subagente | Modelo | Variable de entorno | Motivo |
+| Subagente | Modelo sugerido | Aplicación (prompt en Phoenix) | Motivo |
 |---|---|---|---|
-| Orquestador | `gpt-5-mini` | `AGENT_ORCHESTRATOR_MODEL` | Planificación y uso de herramientas en varios pasos; redacta la respuesta |
-| Recolector de datos | `gpt-5-mini` | `AGENT_INPUT_COLLECTOR_MODEL` | Lee documentos y cruza fuentes; un error aquí contamina todo el diseño |
-| Modelador de suelo | `gpt-5-nano` | `AGENT_SOIL_MODELER_MODEL` | Llama al ajuste y compara RMS/incertidumbre; poco razonamiento |
-| Diseñador de malla y conductor | `gpt-5-mini` | `AGENT_GRID_DESIGNER_MODEL` | Decide qué ajustar según la restricción dominante |
-| Analista de seguridad | `gpt-5-nano` | `AGENT_SAFETY_ANALYST_MODEL` | Interpreta un resultado ya estructurado (cumple/no cumple, márgenes) |
-| Revisor normativo | `gpt-5-nano` | `AGENT_COMPLIANCE_REVIEWER_MODEL` | Copia evidencia a criterios con reglas deterministas detrás |
-| Resumen de memoria de conversación | `gpt-5-nano` | `AGENT_SUMMARY_MODEL` | Resumen rodante al cierre del run |
+| Orquestador | `gpt-5-mini` | `spat-agent-orchestrator` | Planificación y uso de herramientas en varios pasos; redacta la respuesta |
+| Modelador de suelo | `gpt-5-nano` | `spat-agent-soil-modeler` | Llama al ajuste y compara RMS/incertidumbre; poco razonamiento |
+| Diseñador de malla y conductor | `gpt-5-mini` | `spat-agent-grid-designer` | Decide qué ajustar según la restricción dominante |
+| Analista de seguridad | `gpt-5-nano` | `spat-agent-safety-analyst` | Interpreta un resultado ya estructurado (cumple/no cumple, márgenes) |
 
-- Cada variable cae en `OPENROUTER_MODEL` si no está definida, así el agente funciona
-  sin configuración extra. Un nombre sin proveedor (`gpt-5-nano`) se envía a OpenRouter
-  como `openai/gpt-5-nano`.
+- Cada subagente es una unidad de trabajo (`agents/uow.py`): su prompt, modelo y temperatura se
+  editan en Phoenix. Si el prompt no trae modelo se usa `OPENROUTER_MODEL`; un nombre sin
+  proveedor (`gpt-5-nano`) se envía a OpenRouter como `openai/gpt-5-nano`.
+- Cada respuesta del modelo se descuenta de la bolsa del usuario bajo el id de la aplicación y queda
+  trazada en Phoenix: el paso del agente (`spat-agent-step`) agrupa al orquestador, sus subagentes y
+  sus herramientas, con usuario, proyecto y conversación como sesión.
 - Si un subagente en `nano` falla de forma recurrente en la evaluación (AG-11), se
   sube solo ese a `mini`; la decisión se toma con métricas, no a priori.
 - El modelo y la versión del prompt de cada llamada quedan en el run; Phoenix conserva el historial editable.

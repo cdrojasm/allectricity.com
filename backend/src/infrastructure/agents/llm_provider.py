@@ -4,7 +4,7 @@ Variables:
 - OPENROUTER_API_KEY   key (required).
 - OPENROUTER_MODEL     default model, e.g. `openai/gpt-4.1` (required).
 - OPENROUTER_BASE_URL  optional; only to point at a local stub in smoke tests.
-Per-task overrides (AGENT_*_MODEL, PLAN_VISION_MODEL, STUDY_WRITER_MODEL, MATERIAL_CATALOG_*_MODEL) keep working.
+Each application chooses its model in its Phoenix prompt (see uow.py); OPENROUTER_MODEL is the fallback.
 """
 
 import os

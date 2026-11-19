@@ -972,4 +972,5 @@ def test_agent_with_budget_left_runs_and_debits_its_usage(chat):
         used = db.one("budget", id=budget["id"])["used_tokens"]
         ledger = db.many("budget_usage", budget_id=budget["id"], limit=None)
     assert used > 0 and sum(row["total_tokens"] for row in ledger) == used
-    assert {row["action"] for row in ledger} == {"grounding_design_agent"}
+    # Each model response is charged by its unit of work, under the application id.
+    assert {row["action"] for row in ledger} == {"spat-agent-orchestrator"}

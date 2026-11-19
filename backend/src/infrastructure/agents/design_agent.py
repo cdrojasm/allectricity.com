@@ -11,7 +11,6 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass
 from time import time
 
 from pydantic import TypeAdapter, ValidationError
@@ -35,7 +34,8 @@ from src.domain.spat.grid_geometry import (
 from src.domain.knowledge_graph.artifact_mapping import map_claims_to_artifact
 from src.domain.knowledge_graph.conflict_resolution import resolve_conflicts
 from src.domain.agent.run import AgentMode
-from src.infrastructure.agents import llm_provider, runtime
+from src.application.ports.prompt_catalog import PromptSnapshot
+from src.infrastructure.agents import llm_provider, runtime, uow
 from src.infrastructure.entrypoint.api.schemas import (
     ArtifactFaultRequest, ArtifactGeometryRequest, ArtifactSoilLayerRequest, GroundingArtifactRequest,
     GroundingConductorRequest, PotentialCalculationRequest,
@@ -70,23 +70,28 @@ def enabled() -> bool:
     return llm_provider.configured()
 
 
-def model_for(env: str, prompt_model: str | None = None) -> str:
-    """Use the model saved on the active Phoenix prompt version when available."""
-    return llm_provider.model(prompt_model, os.getenv(env))
+# Each subagent is a unit-of-work application: its prompt, model and parameters live in Phoenix.
+AGENT_APPLICATIONS = {
+    "orchestrator": "spat-agent-orchestrator",
+    "grid_designer": "spat-agent-grid-designer",
+    "soil_modeler": "spat-agent-soil-modeler",
+    "safety_analyst": "spat-agent-safety-analyst",
+}
 
 
-@dataclass(frozen=True)
-class AgentPrompt:
-    messages: list[dict]
-    model_name: str | None = None
+def run_context(run: dict) -> uow.WorkContext:
+    """Traces of one conversation share a session; usage is charged to the user who started the run."""
+    return uow.WorkContext(user_id=run.get("created_by"), project_id=run.get("project_id"),
+                           session_id=run.get("conversation_id") or run.get("id"),
+                           entity=f"agent_run:{run.get('id')}")
 
 
-def _prompt_messages(prompt) -> list[dict]:
-    return prompt.messages if isinstance(prompt, AgentPrompt) else prompt
-
-
-def _prompt_model(prompt) -> str | None:
-    return prompt.model_name if isinstance(prompt, AgentPrompt) else None
+def _work(key: str, client, prompts: dict, workspace) -> uow.UnitOfWork:
+    prompt = prompts[key]
+    if isinstance(prompt, (list, tuple)):  # a plain message list (tests, callers without Phoenix)
+        prompt = PromptSnapshot(name=AGENT_APPLICATIONS[key], version="injected", messages=list(prompt))
+    return uow.UnitOfWork(AGENT_APPLICATIONS[key], run_context(getattr(workspace, "run", None) or {}),
+                          client=client, prompt=prompt, store=getattr(workspace, "store", None))
 
 
 def max_design_iterations() -> int:
@@ -182,27 +187,9 @@ def reconcile_final_response(text: str, applied: dict | None, rejected: list | N
     return text
 
 
-def _prompt_file(name: str) -> str:
-    return runtime.read_prompt_seed(name)
-
-
 def load_prompts() -> dict:
-    """System prompts from Phoenix, falling back to the checked-in seeds."""
-    prompts = {}
-    for key, env, name, file in (
-        ("orchestrator", "AGENT_ORCHESTRATOR_PROMPT_NAME", "spat-agent-orchestrator", "agent-orchestrator.md"),
-        ("grid_designer", "AGENT_GRID_DESIGNER_PROMPT_NAME", "spat-agent-grid-designer", "agent-grid-designer.md"),
-        ("soil_modeler", "AGENT_SOIL_MODELER_PROMPT_NAME", "spat-agent-soil-modeler", "agent-soil-modeler.md"),
-        ("safety_analyst", "AGENT_SAFETY_ANALYST_PROMPT_NAME", "spat-agent-safety-analyst", "agent-safety-analyst.md"),
-    ):
-        seed = _prompt_file(file)
-        snapshot = None
-        try:
-            _, snapshot, messages = runtime.load_prompt(env, name, fallback=seed)
-        except Exception:
-            messages = [{"role": "system", "content": seed}]
-        prompts[key] = AgentPrompt(messages, getattr(snapshot, "model_name", None))
-    return prompts
+    """System prompts from Phoenix (one per subagent application), falling back to the checked-in seeds."""
+    return {key: uow.load_prompt(application) for key, application in AGENT_APPLICATIONS.items()}
 
 
 def _errors(exc: ValidationError) -> list[str]:
@@ -880,8 +867,7 @@ def _field_guide() -> dict:
 
 def run_grid_designer(client, prompts, workspace: ArtifactWorkspace, task: str, usage: dict) -> dict:
     """Subagent: returns geometry/conductor changes and applies them to the draft."""
-    prompt = prompts["grid_designer"]
-    messages = [*_prompt_messages(prompt), {"role": "user", "content": json.dumps({
+    messages = [{"role": "user", "content": json.dumps({
         "task": task, "draft": workspace.get_draft(), "fields": _field_guide()}, ensure_ascii=False)}]
     submit = runtime.tool("submit_grid_design", "Return the field changes for the grid and conductor.", {
         "changes": {"type": "array", "items": {"type": "object", "properties": {
@@ -923,11 +909,10 @@ def run_grid_designer(client, prompts, workspace: ArtifactWorkspace, task: str, 
         outcome.update(result, rationale=args.get("rationale", ""))
         return not result["errors"], result
 
-    runtime.run_tool_agent(client, model_for("AGENT_GRID_DESIGNER_MODEL", _prompt_model(prompt)), messages, tools,
-                           {"get_draft": workspace.get_draft, "explode_grid": workspace.explode_grid,
-                            "clip_zone": workspace.clip_zone, "grid_in_areas": workspace.grid_in_areas},
-                           "submit_grid_design", finalize, usage,
-                           max_rounds=DESIGNER_ROUNDS)
+    _work("grid_designer", client, prompts, workspace).run_tools(
+        messages, tools, {"get_draft": workspace.get_draft, "explode_grid": workspace.explode_grid,
+                          "clip_zone": workspace.clip_zone, "grid_in_areas": workspace.grid_in_areas},
+        "submit_grid_design", finalize, usage, max_rounds=DESIGNER_ROUNDS)
     assumptions = [path for path in outcome.get("applied", [])
                    if (workspace.provenance.get(path) or {}).get("kind") == "assumption"]
     geometry = workspace.draft.get("geometry") or {}
@@ -989,8 +974,7 @@ def run_soil_modeler(client, prompts, workspace: ArtifactWorkspace, task: str, u
                 "preview_table": workspace.preview_table, "stage_from_table": workspace.stage_from_table,
                 "stage_from_message": workspace.stage_from_message, "stage_from_artifact": workspace.stage_from_artifact,
                 "fit_soil": workspace.fit_soil, "lookup_soil_material": workspace.lookup_material}
-    prompt = prompts["soil_modeler"]
-    messages = [*_prompt_messages(prompt), {"role": "user", "content": json.dumps({
+    messages = [{"role": "user", "content": json.dumps({
         "task": task, "recent_user_messages": workspace.user_messages(), "soil": workspace.soil_state(),
         "files": workspace.list_tables()["files"]},
         ensure_ascii=False)}]
@@ -1001,8 +985,8 @@ def run_soil_modeler(client, prompts, workspace: ArtifactWorkspace, task: str, u
         outcome.update(result, rationale=args.get("rationale", ""), layer_notes=args.get("layer_notes") or [])
         return "error" not in result, result
 
-    runtime.run_tool_agent(client, model_for("AGENT_SOIL_MODELER_MODEL", _prompt_model(prompt)), messages, tools, handlers,
-                           "submit_soil_model", finalize, usage, max_rounds=SOIL_ROUNDS)
+    _work("soil_modeler", client, prompts, workspace).run_tools(
+        messages, tools, handlers, "submit_soil_model", finalize, usage, max_rounds=SOIL_ROUNDS)
     return outcome
 
 
@@ -1012,14 +996,13 @@ def run_safety_analyst(client, prompts, workspace: ArtifactWorkspace, result: di
     snapshot = workspace.draft
     context = {"calculation": result, "geometry": snapshot.get("geometry"), "soil_layers": snapshot.get("soil_layers"),
                "fault": snapshot.get("fault"), "conductor": snapshot.get("conductor")}
-    prompt = prompts["safety_analyst"]
-    messages = [*_prompt_messages(prompt), {"role": "user", "content": json.dumps(context, ensure_ascii=False)}]
+    messages = [{"role": "user", "content": json.dumps(context, ensure_ascii=False)}]
     submit = runtime.tool("submit_safety_report", "Explain the result and recommend the next actions.", {
         "explanation": {"type": "string"}, "dominant_constraint": {"type": "string"},
         "recommendations": {"type": "array", "items": {"type": "string"}}},
         ["explanation", "dominant_constraint", "recommendations"])
-    report = runtime.run_tool_agent(client, model_for("AGENT_SAFETY_ANALYST_MODEL", _prompt_model(prompt)), messages, [submit], {},
-                                    "submit_safety_report", lambda args: (True, {"ok": True}), usage, max_rounds=3)
+    report = _work("safety_analyst", client, prompts, workspace).run_tools(
+        messages, [submit], {}, "submit_safety_report", lambda args: (True, {"ok": True}), usage, max_rounds=3)
     return {"verdict": result.get("verdict"), "summary": result, **report}
 
 
@@ -1038,37 +1021,23 @@ class GroundingDesignAgent:
         workspace = ArtifactWorkspace(self.store, runs, run, storage=self._storage)
         usage = runtime.new_usage()
         try:
-            return self._orchestrate(client, prompts, workspace, run, runs, usage)
+            # Every unit of work of the step (orchestrator, subagents) nests under this span and is charged
+            # to the user's budget by the unit itself.
+            with uow.scope("spat-agent-step", run_context(run)):
+                return self._orchestrate(client, prompts, workspace, run, runs, usage)
         finally:
             runs.add_usage(run["id"], {"prompt_tokens": usage["prompt_tokens"],
                                        "completion_tokens": usage["completion_tokens"],
                                        "llm_rounds": usage["rounds"]})
-            step = (run.get("usage") or {}).get("steps", 1)
-            for model, counts in usage.get("models", {}).items():
-                try:
-                    Budgets(self.store).consume_agent_usage(
-                        run["created_by"], run["project_id"], run["id"], step, model,
-                        counts["prompt_tokens"], counts["completion_tokens"],
-                    )
-                except Exception:
-                    logger.exception("Could not debit agent token usage for run %s", run["id"])
 
     def _budget_block(self, run, runs) -> StepOutcome | None:
-        """Stop before calling the model when the user's token budget cannot pay for a step.
-
-        With budgets, a step needs AGENT_MIN_STEP_TOKENS left in one of them (otherwise its usage could not be
-        debited at all). Without any budget the agent runs unless AGENT_REQUIRE_BUDGET=true (pilot cost control).
-        """
-        capacity = Budgets(self.store).agent_capacity(run["created_by"])
-        minimum = int(os.getenv("AGENT_MIN_STEP_TOKENS", "2000"))
-        required = os.getenv("AGENT_REQUIRE_BUDGET", "false").lower() in {"1", "true", "yes"}
-        if capacity["budgets"] and capacity["remaining"] >= minimum:
+        """Stop before calling the model when the user's token budget cannot pay for a step (Budgets.llm_block)."""
+        block = Budgets(self.store).llm_block(run["created_by"])
+        if block is None:
             return None
-        if not capacity["budgets"] and not required:
-            return None
-        reason = "budget_exhausted" if capacity["budgets"] else "budget_required"
+        capacity, minimum = {"budgets": block["budgets"], "remaining": block["remaining"]}, block["minimum"]
         runs.progress(run["id"], EventType.STEP_COMPLETED, "Sin tokens disponibles para el agente",
-                      level=EventLevel.WARNING, payload={"reason": reason, **capacity, "minimum": minimum})
+                      level=EventLevel.WARNING, payload=block)
         if capacity["budgets"]:
             return StepOutcome(f"No puedo seguir: tu bolsa de tokens tiene {capacity['remaining']:,} disponibles y "
                                f"cada paso del agente necesita al menos {minimum:,}. Pide al administrador que la "
@@ -1161,9 +1130,7 @@ class GroundingDesignAgent:
             if loop is not None:
                 return loop
             context["design_loop"] = self._design_loop_context(run, finished, best_candidate)
-        orchestrator_prompt = prompts["orchestrator"]
-        messages = [*_prompt_messages(orchestrator_prompt),
-                    {"role": "system", "content": "Context: " + json.dumps(context, ensure_ascii=False) +
+        messages = [{"role": "system", "content": "Context: " + json.dumps(context, ensure_ascii=False) +
                      "\nConstruction rule: when artifact_inputs contain confirmed values, build in this order: "
                      "map inputs, delegate soil_modeler for resistivity readings, delegate grid_designer for geometry, "
                      "apply the resulting draft, then request_potential_calculation. Do not ask the user to retype "
@@ -1309,8 +1276,8 @@ class GroundingDesignAgent:
             workspace.rejected_changes.clear()
             return True, {"ok": True}
 
-        result = runtime.run_tool_agent(client, model_for("AGENT_ORCHESTRATOR_MODEL", _prompt_model(orchestrator_prompt)), messages, tools, handlers,
-                                        "respond_to_user", finalize, usage, max_rounds=ORCHESTRATOR_ROUNDS)
+        result = _work("orchestrator", client, prompts, workspace).run_tools(
+            messages, tools, handlers, "respond_to_user", finalize, usage, max_rounds=ORCHESTRATOR_ROUNDS)
         text = str(result.get("text") or "").strip() or "Listo."
         if workspace.queued_calculation:
             # A queued calculation always suspends the run until its worker finishes.

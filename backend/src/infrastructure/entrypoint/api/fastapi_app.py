@@ -47,10 +47,17 @@ def create_app(settings=None, services=None):
     async def lifespan(app):
         validate_endpoint_policies(app)
         app.state.services = services or build_services(settings or Settings.from_env())
+        if services is None:
+            from src.infrastructure.agents import telemetry
+
+            telemetry.setup("api")  # traces of the units of work; a no-op without PHOENIX_ENDPOINT
         try:
             yield
         finally:
             if services is None:
+                from src.infrastructure.agents import telemetry
+
+                telemetry.flush()
                 app.state.services.store.engine.dispose()
 
     app = FastAPI(title="SPAT Design Agent", version="0.2.0", lifespan=lifespan)

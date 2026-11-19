@@ -14,10 +14,9 @@ from src.domain.knowledge_graph.contract import (
 )
 from src.domain.knowledge_graph.taxonomy import taxonomy_summary
 from src.domain.knowledge_graph.validation import validate_extraction
-from src.infrastructure.agents import llm_provider
+from src.infrastructure.agents import llm_provider, uow
 from src.infrastructure.agents.runtime import (
-    clients as _clients, load_prompt as _load_prompt, new_usage as _new_usage,
-    TokenLimitExceeded, run_tool_agent as _run_tool_agent, tool as _tool,
+    clients as _clients, new_usage as _new_usage, TokenLimitExceeded, tool as _tool,
 )
 
 MAX_SUBMISSIONS = 3
@@ -34,33 +33,30 @@ def enabled() -> bool:
                 and llm_provider.configured())
 
 
-def model_name(prompt: tuple | None = None) -> str:
-    """Use Phoenix's model selection, with OPENROUTER_MODEL as fallback."""
-    selected = getattr(prompt[1], "model_name", None) if prompt else None
-    return llm_provider.model(selected)
+APPLICATIONS = {"extractor": "spat-document-extractor", "consolidator": "spat-document-consolidator"}
 
 
 def load_prompts() -> dict:
     """Prompts del extractor y consolidador con su versión (forman parte del ID de ejecución)."""
-    from src.infrastructure.agents.runtime import read_prompt_seed
-
-    extractor = _load_prompt("DOCUMENT_EXTRACTOR_PROMPT_NAME", "spat-document-extractor",
-                             fallback=read_prompt_seed("document-extractor.md"))
-    consolidator = _load_prompt("DOCUMENT_CONSOLIDATOR_PROMPT_NAME", "spat-document-consolidator",
-                                fallback=read_prompt_seed("document-consolidator.md"))
+    extractor = uow.load_prompt(APPLICATIONS["extractor"])
+    consolidator = uow.load_prompt(APPLICATIONS["consolidator"])
     return {
         "extractor": extractor,
         "consolidator": consolidator,
         "meta": {
-            "extractor_prompt_name": extractor[0],
-            "extractor_prompt_version": extractor[1].version,
-            "consolidator_prompt_name": consolidator[0],
-            "consolidator_prompt_version": consolidator[1].version,
+            "extractor_prompt_name": extractor.name,
+            "extractor_prompt_version": extractor.version,
+            "consolidator_prompt_name": consolidator.name,
+            "consolidator_prompt_version": consolidator.version,
             "prompt_label": os.getenv("PHOENIX_PROMPT_TAG", "production"),
-            "model": model_name(extractor),
-            "consolidator_model": model_name(consolidator),
+            "model": llm_provider.model(extractor.model_name),
+            "consolidator_model": llm_provider.model(consolidator.model_name),
         },
     }
+
+
+def _work(key: str, prompts: dict, context: uow.WorkContext | None) -> uow.UnitOfWork:
+    return uow.UnitOfWork(APPLICATIONS[key], context, client=_clients()[1], prompt=prompts[key])
 
 
 def _search(source, query: str, limit: int = 8) -> dict:
@@ -120,10 +116,9 @@ def _document_tools(source):
 
 
 def run_llm_extraction(source, rule_payload: dict, filename: str, prompts: dict,
-                       max_tokens: int | None = None) -> dict:
+                       max_tokens: int | None = None, work_context: uow.WorkContext | None = None) -> dict:
     """Extractor ReAct: devuelve el payload del contrato o errores explícitos."""
-    _, client = _clients()
-    _, _, extractor_messages = prompts["extractor"]
+    work = _work("extractor", prompts, work_context)
     usage, started = _new_usage(), time.monotonic()
     tools, handlers = _document_tools(source)
     parameters = {key: value for key, value in EXTRACTION_SCHEMA.items()
@@ -155,9 +150,8 @@ def run_llm_extraction(source, rule_payload: dict, filename: str, prompts: dict,
         return True, {"accepted": not errors}
 
     try:
-        payload = _run_tool_agent(
-            client, model_name(prompts["extractor"]),
-            [*extractor_messages, {"role": "user", "content": json.dumps({
+        payload = work.run_tools(
+            [{"role": "user", "content": json.dumps({
                 "filename": filename,
                 "schema_version": SCHEMA_VERSION,
                 "taxonomy": taxonomy_summary(),
@@ -196,10 +190,10 @@ def _claim_brief(claim: dict) -> dict:
 
 
 def run_llm_consolidation(source, claims: list, questions: list, project_context: list,
-                          filename: str, prompts: dict, max_tokens: int | None = None) -> dict:
+                          filename: str, prompts: dict, max_tokens: int | None = None,
+                          work_context: uow.WorkContext | None = None) -> dict:
     """El consolidador solo puede marcar revisión y formular preguntas."""
-    _, client = _clients()
-    _, _, consolidator_messages = prompts["consolidator"]
+    work = _work("consolidator", prompts, work_context)
     usage, started = _new_usage(), time.monotonic()
     tools, handlers = _document_tools(source)
     finalize_tool = _tool(
@@ -213,9 +207,8 @@ def run_llm_consolidation(source, claims: list, questions: list, project_context
         ["review_claim_ids", "questions", "summary"],
     )
     try:
-        result = _run_tool_agent(
-            client, model_name(prompts["consolidator"]),
-            [*consolidator_messages, {"role": "user", "content": json.dumps({
+        result = work.run_tools(
+            [{"role": "user", "content": json.dumps({
                 "filename": filename,
                 "claims": [_claim_brief(claim) for claim in claims],
                 "deterministic_questions": [q["question"] for q in questions],

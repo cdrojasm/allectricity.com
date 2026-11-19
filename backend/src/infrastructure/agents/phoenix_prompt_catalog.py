@@ -7,6 +7,10 @@ from functools import lru_cache
 
 from src.application.ports.prompt_catalog import PromptSnapshot
 
+# Sampling knobs that may be tuned from Phoenix. Structure (tools, response_format) stays in the code.
+TUNABLE_PARAMETERS = {"temperature", "top_p", "max_tokens", "max_completion_tokens", "frequency_penalty",
+                      "presence_penalty", "seed", "reasoning_effort"}
+
 
 @lru_cache
 def phoenix_client():
@@ -41,11 +45,15 @@ class PhoenixPromptCatalog:
             tag=None if version_id else tag,
         )
         formatted = prompt.format(sdk="openai")
+        kwargs = dict(getattr(formatted, "kwargs", None) or {})
         snapshot = PromptSnapshot(name=name, version=str(prompt.id or "latest"),
                                   messages=[dict(message) for message in formatted.messages],
                                   # phoenix-client 3.x currently stores this field privately.
                                   model_name=(getattr(prompt, "model_name", None)
-                                              or getattr(prompt, "_model_name", None)))
+                                              or getattr(prompt, "_model_name", None)
+                                              or kwargs.get("model")),
+                                  parameters={key: value for key, value in kwargs.items()
+                                              if key in TUNABLE_PARAMETERS})
         if ttl:
             with self._lock:
                 self._cache[key] = (now + ttl, snapshot)

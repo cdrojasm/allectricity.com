@@ -1,3 +1,5 @@
+import os
+
 from src.application.use_cases.identity import now, uid, audit
 from src.application.use_cases.identity_admin import require_record, privileged
 from src.domain.identity import ServiceError
@@ -77,12 +79,28 @@ class Budgets:
         remaining = max((budget["total_tokens"] - budget["used_tokens"] for budget in budgets), default=0)
         return {"budgets": len(budgets), "remaining": max(0, remaining)}
 
-    def consume_agent_usage(self, user_id, project_id, run_id, step, model, input_tokens, output_tokens):
-        """Debit an agent invocation from the user's active budget, if one has capacity."""
+    def llm_block(self, user_id) -> dict | None:
+        """Why this user may not start an LLM call now, or None when it may.
+
+        With budgets, AGENT_MIN_STEP_TOKENS must be left in one of them (otherwise the usage could not be debited).
+        Without any budget the call goes ahead unless AGENT_REQUIRE_BUDGET=true (pilot cost control).
+        """
+        capacity = self.agent_capacity(user_id)
+        minimum = int(os.getenv("AGENT_MIN_STEP_TOKENS", "2000"))
+        required = os.getenv("AGENT_REQUIRE_BUDGET", "false").lower() in {"1", "true", "yes"}
+        if capacity["budgets"] and capacity["remaining"] >= minimum:
+            return None
+        if not capacity["budgets"] and not required:
+            return None
+        reason = "budget_exhausted" if capacity["budgets"] else "budget_required"
+        return {"reason": reason, **capacity, "minimum": minimum}
+
+    def consume_llm_usage(self, user_id, project_id, action, idempotency_key, model, input_tokens, output_tokens):
+        """Debit one LLM call of `action` (the unit-of-work application) from the user's oldest budget with room."""
         total = int(input_tokens) + int(output_tokens)
         if total <= 0:
             return None
-        key = f"agent:{run_id}:{step}:{model}"[:128]
+        key = str(idempotency_key)[:128]
         with self.store.transaction(write=True) as db:
             candidates = sorted(db.many("budget", user_id=user_id, active=True, limit=None),
                                key=lambda budget: budget["created_at"])
@@ -95,7 +113,7 @@ class Budgets:
                 db.change("budget", budget["id"], used_tokens=budget["used_tokens"] + total)
                 usage = db.add(
                     "budget_usage", id=uid(), budget_id=budget["id"], actor_id=user_id,
-                    project_id=project_id, action="grounding_design_agent", model=model,
+                    project_id=project_id or "", action=str(action)[:120], model=str(model)[:120],
                     input_tokens=int(input_tokens), output_tokens=int(output_tokens), total_tokens=total,
                     idempotency_key=key, created_at=now(),
                 )

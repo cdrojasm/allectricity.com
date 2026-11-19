@@ -42,7 +42,7 @@ class FakeAgents:
                          "consolidator_prompt_version": 1, "prompt_label": "test",
                          "model": "fake-model"}}
 
-    def run_llm_extraction(self, source, rule_payload, filename, prompts, max_tokens=None):
+    def run_llm_extraction(self, source, rule_payload, filename, prompts, max_tokens=None, work_context=None):
         self.extractions += 1
         self.limits.append(max_tokens)
         if self.fail:
@@ -54,7 +54,7 @@ class FakeAgents:
                 "usage": {"rounds": 3}}
 
     def run_llm_consolidation(self, source, claims, questions, context, filename, prompts,
-                              max_tokens=None):
+                              max_tokens=None, work_context=None):
         self.limits.append(max_tokens)
         return {"review_claim_ids": [], "questions": [], "summary": "Resumen de prueba",
                 "usage": {"rounds": 1, "prompt_tokens": 300, "completion_tokens": 50}}

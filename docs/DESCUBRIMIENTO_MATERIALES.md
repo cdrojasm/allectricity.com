@@ -6,10 +6,12 @@ la búsqueda fuera de la petición HTTP. Consulta `GET /api/v1/material-catalog/
 con la misma sesión para obtener `queued`, `running`, `completed` o `failed`; al completar,
 `result` contiene resultados y metadata, y ante un fallo `error` contiene el mensaje. Cada
 trabajo solo puede consultarlo su creador. Requiere sesión autenticada.
-Prioriza Tavily cuando existe `TAVILY_API_KEY`; si no, usa OpenRouter (`OPENROUTER_API_KEY`
-y `OPENROUTER_MODEL`) con su herramienta `openrouter:web_search` y el modelo
-`MATERIAL_CATALOG_SEARCH_MODEL` o `OPENROUTER_MODEL` (si no incluye proveedor, se asume
-`openai/`). Si no hay proveedor elegible, devuelve HTTP 503; nunca simula resultados.
+Prioriza Tavily cuando existe `TAVILY_API_KEY`; si no, usa OpenRouter con su herramienta
+`openrouter:web_search` a través de la unidad de trabajo `spat-material-search`, y Tavily extrae los
+campos con `spat-material-extractor`. Las instrucciones, el modelo y la temperatura de ambas se editan
+en sus prompts de Phoenix (sin modelo en el prompt se usa `OPENROUTER_MODEL`). El uso de tokens se
+descuenta de la bolsa del creador del trabajo; sin tokens, el trabajo termina en `failed` con el motivo.
+Si no hay proveedor elegible, devuelve HTTP 503; nunca simula resultados.
 
 Solicitud:
 
@@ -44,6 +46,5 @@ aparezcan literalmente juntos en el texto. El usuario debe revisar la fuente y r
 una cotización verificable antes de usarla como costo.
 
 Para OpenRouter se reutilizan `OPENROUTER_API_KEY` y `OPENROUTER_MODEL`, los mismos del
-agente; para Tavily configura `TAVILY_API_KEY`. `MATERIAL_CATALOG_SEARCH_MODEL`
-permite elegir otro modelo (por defecto `OPENROUTER_MODEL`). `MATERIAL_CATALOG_SEARCH_URL` permite
+agente; para Tavily configura `TAVILY_API_KEY`. `MATERIAL_CATALOG_SEARCH_URL` permite
 usar un endpoint compatible con Tavily.

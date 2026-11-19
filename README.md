@@ -157,7 +157,11 @@ usando la etiqueta configurada en `PHOENIX_PROMPT_TAG` (por defecto `production`
 Cada versión del prompt también define `model_name`: ese es el modelo usado por el
 agente que carga esa versión. Para cambiarlo, edita el modelo en Phoenix, guarda una
 nueva versión y asigna `production`; se aplica después de la caché de hasta cinco minutos.
-El cliente LLM sigue usando el proveedor y endpoint configurados en la aplicación.
+Toda llamada al LLM pasa por una unidad de trabajo (`backend/src/infrastructure/agents/uow.py`)
+cuyo id es el nombre de su prompt en Phoenix (`spat-agent-orchestrator`, `spat-study-writer`,
+`spat-plan-vision`, `spat-material-assistant`, ...): de ese prompt salen el texto, el modelo y la
+temperatura; cada llamada queda trazada en Phoenix (proyecto `PHOENIX_PROJECT_NAME`) con usuario,
+proyecto y entidad, y su consumo se descuenta de la bolsa de tokens del usuario bajo ese id.
 Los archivos bajo `prompts/phoenix/` son semillas: configura `PHOENIX_ENDPOINT`
 y, si la instancia lo requiere, `PHOENIX_API_KEY` en `.env`; ejecuta
 `make sync-prompts` para crear nuevas versiones bajo la etiqueta `staging` y

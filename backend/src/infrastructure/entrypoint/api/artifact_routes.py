@@ -26,6 +26,7 @@ from src.infrastructure.security.middleware import require
 from src.infrastructure.entrypoint.api.file_routes import storage_client
 from src.infrastructure.processing.measurement_tables import XLSX_MIME, extract, read_table
 from src.infrastructure.processing.dxf_import import import_dxf
+from src.infrastructure.agents import uow
 from src.infrastructure.processing.plan_vision import propose_plan_from_image
 from src.domain.spat.soundings import apparent_resistivity
 
@@ -156,6 +157,17 @@ def attach_plan_background(project_id: str, artifact_id: str, version: int,
         return row
 
 
+def _plan_vision_work(request, actor, project_id: str, artifact_id: str, version: int) -> uow.UnitOfWork:
+    work = uow.UnitOfWork("spat-plan-vision", uow.WorkContext(
+        user_id=actor.user_id, project_id=project_id, session_id=f"artifact:{artifact_id}",
+        entity=f"artifact:{artifact_id}:{version}"), store=request.app.state.services.store)
+    try:
+        work.require_capacity()
+    except uow.BudgetUnavailable as exc:
+        raise HTTPException(402, exc.message) from exc
+    return work
+
+
 @router.post("/{artifact_id}/versions/{version}/plan-proposal")
 def propose_plan(project_id: str, artifact_id: str, version: int, payload: PlanVisionRequest,
                  request: Request, actor=Depends(require("designs:read"))):
@@ -170,7 +182,6 @@ def propose_plan(project_id: str, artifact_id: str, version: int, payload: PlanV
     if upload["expected_mime"] not in {"application/pdf", "image/png", "image/jpeg"}:
         raise HTTPException(415, "Plan proposal requires a PDF, PNG or JPEG source")
     try:
-        from src.infrastructure.agents.runtime import clients
         data = storage_client().read_object(upload["target_bucket"], upload["object_key"], 20 * 1024 * 1024)
         mime_type = upload["expected_mime"]
         source_page = payload.source_page
@@ -191,7 +202,8 @@ def propose_plan(project_id: str, artifact_id: str, version: int, payload: PlanV
             image.save(output, format="PNG", optimize=True)
             data = output.getvalue()
             mime_type = "image/png"
-        proposal = propose_plan_from_image(clients()[1], data, mime_type,
+        proposal = propose_plan_from_image(_plan_vision_work(request, actor, project_id, artifact_id, version),
+                                           data, mime_type,
                                            row["snapshot"].get("geometry") or {})
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -213,7 +225,6 @@ def compare_plan_revision(project_id: str, artifact_id: str, version: int, paylo
     if upload["expected_mime"] not in {"application/pdf", "image/png", "image/jpeg"}:
         raise HTTPException(415, "Plan revision requires a PDF, PNG or JPEG source")
     try:
-        from src.infrastructure.agents.runtime import clients
         import io
         data = storage_client().read_object(upload["target_bucket"], upload["object_key"], 20 * 1024 * 1024)
         mime_type = upload["expected_mime"]
@@ -232,7 +243,8 @@ def compare_plan_revision(project_id: str, artifact_id: str, version: int, paylo
             output = io.BytesIO()
             image.save(output, format="PNG", optimize=True)
             data, mime_type = output.getvalue(), "image/png"
-        proposal = propose_plan_from_image(clients()[1], data, mime_type,
+        proposal = propose_plan_from_image(_plan_vision_work(request, actor, project_id, artifact_id, version),
+                                           data, mime_type,
                                            row["snapshot"].get("geometry") or {})
         previous_geometry = row["snapshot"].get("geometry") or {}
         proposed_geometry = {**previous_geometry, "structures": proposal.get("structures") or []}

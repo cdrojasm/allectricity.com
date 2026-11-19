@@ -17,6 +17,7 @@ from src.domain.knowledge_graph.interrogation import build_interrogation
 from src.domain.knowledge_graph.source import normalized_text
 from src.domain.knowledge_graph.taxonomy import TAXONOMY_VERSION
 from src.domain.knowledge_graph.validation import merge_claims, validate_extraction
+from src.infrastructure.agents import uow
 from src.infrastructure.processing import document_agents
 from src.infrastructure.processing.document_sources import PARSER_VERSION, parse_document
 from src.infrastructure.processing.rule_extraction import rules_extraction
@@ -50,9 +51,14 @@ def extract_knowledge(upload: dict, data: bytes, mime_type: str, graph, agents=d
         # reprocesarlo crea una ejecución nueva (otro ID) con los agentes.
         use_agents = False
         errors.append("límite de tokens LLM del proyecto agotado: extracción solo con reglas")
+    if use_agents and uow.budget_block(upload.get("owner_id")) is not None:
+        use_agents = False
+        errors.append("sin tokens disponibles en la bolsa del usuario: extracción solo con reglas")
     prompts = agents.load_prompts() if use_agents else None
     meta = prompts["meta"] if prompts else {}
     run_id = run_identity(upload, data, meta)
+    work_context = uow.WorkContext(user_id=upload.get("owner_id"), project_id=project_id, session_id=run_id,
+                                   entity=f"upload:{upload.get('id')}")
     if graph is not None and _graph_call(graph.run_exists, run_id):
         return source, {"run_id": run_id, "status": "already_processed"}
 
@@ -65,7 +71,7 @@ def extract_knowledge(upload: dict, data: bytes, mime_type: str, graph, agents=d
     if use_agents:
         try:
             extraction = agents.run_llm_extraction(source, rule_payload, upload.get("filename", ""),
-                                                   prompts, max_tokens=token_limit)
+                                                   prompts, max_tokens=token_limit, work_context=work_context)
         except Exception as exc:
             raise RuntimeError("Document extraction agent failed") from exc
         usage["extractor"] = extraction["usage"]
@@ -95,7 +101,7 @@ def extract_knowledge(upload: dict, data: bytes, mime_type: str, graph, agents=d
         try:
             review = agents.run_llm_consolidation(
                 source, claims, questions, _context(existing), upload.get("filename", ""), prompts,
-                max_tokens=remaining)
+                max_tokens=remaining, work_context=work_context)
         except Exception as exc:
             raise RuntimeError("Document consolidation agent failed") from exc
         usage["consolidator"] = review["usage"]

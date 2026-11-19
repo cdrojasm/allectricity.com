@@ -5,6 +5,7 @@ from email.message import EmailMessage
 from functools import lru_cache
 
 from celery import Celery
+from celery.signals import worker_process_init, worker_process_shutdown
 from src.application.use_cases.identity import now
 from src.application.use_cases.reset_mail import DeliverResetMail
 from src.infrastructure.persistence.identity_store import SQLIdentityStore
@@ -51,6 +52,7 @@ celery_app.conf.update(
 @celery_app.task(name="spat.discover_materials", soft_time_limit=240, time_limit=270)
 def discover_materials_job(job_id):
     """Run bounded supplier discovery and persist a pollable result."""
+    from src.infrastructure.agents import uow
     from src.infrastructure.services import material_catalog_discovery
 
     store = upload_store()
@@ -59,6 +61,12 @@ def discover_materials_job(job_id):
         if not job or job["status"] != "queued":
             return
         db.change("material_discovery_jobs", job_id, status="running", updated_at=int(now()))
+    block = uow.budget_block(job["owner_id"], store)
+    if block is not None:
+        with store.transaction(write=True) as db:
+            db.change("material_discovery_jobs", job_id, status="failed",
+                      error=uow.BudgetUnavailable(block).message, updated_at=int(now()))
+        return
     try:
         request = job["request"]
         result = material_catalog_discovery.discover(
@@ -66,6 +74,8 @@ def discover_materials_job(job_id):
             category=request["category"],
             query=request["query"],
             max_results=int(request.get("max_results", 8)),
+            work_context=uow.WorkContext(user_id=job["owner_id"], project_id=request.get("project_id"),
+                                         session_id=f"material_job:{job_id}", entity=f"material_job:{job_id}"),
         )
         with store.transaction(write=True) as db:
             db.change("material_discovery_jobs", job_id, status="completed", result=result,
@@ -260,6 +270,21 @@ def knowledge_graph():
     from src.infrastructure.persistence.knowledge_graph_store import Neo4jKnowledgeGraph
 
     return Neo4jKnowledgeGraph.from_env()
+
+
+@worker_process_init.connect
+def _start_tracing(**_):
+    """Each prefork child exports its own spans (the batch exporter runs a thread per process)."""
+    from src.infrastructure.agents import telemetry
+
+    telemetry.setup("worker")
+
+
+@worker_process_shutdown.connect
+def _flush_tracing(**_):
+    from src.infrastructure.agents import telemetry
+
+    telemetry.flush()
 
 
 @lru_cache

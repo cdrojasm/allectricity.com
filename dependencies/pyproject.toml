@@ -32,7 +32,9 @@ api = [
   "neo4j>=5.26,<7",
   "pillow>=10,<13",
 ]
-agent = ["arize-phoenix-client>=3,<4", "openai>=1.68,<3"]
+# Phoenix: prompt catalog + traces (OpenTelemetry/OpenInference) of every unit of work.
+agent = ["arize-phoenix-client>=3,<4", "arize-phoenix-otel>=0.17,<1",
+         "openinference-instrumentation-openai>=0.1.75,<0.2", "openai>=1.68,<3"]
 documents = [
   "pypdf>=5.0,<7",
   "pypdfium2>=4.30,<6",
@@ -42,6 +44,8 @@ documents = [
   "pillow>=10,<13",
   "neo4j>=5.26,<7",
   "arize-phoenix-client>=3,<4",
+  "arize-phoenix-otel>=0.17,<1",
+  "openinference-instrumentation-openai>=0.1.75,<0.2",
   "openai>=1.68,<3",
   "ezdxf>=1.3",
 ]

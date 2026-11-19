@@ -24,6 +24,8 @@ FROM runtime-deps AS runtime
 COPY backend/src ./src
 COPY backend/migrations ./migrations
 COPY backend/alembic.ini ./alembic.ini
+# Prompt seeds: fallback of the units of work that run in the API while Phoenix is unreachable.
+COPY prompts ./prompts
 # smoke_local.py runs `python -m scripts.smoke_session` inside this container.
 COPY scripts/smoke_session.py ./scripts/smoke_session.py
 RUN pip install --no-cache-dir --no-deps . && rm -rf build ./*.egg-info
@@ -42,6 +44,8 @@ FROM test-deps AS test
 COPY backend/src ./src
 COPY backend/migrations ./migrations
 COPY backend/alembic.ini ./alembic.ini
+# Prompt seeds: fallback of the units of work that run in the API while Phoenix is unreachable.
+COPY prompts ./prompts
 COPY scripts/smoke_session.py ./scripts/smoke_session.py
 RUN pip install --no-cache-dir --no-deps . && rm -rf build ./*.egg-info && useradd --create-home --uid 10001 spat
 COPY --from=potential-builder /spat-potential-engine /usr/local/bin/spat-potential-engine

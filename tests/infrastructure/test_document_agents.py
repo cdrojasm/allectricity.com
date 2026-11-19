@@ -2,9 +2,15 @@ import copy
 import json
 from types import SimpleNamespace
 
+from src.application.ports.prompt_catalog import PromptSnapshot
 from src.infrastructure.processing import document_agents
 from src.infrastructure.processing.document_sources import DOCX_MIME, parse_document
 from tests.infrastructure.test_knowledge_extraction import LLM_PAYLOAD, MEMORIA
+
+
+
+def _prompt(messages=None):
+    return PromptSnapshot(name="spat-document-extractor", version="test", messages=messages or [])
 
 
 class ScriptedClient:
@@ -33,7 +39,7 @@ def test_extractor_gets_source_validation_feedback_before_finishing(monkeypatch)
     client = ScriptedClient([broken, LLM_PAYLOAD])
     monkeypatch.setattr(document_agents, "_clients", lambda: (None, client))
     source = parse_document(MEMORIA, DOCX_MIME)
-    prompts = {"extractor": ("name", None, [{"role": "system", "content": "x"}])}
+    prompts = {"extractor": _prompt([{"role": "system", "content": "x"}])}
 
     result = document_agents.run_llm_extraction(source, {}, "m.docx", prompts)
 
@@ -50,7 +56,7 @@ def test_last_submission_is_kept_even_with_finding_level_problems(monkeypatch):
     client = ScriptedClient([broken] * document_agents.MAX_SUBMISSIONS)
     monkeypatch.setattr(document_agents, "_clients", lambda: (None, client))
     source = parse_document(MEMORIA, DOCX_MIME)
-    prompts = {"extractor": ("name", None, [])}
+    prompts = {"extractor": _prompt()}
 
     result = document_agents.run_llm_extraction(source, {}, "m.docx", prompts)
 
@@ -63,7 +69,7 @@ def test_token_limit_stops_the_extractor_and_reports_its_usage(monkeypatch):
     client = ScriptedClient([broken] * document_agents.MAX_SUBMISSIONS)
     monkeypatch.setattr(document_agents, "_clients", lambda: (None, client))
     source = parse_document(MEMORIA, DOCX_MIME)
-    prompts = {"extractor": ("name", None, [])}
+    prompts = {"extractor": _prompt()}
 
     result = document_agents.run_llm_extraction(source, {}, "m.docx", prompts, max_tokens=20)
 
@@ -90,7 +96,7 @@ def test_plain_text_answers_get_a_reminder_and_then_a_forced_tool_call(monkeypat
     source = parse_document(MEMORIA, DOCX_MIME)
 
     result = document_agents.run_llm_extraction(source, {}, "m.docx",
-                                                {"extractor": ("name", None, [])})
+                                                {"extractor": _prompt()})
 
     assert result["payload"] == LLM_PAYLOAD
     assert client.requests[1]["tool_choice"] == "auto"
