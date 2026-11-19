@@ -144,9 +144,10 @@ def fake_http(monkeypatch):
     return build
 
 
-def stored_event(client, store, **kwargs):
-    assert notify(client, **kwargs).status_code == 200
-    return rows(store)[-1]["id"]
+def stored_event(client, store, notification_id=1, **kwargs):
+    assert notify(client, notification_id=notification_id, **kwargs).status_code == 200
+    with store.transaction() as db:
+        return db.one("billing_webhook_events", notification_id=str(notification_id))["id"]
 
 
 def test_worker_stores_a_snapshot_without_payer_data(billing, fake_http):
