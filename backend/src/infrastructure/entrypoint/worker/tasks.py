@@ -36,10 +36,14 @@ celery_app.conf.update(
         "spat.render_study_pdf": {"queue": "render"},
         "spat.dispatch_reset_mail": {"queue": "mail"},
         "spat.send_reset_mail": {"queue": "mail"},
+        # Light HTTP lookups against Mercado Pago: served by the mail worker (`-Q mail,billing`).
+        "spat.process_mercadopago_event": {"queue": "billing"},
+        "spat.reconcile_mercadopago_events": {"queue": "billing"},
     },
     beat_schedule={
         "reset-mail-outbox": {"task": "spat.dispatch_reset_mail", "schedule": 15.0},
         "reconcile-file-uploads": {"task": "spat.reconcile_file_uploads", "schedule": 60.0},
+        "reconcile-mercadopago-events": {"task": "spat.reconcile_mercadopago_events", "schedule": 60.0},
     },
 )
 
@@ -470,6 +474,27 @@ def announce_interrogation(store, upload: dict, run: dict) -> None:
                generated_at=now, created_at=now, updated_at=now, status="completed", task_id=None,
                run_id=None, payload=payload, created_ms=now * 1000)
         db.change("conversations", state["id"], updated_at=now)
+
+
+@celery_app.task(name="spat.process_mercadopago_event", bind=True, soft_time_limit=120, time_limit=150)
+def process_mercadopago_event(self, event_id):
+    """Re-read the resource of a stored Mercado Pago notification; transient errors retry with back-off."""
+    from src.infrastructure.billing import events, mercadopago
+
+    try:
+        events.process_event(upload_store(), event_id)
+    except mercadopago.ResourceUnavailable as exc:
+        # Past max_retries the event stays `received` and the reconciler picks it up again.
+        raise self.retry(exc=exc, countdown=min(30 * 2 ** self.request.retries, 900), max_retries=4)
+
+
+@celery_app.task(name="spat.reconcile_mercadopago_events")
+def reconcile_mercadopago_events():
+    """Enqueue notifications whose task was lost (broker down when the webhook arrived, worker restart)."""
+    from src.infrastructure.billing import events
+
+    for event_id in events.stale_events(upload_store()):
+        process_mercadopago_event.delay(event_id)
 
 
 @celery_app.task(name="spat.reconcile_file_uploads")

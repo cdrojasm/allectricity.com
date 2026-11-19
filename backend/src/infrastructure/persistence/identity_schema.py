@@ -473,4 +473,37 @@ rate_limits = Table(
     Column("attempts", BigInteger, nullable=False),
 )
 Index("ix_outbox_pending", mail_outbox.c.sent_at, mail_outbox.c.available_at)
-TABLES = {table.name: table for table in metadata.tables.values()}
+# Inbox of Mercado Pago notifications: the webhook stores the event and answers at once; the billing worker
+# re-reads the notified resource from the API. `dedup_key` makes a redelivered notification a no-op.
+billing_webhook_events = Table(
+    "billing_webhook_events",
+    metadata,
+    key(),
+    Column("provider", String(20), nullable=False),
+    Column("mode", String(10), nullable=False),
+    Column("dedup_key", String(64), nullable=False),
+    Column("topic", String(60), nullable=False),
+    Column("action", String(60)),
+    Column("resource_id", String(64)),
+    Column("notification_id", String(64)),
+    Column("request_id", String(128)),
+    Column("live_mode", Boolean),
+    Column("payload", JSON, nullable=False),
+    Column("status", String(12), nullable=False),
+    Column("attempts", BigInteger, nullable=False, server_default="0"),
+    Column("resource_status", String(40)),
+    Column("resource", JSON),
+    Column("last_error", Text),
+    Column("received_at", BigInteger, nullable=False),
+    Column("updated_at", BigInteger, nullable=False),
+    Column("processed_at", BigInteger),
+    UniqueConstraint("provider", "mode", "dedup_key", name="uq_billing_webhook_event_dedup"),
+    CheckConstraint("mode IN ('test', 'prod')", name="ck_billing_webhook_event_mode"),
+    CheckConstraint("status IN ('received', 'fetched', 'ignored', 'failed')",
+                    name="ck_billing_webhook_event_status"),
+)
+Index("ix_billing_webhook_events_pending", billing_webhook_events.c.status,
+      billing_webhook_events.c.updated_at)
+Index("ix_billing_webhook_events_resource", billing_webhook_events.c.topic,
+      billing_webhook_events.c.resource_id)
+TABLES ={table.name: table for table in metadata.tables.values()}

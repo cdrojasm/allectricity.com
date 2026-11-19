@@ -35,7 +35,7 @@ CMD ["sh", "-c", "case \"${SPAT_ROLE:-api}\" in scheduler) exec celery -A src.in
 
 FROM runtime-deps AS test-deps
 RUN mkdir src && touch src/__init__.py \
-    && pip install --no-cache-dir '.[api,documents,dev]' && pip uninstall -y spat-design-agent \
+    && pip install --no-cache-dir '.[api,documents,billing,dev]' && pip uninstall -y spat-design-agent \
     && rm -rf src build ./*.egg-info
 
 FROM test-deps AS test

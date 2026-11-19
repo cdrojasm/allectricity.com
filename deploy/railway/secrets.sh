@@ -32,7 +32,8 @@ railway service redeploy -s phoenix -y >/dev/null
 value_of() { eval "exported=\${$1:-}"; [ -n "$exported" ] && printf '%s' "$exported" || from_env "$1"; }
 missing=""
 for key in LLM_API_KEY LLM_MODEL LLM_BASE_URL \
-           RESEND_API_KEY MAIL_FROM; do
+           RESEND_API_KEY MAIL_FROM \
+           MP_TEST_ACCESS_TOKEN MP_TEST_WEBHOOK_SECRET MP_PROD_ACCESS_TOKEN MP_PROD_WEBHOOK_SECRET; do
   value=$(value_of "$key")
   if [ -n "$value" ]; then put api "$key" "$value"; else missing="$missing $key"; fi
 done

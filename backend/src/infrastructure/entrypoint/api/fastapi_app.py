@@ -16,6 +16,7 @@ from src.domain.identity import ServiceError
 from src.infrastructure.entrypoint.api.schemas import ProjectRequest
 from src.infrastructure.entrypoint.api.identity_routes import router
 from src.infrastructure.entrypoint.api.file_routes import router as file_router
+from src.infrastructure.entrypoint.api.billing_routes import router as billing_router
 from src.infrastructure.entrypoint.api.chat_routes import router as chat_router
 from src.infrastructure.entrypoint.api.agent_routes import router as agent_router
 from src.infrastructure.entrypoint.api.artifact_routes import catalog_router, router as artifact_router
@@ -56,6 +57,7 @@ def create_app(settings=None, services=None):
     app.add_middleware(AuthenticationMiddleware)
     app.include_router(router)
     app.include_router(file_router)
+    app.include_router(billing_router)
     app.include_router(chat_router)
     app.include_router(agent_router)
     app.include_router(artifact_router)

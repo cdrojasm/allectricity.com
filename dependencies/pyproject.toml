@@ -46,6 +46,8 @@ documents = [
   "ezdxf>=1.3",
 ]
 calculations = []
+# Mercado Pago SDK (requests-based): only the billing worker calls the API.
+billing = ["mercadopago>=3.6,<4"]
 render = ["playwright>=1.50,<2"]
 parsers = ["ezdxf>=1.3"]
 reports = ["reportlab>=4.2", "playwright>=1.50,<2"]

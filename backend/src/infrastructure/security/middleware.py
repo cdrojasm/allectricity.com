@@ -15,7 +15,12 @@ PUBLIC = {
     ("POST", "/api/v1/auth/reset-password"),
 }
 PUBLIC_PREFIXES = ("/api/v1/public/studies/",)
-TRUSTED_WEBHOOKS = {("POST", "/api/v1/files/events/minio")}
+# Each route authenticates its own sender: MinIO with a shared token, Mercado Pago with `x-signature`.
+TRUSTED_WEBHOOKS = {
+    ("POST", "/api/v1/files/events/minio"),
+    ("POST", "/api/v1/billing/mercadopago/webhooks/test"),
+    ("POST", "/api/v1/billing/mercadopago/webhooks/prod"),
+}
 bearer = HTTPBearer(auto_error=False)
 
 
@@ -26,7 +31,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             if path.startswith("/api/"):
                 identity = request.app.state.services.identity
                 if (request.method, path) in TRUSTED_WEBHOOKS:
-                    # The route validates MinIO's shared webhook token.
+                    # The route validates the sender (MinIO token, Mercado Pago signature).
                     pass
                 elif (request.method, path) in PUBLIC or any(path.startswith(prefix) for prefix in PUBLIC_PREFIXES):
                     # Do not trust arbitrary X-Forwarded-For from clients.

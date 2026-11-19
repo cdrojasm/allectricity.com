@@ -323,7 +323,7 @@ services:
       context: ../../..
       dockerfile: deploy/local/docker/Dockerfile.worker
       target: mail-worker
-    command: ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "-Q", "mail"]
+    command: ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "-Q", "mail,billing"]
     depends_on:
       migrate:
         condition: service_completed_successfully
