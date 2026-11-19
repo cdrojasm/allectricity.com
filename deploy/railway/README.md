@@ -12,10 +12,13 @@ Desde la raíz del repositorio, con `railway login` hecho:
    volúmenes de MinIO y Neo4j, los dominios públicos (frontend y MinIO) y todas las variables que no son
    secretas. Los procesos backend referencian los secretos del servicio `api` (`${{api.X}}`).
 2. `sh deploy/railway/secrets.sh [.env]`: **lo corre el dueño de las credenciales.** Genera los secretos
-   internos sin mostrarlos y copia LLM y correo (`RESEND_API_KEY`, `MAIL_FROM`) desde el `.env`
-   indicado. **Vuelve a generar todos los secretos internos**: no se repite sobre un proyecto en uso (la
-   contraseña de Neo4j queda fijada en su volumen); para cambiar una clave externa usar
-   `printf '%s' valor | railway variable set -s api --stdin CLAVE`.
+   internos sin mostrarlos y copia OpenRouter, correo (`RESEND_API_KEY`, `MAIL_FROM`) y Mercado Pago (`MP_*`)
+   desde el `.env` indicado. **Se puede repetir sobre un proyecto en uso**: un secreto interno (JWT, cifrado
+   del correo, MinIO, Neo4j, Phoenix) solo se genera si la variable no existe, y si no puede leer las
+   variables de Railway se detiene sin generar nada. Las claves externas se vuelven a copiar en cada corrida.
+   Los cambios quedan en espera hasta el siguiente deploy.
+3. `sh deploy/railway/cleanup-legacy-vars.sh`: una sola vez, **después** de desplegar el código que lee
+   `OPENROUTER_*`. Borra `LLM_*`, `LANGFUSE_*` y, si el correo va por Resend, `SMTP_*`.
 
    Para agregar Phoenix a un proyecto Railway existente, usa una sola vez
    `sh deploy/railway/add-phoenix.sh` desde la raíz con el proyecto correcto enlazado. Crea el servicio
@@ -50,8 +53,8 @@ abre `http://localhost:6006` (la instancia de desarrollo no exige login).
 
 En cada versión del prompt, `model_name` selecciona el modelo que ejecutará ese agente. Para cambiarlo,
 edita el modelo en Phoenix, guarda una nueva versión y asígnale `production`. El cambio llega a los workers
-en un máximo aproximado de cinco minutos por caché. Phoenix selecciona el nombre del modelo; la clave y el
-proveedor siguen viniendo de `LLM_API_KEY` y `LLM_BASE_URL`.
+en un máximo aproximado de cinco minutos por caché. Phoenix selecciona el nombre del modelo; la clave viene de
+`OPENROUTER_API_KEY` (OpenRouter es el único proveedor) y un nombre sin proveedor se toma como `openai/<modelo>`.
 
 ## Configuración Railway
 
