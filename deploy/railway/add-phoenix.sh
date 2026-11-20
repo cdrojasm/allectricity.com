@@ -18,12 +18,14 @@ set_vars phoenix "PORT=6006" "PHOENIX_PORT=6006" "PHOENIX_HOST=::" \
 put phoenix PHOENIX_SECRET "$(rand 48)"
 put phoenix PHOENIX_ADMIN_SECRET "$(rand 48)"
 
-for service in agent-worker document-worker; do
+# The API runs units of work too (study writer, plan vision, material assistant).
+for service in api agent-worker document-worker; do
   set_vars "$service" "PHOENIX_ENDPOINT=http://phoenix.railway.internal:6006" \
     'PHOENIX_API_KEY=${{phoenix.PHOENIX_ADMIN_SECRET}}' "PHOENIX_PROMPT_TAG=production"
 done
 
 railway service redeploy -s phoenix -y
+railway service redeploy -s api -y
 railway service redeploy -s agent-worker -y
 railway service redeploy -s document-worker -y
 echo "Phoenix listo. Abre el dominio recién creado; primer ingreso: admin@localhost / admin (cambio obligatorio)."
