@@ -40,11 +40,15 @@ celery_app.conf.update(
         # Light HTTP lookups against Mercado Pago: served by the mail worker (`-Q mail,billing`).
         "spat.process_mercadopago_event": {"queue": "billing"},
         "spat.reconcile_mercadopago_events": {"queue": "billing"},
+        "spat.create_mercadopago_subscription": {"queue": "billing"},
+        "spat.enforce_subscriptions": {"queue": "billing"},
     },
     beat_schedule={
         "reset-mail-outbox": {"task": "spat.dispatch_reset_mail", "schedule": 15.0},
         "reconcile-file-uploads": {"task": "spat.reconcile_file_uploads", "schedule": 60.0},
         "reconcile-mercadopago-events": {"task": "spat.reconcile_mercadopago_events", "schedule": 60.0},
+        # Grace periods, expirations, monthly license recharges and retried cancellations.
+        "enforce-subscriptions": {"task": "spat.enforce_subscriptions", "schedule": 600.0},
     },
 )
 
@@ -511,6 +515,30 @@ def process_mercadopago_event(self, event_id):
     except mercadopago.ResourceUnavailable as exc:
         # Past max_retries the event stays `received` and the reconciler picks it up again.
         raise self.retry(exc=exc, countdown=min(30 * 2 ** self.request.retries, 900), max_retries=4)
+
+
+@celery_app.task(name="spat.create_mercadopago_subscription", bind=True, soft_time_limit=90, time_limit=120)
+def create_mercadopago_subscription(self, subscription_id, card_token, payer_email):
+    """Create the preapproval for a pending checkout. The card token lives only in this task's arguments (it is
+    single use and short lived); the subscription id is the idempotency key, so a retry cannot charge twice."""
+    from src.infrastructure.billing import mercadopago
+    from src.infrastructure.billing.subscriptions import Subscriptions
+
+    subscriptions = Subscriptions(upload_store())
+    try:
+        subscriptions.create_remote(subscription_id, card_token, payer_email, retry=self.request.retries > 0)
+    except mercadopago.ResourceUnavailable as exc:
+        if self.request.retries >= 3:
+            subscriptions.fail(subscription_id, "Mercado Pago no respondió. Inténtalo de nuevo en unos minutos.")
+            return
+        raise self.retry(exc=exc, countdown=15 * 2 ** self.request.retries)
+
+
+@celery_app.task(name="spat.enforce_subscriptions")
+def enforce_subscriptions():
+    from src.infrastructure.billing.subscriptions import Subscriptions
+
+    return Subscriptions(upload_store()).enforce()
 
 
 @celery_app.task(name="spat.reconcile_mercadopago_events")

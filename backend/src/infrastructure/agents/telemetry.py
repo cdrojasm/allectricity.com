@@ -31,6 +31,10 @@ def setup(service: str) -> bool:
         endpoint = (os.getenv("PHOENIX_COLLECTOR_ENDPOINT") or os.getenv("PHOENIX_ENDPOINT") or "").strip()
         if not endpoint:
             return False
+        from importlib.util import find_spec
+
+        if find_spec("phoenix") is None or find_spec("phoenix.otel") is None:
+            return False  # workers without LLM calls (mail/billing) do not install the tracing packages
         try:
             from phoenix.otel import register
 

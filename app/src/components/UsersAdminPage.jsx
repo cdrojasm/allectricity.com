@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Send, UserPlus, Users, X } from "lucide-react";
+import { LicensesPanel } from "./LicensesPanel.jsx";
 
 // Pilot onboarding for super_admin: invite an engineer with the designer role and a token budget.
 // The account gets a random password nobody sees; the engineer chooses their own through the reset link.
@@ -83,6 +84,7 @@ export function UsersAdminPage({ token, onNotice }) {
           <td>{user.active === false ? "Desactivado" : "Activo"}</td>
           <td>{user.active !== false && <button className="button" onClick={() => resend(user)}><Send size={13}/> Reenviar enlace</button>}</td></tr>; })}
     </tbody></table></div>
+    <LicensesPanel token={token} onNotice={onNotice} />
     {open && <div className="modal-backdrop project-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) setOpen(false); }}><form className="project-modal" onSubmit={invite} aria-label="Invitar ingeniero">
       <div className="project-modal-head"><div><div className="eyebrow">PILOTO</div><h2>Invitar ingeniero</h2></div><button type="button" className="icon-button" aria-label="Cerrar" onClick={() => setOpen(false)}><X size={18}/></button></div>
       <div className="project-form-body">

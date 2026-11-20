@@ -506,4 +506,50 @@ Index("ix_billing_webhook_events_pending", billing_webhook_events.c.status,
       billing_webhook_events.c.updated_at)
 Index("ix_billing_webhook_events_resource", billing_webhook_events.c.topic,
       billing_webhook_events.c.resource_id)
+# A user's right to a tier, paid through Mercado Pago or granted by a license code. Its token budget uses the
+# same id (budget.id = subscription.id), so each monthly charge resets exactly that budget.
+billing_subscriptions = Table(
+    "billing_subscriptions",
+    metadata,
+    key(),
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True),
+    Column("provider", String(20), nullable=False),
+    Column("mode", String(10)),
+    Column("tier", String(40), nullable=False),
+    Column("plan_id", String(64)),
+    Column("provider_ref", String(64)),
+    Column("status", String(12), nullable=False),
+    Column("period_end", BigInteger),
+    Column("grace_until", BigInteger),
+    Column("ends_at", BigInteger),
+    Column("last_reset_at", BigInteger),
+    Column("last_payment_ref", String(64)),
+    Column("replaces_id", String(36)),
+    Column("error", Text),
+    Column("created_at", BigInteger, nullable=False),
+    Column("updated_at", BigInteger, nullable=False),
+    UniqueConstraint("provider", "provider_ref", name="uq_billing_subscription_provider_ref"),
+    CheckConstraint("provider IN ('mercadopago', 'license')", name="ck_billing_subscription_provider"),
+    CheckConstraint("status IN ('pending', 'authorized', 'past_due', 'cancelled', 'suspended', 'expired', "
+                    "'replaced', 'failed')", name="ck_billing_subscription_status"),
+)
+Index("ix_billing_subscriptions_status", billing_subscriptions.c.status, billing_subscriptions.c.updated_at)
+# One code per person, single use. Only a hash of the code is stored; the plain code is shown once at creation.
+billing_licenses = Table(
+    "billing_licenses",
+    metadata,
+    key(),
+    Column("code_hash", String(64), nullable=False, unique=True),
+    Column("code_hint", String(8), nullable=False),
+    Column("tier", String(40), nullable=False),
+    Column("months", BigInteger, nullable=False),
+    Column("note", String(200)),
+    Column("created_by", ForeignKey("users.id", ondelete="SET NULL")),
+    Column("created_at", BigInteger, nullable=False),
+    Column("redeem_before", BigInteger),
+    Column("redeemed_by", ForeignKey("users.id", ondelete="SET NULL")),
+    Column("redeemed_at", BigInteger),
+    Column("revoked_at", BigInteger),
+    CheckConstraint("months > 0", name="ck_billing_license_months"),
+)
 TABLES ={table.name: table for table in metadata.tables.values()}

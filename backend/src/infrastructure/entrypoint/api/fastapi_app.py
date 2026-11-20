@@ -17,6 +17,7 @@ from src.infrastructure.entrypoint.api.schemas import ProjectRequest
 from src.infrastructure.entrypoint.api.identity_routes import router
 from src.infrastructure.entrypoint.api.file_routes import router as file_router
 from src.infrastructure.entrypoint.api.billing_routes import router as billing_router
+from src.infrastructure.entrypoint.api.subscription_routes import router as subscription_router
 from src.infrastructure.entrypoint.api.chat_routes import router as chat_router
 from src.infrastructure.entrypoint.api.agent_routes import router as agent_router
 from src.infrastructure.entrypoint.api.artifact_routes import catalog_router, router as artifact_router
@@ -51,6 +52,9 @@ def create_app(settings=None, services=None):
             from src.infrastructure.agents import telemetry
 
             telemetry.setup("api")  # traces of the units of work; a no-op without PHOENIX_ENDPOINT
+            from src.infrastructure.billing import plans
+
+            plans.configured()  # misaligned MP_PLAN_* lists stop the API instead of selling a tier at another's price
         try:
             yield
         finally:
@@ -65,6 +69,7 @@ def create_app(settings=None, services=None):
     app.include_router(router)
     app.include_router(file_router)
     app.include_router(billing_router)
+    app.include_router(subscription_router)
     app.include_router(chat_router)
     app.include_router(agent_router)
     app.include_router(artifact_router)

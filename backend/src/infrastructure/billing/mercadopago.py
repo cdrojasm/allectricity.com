@@ -71,22 +71,85 @@ def valid_signature(secret, header, request_id, data_id):
 
 
 def snapshot(resource):
-    return {key: resource[key] for key in SNAPSHOT_FIELDS if isinstance(resource, dict) and key in resource}
+    if not isinstance(resource, dict):
+        return {}
+    kept = {key: resource[key] for key in SNAPSHOT_FIELDS if key in resource}
+    if isinstance(resource.get("payment"), dict):  # authorized payments carry the charge result here
+        kept["payment"] = {key: resource["payment"].get(key) for key in ("id", "status", "status_detail")}
+    return kept
 
 
 class ResourceUnavailable(RuntimeError):
     """Mercado Pago did not answer (network, 429 or 5xx): the lookup is retried later."""
 
 
-def sdk(mode, http_client=None):
-    import mercadopago  # billing extra: only the billing worker installs the SDK
+class GatewayRejected(RuntimeError):
+    """Mercado Pago refused the request (4xx): retrying would not help."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+def _options(mode, idempotency_key=None):
     from mercadopago.config import RequestOptions
 
     token = access_token(mode)
     if not token:
         raise LookupError(f"MP_{mode.upper()}_ACCESS_TOKEN is not configured")
-    options = RequestOptions(connection_timeout=20.0)
-    return mercadopago.SDK(token, request_options=options, http_client=http_client)
+    options = RequestOptions(access_token=token, connection_timeout=30.0)
+    if idempotency_key:
+        options.custom_headers = {"x-idempotency-key": idempotency_key}
+    return options
+
+
+def sdk(mode, http_client=None):
+    import mercadopago  # billing extra: only the billing worker installs the SDK
+
+    options = _options(mode)  # LookupError when this mode has no credentials
+    return mercadopago.SDK(options.access_token, request_options=options, http_client=http_client)
+
+
+def _message(response) -> str:
+    if not isinstance(response, dict):
+        return "Mercado Pago rechazó la solicitud"
+    causes = [cause.get("description") or cause.get("code") for cause in response.get("cause") or []
+              if isinstance(cause, dict)]
+    return "; ".join(str(item) for item in [response.get("message"), *causes] if item)[:500] or "Mercado Pago rechazó la solicitud"
+
+
+def _result(call):
+    try:
+        result = call()
+    except (LookupError, GatewayRejected):
+        raise
+    except Exception as exc:
+        raise ResourceUnavailable(f"Mercado Pago no respondió: {type(exc).__name__}") from exc
+    status = int(result.get("status") or 0)
+    if status == 429 or status >= 500 or status == 0:
+        raise ResourceUnavailable(f"Mercado Pago answered {status}")
+    if status >= 400:
+        raise GatewayRejected(status, _message(result.get("response")))
+    return result.get("response") or {}
+
+
+def create_preapproval(mode, body: dict, idempotency_key: str, http_client=None) -> dict:
+    """POST /preapproval: a subscription to a panel plan, charged to the tokenized card."""
+    client = sdk(mode, http_client)
+    return _result(lambda: client.preapproval().create(body, _options(mode, idempotency_key)))
+
+
+def find_preapproval(mode, external_reference: str, http_client=None) -> dict | None:
+    """The preapproval created for `external_reference`, if any (used before retrying a creation)."""
+    client = sdk(mode, http_client)
+    found = _result(lambda: client.preapproval().search({"external_reference": external_reference}, _options(mode)))
+    results = found.get("results") if isinstance(found, dict) else None
+    return results[0] if results else None
+
+
+def cancel_preapproval(mode, preapproval_id: str, http_client=None) -> dict:
+    client = sdk(mode, http_client)
+    return _result(lambda: client.preapproval().update(preapproval_id, {"status": "cancelled"}, _options(mode)))
 
 
 def fetch_resource(mode, topic, resource_id, http_client=None):

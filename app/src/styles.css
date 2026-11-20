@@ -2601,3 +2601,58 @@ h2 {
 .topology-preview .legend.removed { color: #c0392b; }
 .users-admin-page td strong, .users-admin-page td small { display: block; }
 .users-admin-page td small { color: #667681; font-size: 12px; margin-top: 2px; }
+
+/* Plan y facturación */
+.billing-test-banner { max-width:1200px; margin:0 auto 14px; display:flex; align-items:center; gap:8px; padding:10px 13px; border-radius:7px; background:#fff7e6; color:#8a5a00; font-size:12px; }
+.billing-current { max-width:1200px; margin:0 auto 14px; padding:20px 22px; background:white; border:1px solid #e5e9ed; border-radius:10px; display:flex; justify-content:space-between; align-items:center; gap:24px; flex-wrap:wrap; }
+.billing-current h2 { margin:4px 0 6px; font:750 22px Manrope,sans-serif; color:#263a35; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.billing-current p { margin:0; color:#87939b; font-size:12px; }
+.billing-status { font:600 10px "DM Sans",sans-serif; padding:3px 8px; border-radius:20px; background:#eef2f4; color:#5f6f78; letter-spacing:.2px; }
+.billing-status.authorized { background:#e3f3ec; color:#21705f; }
+.billing-status.past_due, .billing-status.cancelled { background:#fff3dd; color:#8a5a00; }
+.billing-status.suspended, .billing-status.expired { background:#fff0ee; color:#ad5149; }
+.billing-tokens { min-width:240px; flex:0 1 320px; display:grid; gap:6px; }
+.billing-tokens span { font-weight:700; color:#33443f; font-size:13px; }
+.billing-tokens small { color:#99a2a7; font-size:11px; }
+.token-bar { height:8px; border-radius:8px; background:#edf1f3; overflow:hidden; }
+.token-bar i { display:block; height:100%; background:#287f70; border-radius:8px; }
+.billing-checkout { max-width:1200px; margin:0 auto 14px; display:flex; align-items:center; gap:9px; padding:11px 14px; border-radius:7px; font-size:12px; background:#eef6f3; color:#21705f; }
+.billing-checkout.failed { background:#fff0ee; color:#ad5149; }
+.billing-spinner { width:13px; height:13px; border-radius:50%; border:2px solid #9ccabe; border-top-color:#21705f; animation:billing-spin .8s linear infinite; }
+@keyframes billing-spin { to { transform:rotate(360deg); } }
+.plan-grid { max-width:1200px; margin:0 auto 14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; }
+.plan-card { background:white; border:1px solid #e5e9ed; border-radius:10px; padding:20px; display:flex; flex-direction:column; gap:6px; }
+.plan-card.current { border-color:#287f70; box-shadow:0 0 0 1px #287f70 inset; }
+.plan-card h3 { margin:0; font:750 19px Manrope,sans-serif; color:#263a35; }
+.plan-price { display:flex; align-items:baseline; gap:4px; margin-top:6px; }
+.plan-price strong { font:750 24px Manrope,sans-serif; color:#1f2f2b; }
+.plan-price span, .plan-usd { color:#87939b; font-size:12px; }
+.plan-card ul { list-style:none; padding:0; margin:10px 0 14px; display:grid; gap:7px; color:#5f6f78; font-size:12px; }
+.plan-card li { display:flex; align-items:center; gap:7px; }
+.plan-card li svg { color:#328a7c; }
+.plan-card .button { margin-top:auto; justify-content:center; }
+.plan-card .button:disabled { opacity:.55; cursor:default; }
+.plan-unavailable, .billing-empty { color:#ad5149; font-size:11px; }
+.billing-redeem { max-width:1200px; margin:0 auto; padding:16px 18px; background:white; border:1px solid #e5e9ed; border-radius:10px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.billing-redeem > svg { color:#328a7c; }
+.billing-redeem div { flex:1 1 200px; display:grid; gap:3px; }
+.billing-redeem strong { color:#33443f; font-size:13px; }
+.billing-redeem small { color:#99a2a7; font-size:11px; }
+.billing-redeem input { flex:0 1 240px; padding:8px 10px; border:1px solid #dfe5ea; border-radius:6px; font:600 12px "DM Sans",monospace; letter-spacing:.5px; }
+.billing-modal { width:min(520px,100%); }
+.billing-upgrade-note { background:#fff7e6; color:#8a5a00; padding:10px 12px; border-radius:7px; font-size:12px; line-height:1.5; margin:0 0 10px; }
+
+/* Licencias (super_admin) */
+.licenses-panel { max-width:1200px; margin:34px auto 0; }
+.licenses-head h2 { margin:4px 0 5px; font:750 20px Manrope,sans-serif; color:#263a35; }
+.licenses-head p { margin:0 0 14px; color:#87939b; font-size:12px; }
+.licenses-form { display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; padding:16px 18px; margin-bottom:12px; background:white; border:1px solid #e5e9ed; border-radius:10px; }
+.licenses-form label { display:grid; gap:5px; font-size:11px; color:#6f7c83; font-weight:600; }
+.licenses-form input, .licenses-form select { padding:7px 9px; border:1px solid #dfe5ea; border-radius:6px; font:inherit; font-weight:500; min-width:90px; }
+.licenses-form .licenses-note { flex:1 1 220px; }
+.license-codes { margin-bottom:12px; padding:14px 16px; border-radius:10px; background:#eef6f3; border:1px solid #cfe6dd; }
+.license-codes > div { display:flex; align-items:center; gap:10px; color:#21705f; }
+.license-codes > div strong { flex:1; font-size:12px; }
+.license-codes ul { margin:10px 0 0; padding-left:18px; display:grid; gap:5px; color:#33443f; font-size:12px; }
+.license-codes code { font-size:13px; font-weight:700; letter-spacing:.6px; user-select:all; }
+@media(max-width:600px) { .billing-current { padding:16px; } .billing-redeem input { flex:1 1 100%; } }

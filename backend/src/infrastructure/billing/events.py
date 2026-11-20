@@ -49,8 +49,12 @@ def process_event(store, event_id, http_client=None):
         _finish(store, event_id, last_error=str(exc))
         raise
     if status == 200 and isinstance(resource, dict):
+        # Applying is idempotent: if it raises, the event stays `received` and is fetched and applied again.
+        from src.infrastructure.billing.subscriptions import Subscriptions
+
+        outcome = Subscriptions(store, http_client).apply_event(topic, resource)
         resource_status = resource.get("status")
-        _finish(store, event_id, status="fetched", resource=mercadopago.snapshot(resource),
+        _finish(store, event_id, status="fetched", resource={**mercadopago.snapshot(resource), "applied": outcome},
                 resource_status=None if resource_status is None else str(resource_status)[:40],
                 last_error=None, processed_at=int(time()))
         return "fetched"
