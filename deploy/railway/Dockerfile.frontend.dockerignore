@@ -4,6 +4,7 @@
 !app/package.json
 !app/package-lock.json
 !app/index.html
+!app/landing.html
 !app/vite.config.*
 !app/public/**
 !app/src/**

@@ -1,6 +1,18 @@
 # Rendered at start by the official nginx image (envsubst over /etc/nginx/templates). ${PORT} comes from Railway,
 # ${NGINX_LOCAL_RESOLVERS} from the container's /etc/resolv.conf (Railway's private DNS) and ${API_UPSTREAM}
 # from the service variables. nginx's own $variables are not environment variables and stay untouched.
+# The root domain shows the public landing (landing.html); every other host (app.<domain>, the
+# *.up.railway.app domain) serves the app (index.html). App routes requested on the root domain go to app.<domain>.
+map $host $is_landing {
+    default 0;
+    ~^(www\.)?allectricity\.com$ 1;
+}
+
+map $is_landing $entry_page {
+    1 /landing.html;
+    default /index.html;
+}
+
 server {
     listen ${PORT};
     listen [::]:${PORT};
@@ -26,5 +38,11 @@ server {
     location = /openapi.json { proxy_pass http://$api_upstream$request_uri; proxy_set_header Host $host; }
     location = /health { proxy_pass http://$api_upstream$request_uri; proxy_set_header Host $host; }
     location = /ready { proxy_pass http://$api_upstream$request_uri; proxy_set_header Host $host; }
-    location / { try_files $uri $uri/ /index.html; }
+    set $app_origin https://app.allectricity.com;
+    location = / { try_files $entry_page =404; }
+    location / { try_files $uri @spa; }
+    location @spa {
+        if ($is_landing) { return 302 $app_origin$request_uri; }
+        rewrite ^ /index.html break;
+    }
 }

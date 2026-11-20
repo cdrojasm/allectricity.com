@@ -12,6 +12,11 @@ import { BillingPage } from "./components/BillingPage.jsx";
 import { EXPIRED_EVENT, installAuthenticatedFetch } from "./authFetch.js";
 import "./styles.css";
 
+// For about an hour the app lived under /app on a single domain; send those links to the same route at the root.
+if (/^\/app(\/|$)/.test(window.location.pathname)) {
+  window.history.replaceState({}, "", `${window.location.pathname.replace(/^\/app/, "") || "/"}${window.location.search}${window.location.hash}`);
+}
+
 function App() {
   const publicStudy = window.location.pathname.match(/^\/e\/([^/]+)\/?$/);
   const resetPage = /^\/reset-password\/?$/.test(window.location.pathname);
