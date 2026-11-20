@@ -5,12 +5,12 @@ import { Activity, Box, Cable, Check, FileText, Layers, Network, Paperclip, Play
 // step per screen of scroll. All numbers are illustrative; the section says so.
 
 const STEPS = [
-  { tab: "files", title: "Llega el paquete del cliente", sub: "Plano en PDF, lecturas Wenner en Excel, unifilar escaneado. Lo sueltas en el chat, sin transcribir nada." },
-  { tab: "files", view: "graph", title: "Nada se copia a mano", sub: "Aleia lee los documentos y te muestra de dónde salió cada dato. Lo que no encuentra, te lo pregunta." },
-  { tab: "soil", title: "El suelo, sin pelear con la hoja de cálculo", sub: "Ajusta el modelo por capas desde tus lecturas y te deja la curva a la vista para que la juzgues tú." },
-  { tab: "plan", title: "Una malla que puedes editar", sub: "Aleia propone conductores y varillas sobre el plano real. Tú mueves lo que quieras." },
-  { tab: "results", title: "Lo que no cumple aparece aquí, no en la revisión", sub: "Calcula toque y paso, encuentra las esquinas que fallan, agrega varillas y recalcula." },
-  { tab: "artifact", view: "study", title: "Lo que entregas, lo puedes defender", sub: "Estudio web y PDF con cada número trazable. Queda en borrador hasta que confirmas lo crítico." },
+  { tab: "files", title: "Nos das tus documentos", sub: "Planos, mediciones y el unifilar, como los tengas." },
+  { tab: "files", view: "graph", title: "Los entendemos", sub: "Sacamos los datos y te mostramos de dónde salió cada uno." },
+  { tab: "soil", title: "Entendemos el terreno", sub: "Con tus mediciones de resistividad." },
+  { tab: "plan", title: "Te sugerimos una malla", sub: "Conductores y varillas sobre tu plano." },
+  { tab: "results", title: "Revisamos que sea segura", sub: "Si algo no cumple, lo corregimos y volvemos a calcular." },
+  { tab: "artifact", view: "study", title: "Te entregamos el estudio", sub: "En PDF y como enlace, listo para que lo firmes." },
 ];
 
 const TABS = [
@@ -273,7 +273,7 @@ export function LandingDemo() {
   return <section className="landing-demo" id="demo" ref={sectionRef} data-formation="0" style={{ height: `${STEPS.length * 85 + 100}vh` }} aria-label="Demo de Aleia">
     <div className="landing-demo-sticky">
       <div className="landing-demo-head">
-        <p className="landing-eyebrow">Demo · un estudio de principio a fin, con Aleia</p>
+        <p className="landing-eyebrow">Demo</p>
         <h2 key={frame.step} className="landing-demo-title">{current.title}</h2>
         <p className="landing-demo-sub">{current.sub}</p>
         <ol className="landing-demo-steps" aria-hidden="true">
