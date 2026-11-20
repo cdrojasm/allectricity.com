@@ -78,6 +78,15 @@ for service in $BACKEND; do
     'MP_TEST_ACCESS_TOKEN=${{api.MP_TEST_ACCESS_TOKEN}}' 'MP_PROD_ACCESS_TOKEN=${{api.MP_PROD_ACCESS_TOKEN}}' \
     >/dev/null
 done
+# The billing worker activates subscriptions and loads budgets: it needs the tiers and the mode, not only the
+# tokens (without them it authorizes the subscription but cannot load its tokens).
+for service in mail-worker scheduler; do
+  railway variable set -s "$service" --skip-deploys \
+    'MP_MODE=${{api.MP_MODE}}' 'MP_PLAN_NAMES=${{api.MP_PLAN_NAMES}}' 'MP_PLAN_IDS=${{api.MP_PLAN_IDS}}' \
+    'MP_TEST_PLAN_IDS=${{api.MP_TEST_PLAN_IDS}}' 'MP_PROD_PLAN_IDS=${{api.MP_PROD_PLAN_IDS}}' \
+    'MP_PLAN_PRICES_USD=${{api.MP_PLAN_PRICES_USD}}' 'MP_PLAN_MONTHLY_TOKENS=${{api.MP_PLAN_MONTHLY_TOKENS}}' \
+    >/dev/null
+done
 
 echo "Claves externas copiadas desde $ENV_FILE. Secretos internos ya existentes: intactos."
 [ -z "$created" ] || echo "Secretos internos creados ahora (no existían):$created"

@@ -139,6 +139,24 @@ def test_checkout_activates_the_tier_and_loads_its_tokens(billing, mp):
     assert summary["subscription"]["tokens"] == {"total": 3_000_000, "used": 0}
 
 
+def test_enforce_loads_the_budget_of_an_active_subscription_that_has_none(billing, mp, monkeypatch):
+    services, _, user, _ = billing
+    service = Subscriptions(services.store, mp)
+    pending = service.start_checkout(user["id"], "essentials")
+    mp.answer("POST", "/preapproval", 201, {"id": "pre-1", "status": "authorized", "external_reference": pending["id"]})
+    # The worker that activated it could not read the tiers (MP_PLAN_* missing in its environment).
+    with monkeypatch.context() as env:
+        env.delenv("MP_PLAN_NAMES")
+        env.delenv("MP_PLAN_IDS")
+        env.delenv("MP_PLAN_PRICES_USD")
+        env.delenv("MP_PLAN_MONTHLY_TOKENS")
+        assert service.create_remote(pending["id"], "card-token-1", "payer@testuser.com") == "activated"
+    assert row(services.store, pending["id"])["status"] == "authorized" and budget(services.store, pending["id"]) is None
+    assert service.enforce()["repaired"] == 1
+    assert budget(services.store, pending["id"])["total_tokens"] == 3_000_000
+    assert service.enforce()["repaired"] == 0
+
+
 def test_rejected_card_fails_the_checkout_with_mercado_pagos_reason(billing, mp):
     services, _, user, _ = billing
     service = Subscriptions(services.store, mp)

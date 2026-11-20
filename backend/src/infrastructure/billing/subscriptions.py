@@ -40,11 +40,11 @@ def _now() -> int:
 
 
 def grace_seconds() -> int:
-    return int(os.getenv("MP_GRACE_DAYS", "7")) * DAY
+    return int(os.getenv("MP_GRACE_DAYS", "").strip() or "7") * DAY
 
 
 def reset_min_seconds() -> int:
-    return int(os.getenv("MP_RESET_MIN_DAYS", "20")) * DAY
+    return int(os.getenv("MP_RESET_MIN_DAYS", "").strip() or "20") * DAY
 
 
 def has_access(subscription: dict, at: int) -> bool:
@@ -296,11 +296,17 @@ class Subscriptions:
     # Periodic enforcement -------------------------------------------------------------------------------
     def enforce(self, at: int | None = None) -> dict:
         at = at or _now()
-        counts = {"suspended": 0, "expired": 0, "recharged": 0, "timed_out": 0}
+        counts = {"suspended": 0, "expired": 0, "recharged": 0, "timed_out": 0, "repaired": 0}
         retry_cancel = []
         with self.store.transaction(write=True) as db:
             for row in db.many(TABLE, limit=None):
                 status = row["status"]
+                # A subscription activated while its tier could not be read (e.g. a worker without MP_PLAN_*) has
+                # no budget: load it now instead of leaving a paying user without tokens.
+                if status in ("authorized", "past_due") and has_access(row, at) and not db.one("budget", id=row["id"]):
+                    _grant(db, row, at)
+                    if db.one("budget", id=row["id"]):
+                        counts["repaired"] += 1
                 if status == "past_due" and (row.get("grace_until") or 0) <= at:
                     db.change(TABLE, row["id"], status="suspended", updated_at=at)
                     _set_budget_active(db, row["id"], False)

@@ -45,19 +45,33 @@ def _store(store, event):
                           dedup_key=event["dedup_key"]), True
 
 
-async def _receive(mode, request: Request):
-    secret = mercadopago.webhook_secret(mode)
-    if not secret:
-        raise HTTPException(503, f"Mercado Pago {mode} webhook is not configured")
+def _signed_mode(url_mode, signature, request_id, data_id):
+    """The mode whose secret signed the notification, trying the URL's mode first.
+
+    Mercado Pago picks the URL by the kind of credentials, not by our mode: a test seller account uses APP_USR
+    ("production") credentials, so its notifications arrive at the production URL signed with the test secret.
+    The secret, not the URL, says which account (and access token) the resource belongs to."""
+    for mode in (url_mode, *(m for m in mercadopago.MODES if m != url_mode)):
+        secret = mercadopago.webhook_secret(mode)
+        if secret and mercadopago.valid_signature(secret, signature, request_id, data_id):
+            return mode
+    return None
+
+
+async def _receive(url_mode, request: Request):
+    if not mercadopago.webhook_secret(url_mode):
+        raise HTTPException(503, f"Mercado Pago {url_mode} webhook is not configured")
     body = await request.body()
     if len(body) > MAX_BODY_BYTES:
         raise HTTPException(413, "Notification too large")
     query = request.query_params
     request_id = request.headers.get("x-request-id", "")
-    if not mercadopago.valid_signature(secret, request.headers.get("x-signature"), request_id,
-                                       query.get("data.id", "")):
-        log.warning("Mercado Pago %s webhook rejected: invalid x-signature", mode)
+    mode = _signed_mode(url_mode, request.headers.get("x-signature"), request_id, query.get("data.id", ""))
+    if mode is None:
+        log.warning("Mercado Pago %s webhook rejected: invalid x-signature", url_mode)
         raise HTTPException(401, "Invalid Mercado Pago signature")
+    if mode != url_mode:
+        log.info("Mercado Pago notification at the %s URL is signed with the %s secret", url_mode, mode)
     try:
         payload = json.loads(body) if body else {}
     except ValueError:

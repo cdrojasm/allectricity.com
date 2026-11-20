@@ -85,12 +85,16 @@ def test_valid_notification_is_stored_and_queued_once(billing):
     assert queued == [event["id"], event["id"]]  # still pending, so the redelivery re-queues it
 
 
-def test_each_mode_uses_its_own_secret(billing):
+def test_the_secret_that_signed_the_notification_decides_its_mode(billing):
     client, store, _ = billing
     assert notify(client, mode="prod").status_code == 200
-    assert notify(client, mode="prod", headers=signed("test", "123456")).status_code == 401
-    assert notify(client, mode="test", headers=signed("prod", "123456")).status_code == 401
-    assert [event["mode"] for event in rows(store)] == ["prod"]
+    # A test seller account (APP_USR credentials) notifies the production URL, signed with the test secret: the
+    # resource belongs to the test account, so it is read with the test access token.
+    assert notify(client, mode="prod", data_id="777", notification_id=2,
+                  headers=signed("test", "777")).status_code == 200
+    assert notify(client, mode="test", headers={"x-signature": "ts=1,v1=00", "x-request-id": "r"}).status_code == 401
+    assert sorted((event["mode"], event["resource_id"]) for event in rows(store)) == [("prod", "123456"),
+                                                                                    ("test", "777")]
 
 
 def test_rejects_bad_signatures_and_unconfigured_modes(billing, monkeypatch):
