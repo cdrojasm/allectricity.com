@@ -18,6 +18,12 @@ def login(data: s.Login, svc=Depends(services)):
     return svc.identity.login(str(data.email), data.password)
 
 
+@router.get("/auth/config", tags=["auth"])
+def auth_config(svc=Depends(services)):
+    """Public: which sign-in methods the login page offers. The Google client ID is public by design."""
+    return {"google_client_id": getattr(svc.identity.external, "client_id", "") or None}
+
+
 @router.post("/auth/google", tags=["auth"])
 def google(data: s.TokenInput, svc=Depends(services)):
     return svc.identity.google(data.token)

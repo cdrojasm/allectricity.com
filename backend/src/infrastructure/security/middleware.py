@@ -9,6 +9,7 @@ from fastapi.routing import APIRoute
 PUBLIC = {
     ("POST", "/api/v1/auth/login"),
     ("POST", "/api/v1/auth/google"),
+    ("GET", "/api/v1/auth/config"),
     ("POST", "/api/v1/auth/token"),
     ("POST", "/api/v1/auth/refresh"),
     ("POST", "/api/v1/auth/forgot-password"),

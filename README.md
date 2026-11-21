@@ -79,7 +79,7 @@ se realiza dentro de Docker. Los contenedores, redes y volúmenes tienen prefijo
 El backend incluye JWT HS256, refresh rotativo, revocación, RBAC, usuarios/roles,
 clientes M2M, Google ID tokens, presupuesto de tokens y reset por Celery + SMTP.
 Los endpoints de diseño ahora requieren Bearer token. Configurar `GOOGLE_CLIENT_ID`
-para habilitar Google. El frontend demo todavía no integra estos flujos.
+para habilitar "Continuar con Google" en el login (también crea la cuenta).
 Contratos, permisos y operación: [docs/AUTH.md](docs/AUTH.md).
 
 En despliegue, Celery se divide por responsabilidad: `agent-worker` coordina los

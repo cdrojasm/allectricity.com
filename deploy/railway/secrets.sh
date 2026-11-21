@@ -51,7 +51,7 @@ put_once phoenix PHOENIX_ADMIN_SECRET "$(rand 48)"
 # A variable exported in this shell wins over the .env file.
 value_of() { eval "exported=\${$1:-}"; [ -n "$exported" ] && printf '%s' "$exported" || from_env "$1"; }
 missing=""
-for key in OPENROUTER_API_KEY OPENROUTER_MODEL \
+for key in OPENROUTER_API_KEY OPENROUTER_MODEL GOOGLE_CLIENT_ID \
            RESEND_API_KEY MAIL_FROM \
            MP_MODE MP_TEST_ACCESS_TOKEN MP_TEST_PUBLIC_KEY MP_TEST_WEBHOOK_SECRET \
            MP_PROD_ACCESS_TOKEN MP_PROD_PUBLIC_KEY MP_PROD_WEBHOOK_SECRET \

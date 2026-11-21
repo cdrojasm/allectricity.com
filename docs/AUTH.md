@@ -70,7 +70,8 @@ pendiente, incluido leer `#token=` en la página de restablecimiento.
 | Método y endpoint | Entrada / comportamiento | Autorización |
 |---|---|---|
 | POST `/auth/login` | `email`, `password`; access JWT + refresh opaco | Público, limitado por IP/cuenta |
-| POST `/auth/google` | `token`: ID token Google validado | Público, `GOOGLE_CLIENT_ID` requerido |
+| GET `/auth/config` | `google_client_id` (público, o `null` si no está configurado) para el botón del login | Público |
+| POST `/auth/google` | `token`: ID token Google validado; la primera vez crea la cuenta | Público, `GOOGLE_CLIENT_ID` requerido |
 | POST `/auth/token` | `grant_type=client_credentials`, `client_id`, `client_secret` | Credencial M2M; sin refresh |
 | POST `/auth/refresh` | `refresh_token`; rota el refresh | Posesión del refresh vigente |
 | POST `/auth/revoke` | `all_sessions` (false por defecto) | Usuario autenticado; propias sesiones |
@@ -136,7 +137,8 @@ privilegiadas. Bootstrap solo por CLI interactiva, una vez y sin endpoint públi
 
 Google valida firma, emisor, expiración, audiencia/authorized party y correo
 verificado con `google-auth`. Identidad estable: provider + `sub`, nunca email.
-Una nueva cuenta Google recibe viewer; una coincidencia de email con otra cuenta
+Una nueva cuenta Google (autorregistro) recibe designer: puede crear proyectos, y el agente
+queda detrás de un plan pagado (`AGENT_REQUIRE_BUDGET=true`); una coincidencia de email con otra cuenta
 produce conflicto y requiere un flujo explícito de vinculación futuro.
 No se guardan access/refresh tokens de Google. Las contraseñas de cuentas Google
 se administran en Google, no mediante el reset local.

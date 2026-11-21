@@ -73,6 +73,52 @@ export function ResetPasswordPage() {
   );
 }
 
+// Google Identity Services: the button returns an ID token that the API verifies (/auth/google).
+// First sign-in creates the account. Hidden when the API has no GOOGLE_CLIENT_ID.
+function GoogleSignIn({ onLogin, onError }) {
+  const slot = useRef(null);
+  const [clientId, setClientId] = useState(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/v1/auth/config").then((r) => (r.ok ? r.json() : {})).then((c) => { if (live) setClientId(c.google_client_id || null); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  useEffect(() => {
+    if (!clientId || !slot.current) return undefined;
+    let live = true;
+    async function credential(response) {
+      onError("");
+      try {
+        const reply = await fetch("/api/v1/auth/google", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: response.credential }),
+        });
+        const result = await reply.json();
+        if (!reply.ok) throw new Error(typeof result.detail === "string" && /[áéíóúñ]/i.test(result.detail) ? result.detail : "No pudimos entrar con Google. Intenta de nuevo.");
+        onLogin(result);
+      } catch (err) {
+        onError(err.message || "No pudimos entrar con Google.");
+      }
+    }
+    function render() {
+      if (!live || !slot.current || !window.google?.accounts?.id) return;
+      window.google.accounts.id.initialize({ client_id: clientId, callback: credential, ux_mode: "popup" });
+      window.google.accounts.id.renderButton(slot.current, { theme: "outline", size: "large", text: "continue_with", shape: "pill", width: slot.current.offsetWidth || 320, locale: "es" });
+    }
+    const src = "https://accounts.google.com/gsi/client";
+    let script = document.querySelector(`script[src="${src}"]`);
+    if (window.google?.accounts?.id) render();
+    else {
+      if (!script) { script = Object.assign(document.createElement("script"), { src, async: true, defer: true }); document.head.appendChild(script); }
+      script.addEventListener("load", render);
+    }
+    return () => { live = false; script?.removeEventListener("load", render); };
+  }, [clientId]);
+  if (!clientId) return null;
+  return <><div className="login-google" ref={slot} /><div className="login-divider"><span>o con tu correo</span></div></>;
+}
+
 function Login({ onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -104,8 +150,9 @@ function Login({ onLogin }) {
       <form className="login-card" onSubmit={submit}>
         <div className="login-brand"><Zap size={22} fill="currentColor" /></div>
         <div className="eyebrow">ALLECTRICITY WORKSPACE</div>
-        <h1>Bienvenido de nuevo</h1>
-        <p>Inicia sesión con tu cuenta para continuar.</p>
+        <h1>Bienvenido</h1>
+        <p>Entra con Google o con tu correo y contraseña. Si es tu primera vez, Google te crea la cuenta.</p>
+        <GoogleSignIn onLogin={onLogin} onError={setError} />
         <label>Correo electrónico<input autoComplete="username" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
         <label>Contraseña<input autoComplete="current-password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} /></label>
         {error && <div className="login-error" role="alert">{error}</div>}

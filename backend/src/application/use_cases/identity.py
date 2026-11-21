@@ -213,7 +213,7 @@ class IdentityService:
                 if db.one("users", email=identity["email"]):
                     raise ServiceError(
                         409,
-                        "An account with that email already exists; explicit account linking is required",
+                        "Ya existe una cuenta con ese correo. Inicia sesión con tu correo y contraseña.",
                     )
                 user = new_user(
                     db,
@@ -226,7 +226,10 @@ class IdentityService:
                     avatar_url=identity.get("picture"),
                     idp_metadata={"email_verified": True},
                 )
-                assign(db, user["id"], "viewer")
+                # Self sign-up: the account can create projects; the agent stays behind a paid plan
+                # (AGENT_REQUIRE_BUDGET) so signing up costs nothing.
+                assign(db, user["id"], "designer")
+                audit(db, user["id"], "auth.google_signup", user["id"])
             if not user["active"] or user["kind"] != "human":
                 raise ServiceError(401, "Account unavailable")
             audit(db, user["id"], "auth.google", user["id"])

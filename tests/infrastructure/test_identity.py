@@ -505,7 +505,7 @@ def test_google_adapter_boundary_and_no_automatic_linking(env):
     svc.identity.external = google
     token = svc.identity.google("verified-by-adapter")
     actor = svc.identity.authenticate(token["access_token"])
-    assert actor.roles == frozenset({"viewer"})
+    assert actor.roles == frozenset({"designer"})
     with svc.store.transaction() as db:
         assert db.one("users", id=actor.user_id)["idp_subject"] == "google-unique-sub"
 
@@ -522,6 +522,14 @@ def test_google_adapter_boundary_and_no_automatic_linking(env):
     with pytest.raises(ServiceError) as exc:
         svc.identity.google("verified-by-adapter")
     assert exc.value.status == 409
+
+
+def test_login_page_learns_the_public_google_client_id(env):
+    _, svc, client, _, _, _ = env
+    svc.identity.external.client_id = ""
+    assert client.get("/api/v1/auth/config").json() == {"google_client_id": None}
+    svc.identity.external.client_id = "123-abc.apps.googleusercontent.com"
+    assert client.get("/api/v1/auth/config").json() == {"google_client_id": "123-abc.apps.googleusercontent.com"}
 
 
 def test_budget_ownership_idempotency_and_audit(env):
