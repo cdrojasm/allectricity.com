@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ArrowRight, ArrowUpRight, Check, FileText, Layers, Network, ShieldCheck, Waves, Zap } from "lucide-react";
 import { createSwarm } from "../landingSwarm.js";
-import { DemoThumbnail, LandingDemo } from "./LandingDemo.jsx";
+import { LandingVideo, VideoThumbnail } from "./LandingVideo.jsx";
 import "../landing.css";
 
 const STEPS = [
@@ -162,10 +162,10 @@ export function LandingPage() {
             <div><dt>Te entregamos</dt><dd>Estudio en PDF y web</dd></div>
           </dl>
           <p className="landing-hint" aria-hidden="true">{reducedMotion ? "" : "Haz clic para simular una falla"}</p>
-          <DemoThumbnail reducedMotion={reducedMotion} />
+          <VideoThumbnail reducedMotion={reducedMotion} />
         </section>
 
-        <LandingDemo />
+        <LandingVideo />
 
         <section className="landing-steps" id="como-funciona" aria-label="Cómo funciona">
           <ol className={`landing-rail ${formation >= 1 && formation <= 5 ? "is-visible" : ""}`} aria-hidden="true">
