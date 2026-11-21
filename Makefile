@@ -93,8 +93,12 @@ create-admin:
 
 # PHOENIX_SEED_TAG=production publishes straight to what the app reads (default: staging, for review).
 PHOENIX_SEED_TAG ?= staging
+# PHOENIX_SEED_MODEL=<openrouter id> moves every application to that model (default: keep each one's).
+PHOENIX_SEED_MODEL ?=
+# PHOENIX_SEED_ONLY=spat-study-writer,... limits the run to those applications.
+PHOENIX_SEED_ONLY ?=
 sync-prompts:
-	$(COMPOSE) run --rm --no-deps -e PHOENIX_SEED_TAG=$(PHOENIX_SEED_TAG) \
+	$(COMPOSE) run --rm --no-deps -e PHOENIX_SEED_TAG=$(PHOENIX_SEED_TAG) -e PHOENIX_SEED_MODEL=$(PHOENIX_SEED_MODEL) -e PHOENIX_SEED_ONLY=$(PHOENIX_SEED_ONLY) \
 	  -v $(CURDIR)/scripts/sync_phoenix_prompts.py:/app/scripts/sync_phoenix_prompts.py:ro \
 	  -v $(CURDIR)/prompts:/app/prompts:ro agent-worker python scripts/sync_phoenix_prompts.py
 

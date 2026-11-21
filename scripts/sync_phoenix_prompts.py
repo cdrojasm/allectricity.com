@@ -1,6 +1,8 @@
 """Publish the repository's prompt seeds as new Phoenix versions and tag them.
 
     PHOENIX_SEED_TAG=staging (default) | production
+    PHOENIX_SEED_MODEL=anthropic/claude-haiku-5.5   (optional: switch the applications to this model)
+    PHOENIX_SEED_ONLY=spat-study-writer,spat-agent-orchestrator   (optional: only these applications)
 
 Each application keeps the model chosen in Phoenix: a new version reuses the model of the version that holds
 the tag (or of the "production"/"staging" one); OPENROUTER_MODEL is only used for a prompt that has none yet.
@@ -41,10 +43,16 @@ def main() -> None:
     default_model = os.getenv("OPENROUTER_MODEL", "").strip()
     tag = os.getenv("PHOENIX_SEED_TAG", "staging")
     client = phoenix_client()  # PHOENIX_ENDPOINT / PHOENIX_API_KEY, like the app
+    only = {n.strip() for n in os.getenv("PHOENIX_SEED_ONLY", "").split(",") if n.strip()}
+    if unknown := only - set(PROMPTS):
+        raise SystemExit(f"Unknown applications in PHOENIX_SEED_ONLY: {', '.join(sorted(unknown))}")
     for name, filename in PROMPTS.items():
+        if only and name not in only:
+            continue
         content = (prompt_dir / filename).read_text()
         existing = current(client, name, dict.fromkeys([tag, "production", "staging"]))
-        model = (getattr(existing, "_model_name", None) if existing else None) or default_model
+        model = (os.getenv("PHOENIX_SEED_MODEL", "").strip()
+                 or (getattr(existing, "_model_name", None) if existing else None) or default_model)
         if not model:
             raise SystemExit(f"{name}: no model in Phoenix; define OPENROUTER_MODEL (e.g. openai/gpt-4.1)")
         tagged = current(client, name, [tag])
