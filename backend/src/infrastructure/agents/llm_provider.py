@@ -2,12 +2,15 @@
 
 Variables:
 - OPENROUTER_API_KEY   key (required).
-- OPENROUTER_MODEL     default model, e.g. `openai/gpt-4.1` (required).
+- OPENROUTER_MODEL     default model, e.g. `anthropic/claude-haiku-5.5` (required).
 - OPENROUTER_BASE_URL  optional; only to point at a local stub in smoke tests.
-Each application chooses its model in its Phoenix prompt (see uow.py); OPENROUTER_MODEL is the fallback.
+Each application chooses its model in its Phoenix prompt (see uow.py) among the approved ones (llm_models.py);
+OPENROUTER_MODEL is the fallback.
 """
 
 import os
+
+from src.infrastructure.agents.llm_models import APPROVED_MODELS
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
 # OpenRouter names models `<provider>/<model>`; a bare name (from an older Phoenix prompt version or
@@ -34,6 +37,15 @@ def configured() -> bool:
 def qualify(model: str) -> str:
     model = model.strip()
     return model if "/" in model else f"{BARE_MODEL_PROVIDER}/{model}"
+
+
+def approved_models() -> dict:
+    """The approved OpenRouter models (llm_models.py): id -> {index, price, use}."""
+    return APPROVED_MODELS
+
+
+def is_approved(model_id: str) -> bool:
+    return qualify(model_id) in approved_models()
 
 
 def model(*preferred: str | None) -> str:

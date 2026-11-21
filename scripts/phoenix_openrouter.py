@@ -4,19 +4,23 @@
 
 - Custom provider "OpenRouter" (OpenAI SDK, base URL https://openrouter.ai/api/v1): the Playground can run any
   OpenRouter model by typing its id (Phoenix's model dropdown is a fixed list; it cannot be extended).
-- Every model of https://openrouter.ai/api/v1/models becomes a Phoenix model named with its provider prefix
-  (openai/gpt-6.2-sol, anthropic/claude-haiku-5.5, ...) and its prompt/completion/cache prices, so Phoenix
-  shows the cost of every traced call. New models are added and changed prices updated on every run.
+- The approved models (backend/src/infrastructure/agents/llm_models.py) become Phoenix models named with their
+  provider prefix (openai/gpt-6.2-sol, anthropic/claude-haiku-5.5, ...) and their prompt/completion/cache prices
+  from OpenRouter, so Phoenix shows the cost of every traced call. Prices are refreshed on every run and custom
+  models that are no longer approved are removed (Phoenix's built-in models are left alone).
 Standard library only; the OpenRouter key is sent to Phoenix (stored encrypted there) and never printed.
 """
 
 import json
 import os
 import re
+import runpy
 import sys
 import urllib.request
+from pathlib import Path
 
 OPENROUTER = "https://openrouter.ai/api/v1"
+CATALOG = Path(__file__).resolve().parents[1] / "backend/src/infrastructure/agents/llm_models.py"
 PROVIDER_NAME = "OpenRouter"
 # Spans of the OpenAI SDK are tagged provider "openai"; prices must carry the same provider to be matched.
 MODEL_PROVIDER = "openai"
@@ -105,7 +109,13 @@ def sync_models(phoenix, models):
                         input={"id": known["id"], "name": name, "provider": MODEL_PROVIDER,
                                "namePattern": pattern, "costs": costs})
                 updated += 1
-    print(f"Models: {len(models)} in OpenRouter, {added} added, {updated} prices updated")
+    removed = 0
+    for name, known in current.items():
+        if name not in {m["id"] for m in models}:
+            phoenix("mutation($input: DeleteModelMutationInput!) { deleteModel(input: $input) { __typename } }",
+                    input={"id": known["id"]})
+            removed += 1
+    print(f"Models: {len(models)} approved, {added} added, {updated} prices updated, {removed} removed")
 
 
 def main():
@@ -114,7 +124,10 @@ def main():
     if not endpoint or not openrouter_key:
         sys.exit("Define PHOENIX_ENDPOINT and OPENROUTER_API_KEY")
     phoenix = Phoenix(endpoint, os.getenv("PHOENIX_API_KEY"))
-    models = [m for m in http(OPENROUTER + "/models")["data"] if not m["id"].startswith("~")]
+    approved = runpy.run_path(str(CATALOG))["APPROVED_MODELS"]
+    models = [m for m in http(OPENROUTER + "/models")["data"] if m["id"] in approved]
+    if missing := set(approved) - {m["id"] for m in models}:
+        sys.exit(f"Not offered by OpenRouter any more: {', '.join(sorted(missing))}; update llm_models.py")
     ensure_provider(phoenix, openrouter_key)
     sync_models(phoenix, models)
 

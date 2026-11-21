@@ -15,6 +15,7 @@ from pathlib import Path
 
 from phoenix.client.types import PromptVersion
 
+from src.infrastructure.agents import llm_provider
 from src.infrastructure.agents.phoenix_prompt_catalog import phoenix_client
 from src.infrastructure.agents.uow import APPLICATIONS
 
@@ -62,7 +63,11 @@ def main() -> None:
         model = (os.getenv("PHOENIX_SEED_MODEL", "").strip()
                  or (getattr(existing, "_model_name", None) if existing else None) or default_model)
         if not model:
-            raise SystemExit(f"{name}: no model in Phoenix; define OPENROUTER_MODEL (e.g. openai/gpt-4.1)")
+            raise SystemExit(f"{name}: no model in Phoenix; define OPENROUTER_MODEL (e.g. anthropic/claude-haiku-5.5)")
+        if not llm_provider.is_approved(model):
+            raise SystemExit(f"{name}: {model} is not an approved model; choose one of "
+                             + ", ".join(llm_provider.approved_models()) + " (backend/src/infrastructure/agents/llm_models.py)")
+        model = llm_provider.qualify(model)
         reasoning = os.getenv("PHOENIX_SEED_REASONING", "").strip().lower()
         if not reasoning:  # keep the effort the application already has
             reasoning = effort(existing) or ""

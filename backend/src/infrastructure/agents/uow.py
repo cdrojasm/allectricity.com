@@ -153,9 +153,16 @@ class UnitOfWork:
 
     @property
     def model(self) -> str:
-        # Environment (per application) > Phoenix prompt version > OPENROUTER_MODEL.
-        return llm_provider.model(os.getenv(model_variable(self.application)),
-                                  getattr(self.prompt, "model_name", None))
+        # Environment (per application) > Phoenix prompt version > OPENROUTER_MODEL. A per-application choice
+        # must be an approved model (llm_models.py); otherwise the default runs and the choice is logged.
+        for source, choice in (("environment", os.getenv(model_variable(self.application))),
+                               ("Phoenix", getattr(self.prompt, "model_name", None))):
+            if choice and choice.strip():
+                if llm_provider.is_approved(choice):
+                    return llm_provider.qualify(choice)
+                logger.error("Model %r for %s (%s) is not approved in llm_models.py; using OPENROUTER_MODEL",
+                             choice, self.application, source)
+        return llm_provider.model()
 
     @property
     def parameters(self) -> dict:

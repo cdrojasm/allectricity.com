@@ -37,13 +37,13 @@ class FakeClient:
                     "name": name, "arguments": call.function.arguments}}]})
         else:
             message = SimpleNamespace(content=step, tool_calls=None)
-        return SimpleNamespace(id=f"gen-{number}", model="openai/gpt-4.1",
+        return SimpleNamespace(id=f"gen-{number}", model="openai/gpt-6.1-terra",
                                choices=[SimpleNamespace(message=message)],
                                usage=SimpleNamespace(prompt_tokens=100, completion_tokens=20))
 
     def _respond(self, **kwargs):
         self.responses_requests.append(kwargs)
-        return SimpleNamespace(id="resp-1", model="openai/gpt-4.1", output_text="[]", output=[],
+        return SimpleNamespace(id="resp-1", model="openai/gpt-6.1-terra", output_text="[]", output=[],
                                usage=SimpleNamespace(input_tokens=50, output_tokens=10))
 
 
@@ -101,10 +101,10 @@ def test_every_application_has_a_seed():
 def test_phoenix_supplies_prompt_model_and_sampling_but_not_structure():
     client = FakeClient()
     work = uow.UnitOfWork("spat-study-writer", client=client,
-                          prompt=prompt(model="anthropic/claude-sonnet-4", parameters={"temperature": 0.9}))
+                          prompt=prompt(model="google/gemini-4-hydrogen", parameters={"temperature": 0.9}))
     work.complete([{"role": "user", "content": "Resume"}], temperature=0.2, response_format={"type": "json_object"})
     sent = client.requests[0]
-    assert sent["model"] == "anthropic/claude-sonnet-4"
+    assert sent["model"] == "google/gemini-4-hydrogen"
     assert sent["temperature"] == 0.9  # tuned in Phoenix
     assert sent["response_format"] == {"type": "json_object"}  # structure stays in the code
     assert sent["messages"] == [{"role": "system", "content": "Eres un redactor."},
@@ -112,23 +112,23 @@ def test_phoenix_supplies_prompt_model_and_sampling_but_not_structure():
 
 
 def test_model_falls_back_to_openrouter_model_and_bare_names_get_a_provider(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-4.1")
-    assert uow.UnitOfWork("spat-study-writer", prompt=prompt()).model == "openai/gpt-4.1"
-    assert uow.UnitOfWork("spat-study-writer", prompt=prompt(model="gpt-5-nano")).model == "openai/gpt-5-nano"
+    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-6.1-terra")
+    assert uow.UnitOfWork("spat-study-writer", prompt=prompt()).model == "openai/gpt-6.1-terra"
+    assert uow.UnitOfWork("spat-study-writer", prompt=prompt(model="gpt-6.2-sol")).model == "openai/gpt-6.2-sol"
 
 
 def test_phoenix_catalog_keeps_only_tunable_parameters():
     class Version:
         id = "ver-3"
-        _model_name = "openai/gpt-4.1"
+        _model_name = "openai/gpt-6.1-terra"
 
         def format(self, sdk):
             return SimpleNamespace(messages=[{"role": "system", "content": "x"}], kwargs={
-                "model": "openai/gpt-4.1", "temperature": 0.3, "max_tokens": 900, "tools": [{"type": "function"}]})
+                "model": "openai/gpt-6.1-terra", "temperature": 0.3, "max_tokens": 900, "tools": [{"type": "function"}]})
 
     phoenix = SimpleNamespace(prompts=SimpleNamespace(get=lambda **_: Version()))
     snapshot = PhoenixPromptCatalog(client=phoenix).load("spat-study-writer", tag="production")
-    assert snapshot.model_name == "openai/gpt-4.1" and snapshot.version == "ver-3"
+    assert snapshot.model_name == "openai/gpt-6.1-terra" and snapshot.version == "ver-3"
     assert snapshot.parameters == {"temperature": 0.3, "max_tokens": 900}
 
 
@@ -148,14 +148,14 @@ def test_seed_is_used_while_phoenix_is_down_and_a_version_can_be_pinned(monkeypa
 
 
 def test_the_model_of_one_application_can_be_chosen_by_environment(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-4.1")
+    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-6.1-terra")
     context = uow.WorkContext(user_id="u-1")
-    work = uow.UnitOfWork("spat-study-writer", context, client=object(), prompt=prompt(model="openai/gpt-4.1-mini"))
-    assert work.model == "openai/gpt-4.1-mini"  # Phoenix version
-    monkeypatch.setenv("STUDY_WRITER_MODEL", "anthropic/claude-sonnet-4")
-    assert work.model == "anthropic/claude-sonnet-4"  # environment wins
+    work = uow.UnitOfWork("spat-study-writer", context, client=object(), prompt=prompt(model="anthropic/claude-haiku-5.5"))
+    assert work.model == "anthropic/claude-haiku-5.5"  # Phoenix version
+    monkeypatch.setenv("STUDY_WRITER_MODEL", "google/gemini-4-hydrogen")
+    assert work.model == "google/gemini-4-hydrogen"  # environment wins
     other = uow.UnitOfWork("spat-plan-vision", context, client=object(), prompt=prompt())
-    assert other.model == "openai/gpt-4.1"  # untouched applications keep their default
+    assert other.model == "openai/gpt-6.1-terra"  # untouched applications keep their default
 
 
 def test_each_response_is_charged_once_to_the_user_under_the_application(store):
@@ -164,7 +164,7 @@ def test_each_response_is_charged_once_to_the_user_under_the_application(store):
     work = uow.UnitOfWork("spat-study-writer", context, client=FakeClient(["uno", "dos"]), prompt=prompt(), store=store)
     work.complete([{"role": "user", "content": "a"}])
     work.complete([{"role": "user", "content": "b"}])
-    work._account(SimpleNamespace(id="gen-1", model="openai/gpt-4.1",  # a redelivered response
+    work._account(SimpleNamespace(id="gen-1", model="openai/gpt-6.1-terra",  # a redelivered response
                                   usage=SimpleNamespace(prompt_tokens=100, completion_tokens=20)))
     rows = ledger(store)
     assert [(row["action"], row["total_tokens"], row["project_id"]) for row in rows] == [
@@ -235,6 +235,18 @@ def test_responses_api_uses_the_prompt_as_instructions_and_is_charged(store):
     assert sent["instructions"] == runtime.read_prompt_seed("material-search.md")
     assert sent["tools"] == [{"type": "openrouter:web_search"}]
     assert [(row["action"], row["total_tokens"]) for row in ledger(store)] == [("spat-material-search", 60)]
+
+
+def test_an_unapproved_model_never_runs(monkeypatch, caplog):
+    monkeypatch.setenv("OPENROUTER_MODEL", "anthropic/claude-haiku-5.5")
+    context = uow.WorkContext(user_id="u-1")
+    work = uow.UnitOfWork("spat-study-writer", context, client=object(), prompt=prompt(model="openai/gpt-6.2-astra"))
+    assert work.model == "anthropic/claude-haiku-5.5"  # expensive Phoenix choice refused
+    monkeypatch.setenv("STUDY_WRITER_MODEL", "x-ai/unknown")
+    assert work.model == "anthropic/claude-haiku-5.5"
+    assert "not approved" in caplog.text
+    monkeypatch.setenv("STUDY_WRITER_MODEL", "openai/gpt-6.1-terra")
+    assert work.model == "openai/gpt-6.1-terra"
 
 
 def test_phoenix_reasoning_effort_reaches_both_apis_in_their_own_spelling(store):
