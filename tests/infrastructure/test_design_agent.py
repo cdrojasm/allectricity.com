@@ -482,7 +482,7 @@ def test_final_response_uses_only_the_persisted_change(claim):
     applied = {"version": 4, "summary": "Ajuste de ancho",
                "changes": [{"path": "geometry.width_m", "before": 30, "after": 31}]}
     response = reconcile_final_response(claim, applied)
-    assert response == 'Se guardó la versión 4 del diseño: Ajuste de ancho. Campos guardados: geometry.width_m=31.'
+    assert response == 'Se guardó la versión 4 del diseño: Ajuste de ancho. Campos guardados: ancho: 31 m.'
 
 
 def test_final_response_includes_rejected_changes_alongside_saved_changes():
@@ -490,7 +490,7 @@ def test_final_response_includes_rejected_changes_alongside_saved_changes():
                "changes": [{"path": "geometry.width_m", "before": 30, "after": 38}],
                "rejected": ["geometry.burial_depth_m: not applied, debe ser positivo"]}
     assert reconcile_final_response("Listo.", applied) == (
-        "Se guardó la versión 6 del diseño: Ajuste de ancho. Campos guardados: geometry.width_m=38. "
+        "Se guardó la versión 6 del diseño: Ajuste de ancho. Campos guardados: ancho: 38 m. "
         "Cambios no aplicados: geometry.burial_depth_m: debe ser positivo.")
 
 
@@ -499,7 +499,7 @@ def test_final_response_reports_changes_rejected_after_the_saved_version():
                "changes": [{"path": "geometry.width_m", "before": 30, "after": 38}]}
     response = reconcile_final_response("Guardé la profundidad de -2 m.", applied,
                                         ["geometry: geometry.burial_depth_m: debe ser mayor que 0"])
-    assert response.startswith("Se guardó la versión 6 del diseño: Ancho. Campos guardados: geometry.width_m=38.")
+    assert response.startswith("Se guardó la versión 6 del diseño: Ancho. Campos guardados: ancho: 38 m.")
     assert response.endswith("Cambios no aplicados: geometry: geometry.burial_depth_m: debe ser mayor que 0.")
 
 
@@ -910,6 +910,19 @@ def test_confirm_inputs_tool_after_a_blocked_calculation(chat):
     assert tool_result(llm, 2)["queued"] and dispatched
 
 
+def test_confirming_refuses_a_value_the_user_did_not_give(chat):
+    services, client, tokens, project, conversation, _, _ = chat
+    calculation_setup(chat)
+    said = send(client, tokens, conversation, "La gravilla es de 3000 Ω·m y 0,15 m de espesor")
+    llm = calc_step(services, said["run_id"], [
+        ("confirm_inputs", {"paths": ["fault.surface_thickness_m"], "values": {"fault.surface_thickness_m": 0.15},
+                            "message_id": said["id"]}),
+        ("respond_to_user", {"text": "Falta guardar el espesor.", "waits_for": "nothing"}),
+    ], [])
+    refused = tool_result(llm, 1)
+    assert refused["confirmed"] == [] and "set_fields" in refused["errors"][0]
+
+
 def test_a_too_short_justification_does_not_stop_the_calculation(chat):
     services, client, tokens, project, conversation, _, _ = chat
     calculation_setup(chat)
@@ -974,3 +987,93 @@ def test_agent_with_budget_left_runs_and_debits_its_usage(chat):
     assert used > 0 and sum(row["total_tokens"] for row in ledger) == used
     # Each model response is charged by its unit of work, under the application id.
     assert {row["action"] for row in ledger} == {"spat-agent-orchestrator"}
+
+
+def test_saved_fields_read_as_words_not_json():
+    applied = {"version": 2, "summary": "Suelo y varillas", "changes": [
+        {"path": "soil_layers", "after": [{"depth_m": 1.9999219847755678, "resistivity_ohm_m": 410.0054}, {}]},
+        {"path": "geometry.rods", "after": [{"x": 0, "y": 0}] * 3},
+        {"path": "fault.current_a", "after": 8500.0}, {"path": "fault.surface_thickness_m", "after": 0.15}]}
+    response = reconcile_final_response("Listo.", applied)
+    assert response == ("Se guardó la versión 2 del diseño: Suelo y varillas. Campos guardados: capas de suelo: 2, "
+                        "varillas: 3, corriente de falla: 8.500 A, espesor de la capa superficial: 0,15 m.")
+
+
+def test_designer_keeps_one_rod_per_point(chat):
+    services, client, tokens, project, conversation, _, _ = chat
+    sent = send(client, tokens, conversation, "Malla de 40 x 30 m, retícula de 10 m, varillas en esquinas y cada 10 m")
+    corners = [{"x": 0, "y": 0}, {"x": 40, "y": 0}, {"x": 40, "y": 30}, {"x": 0, "y": 30}]
+    perimeter = [{"x": x, "y": 0} for x in (0, 10, 20, 30, 40)]
+    step(services, sent["run_id"], [
+        ("delegate_grid_designer", {"task": f"Mensaje {sent['id']}"}),
+        designer(sent["id"], ("geometry.length_m", 40, "user"), ("geometry.width_m", 30, "user"),
+                 ("geometry.conductor_spacing_m", 10, "user"), ("geometry.rods", corners + perimeter, "user")),
+        ("apply_changes", {"summary": "Malla"}),
+        ("respond_to_user", {"text": "Listo.", "waits_for": "nothing"}),
+    ])
+    rods = artifacts(client, tokens, project)[0]["snapshot"]["geometry"]["rods"]
+    assert [(r["x"], r["y"]) for r in rods] == [(0, 0), (40, 0), (40, 30), (0, 30), (10, 0), (20, 0), (30, 0)]
+
+
+def test_split_factor_given_as_a_fault_field_reaches_the_calculation(chat):
+    services, client, tokens, project, conversation, _, _ = chat
+    calculation_setup(chat)
+    sent = send(client, tokens, conversation, "X/R = 14 y S_f = 0,62 según el estudio EC-02")
+    llm = calc_step(services, sent["run_id"], [
+        ("set_fields", {"reason": "Datos del usuario", "changes": [
+            {"path": "fault.split_factor", "value": 0.62, "source": {"kind": "user", "ref": sent["id"]}},
+            {"path": "fault.x_over_r", "value": 14, "source": {"kind": "user", "ref": sent["id"]}}]}),
+        ("request_potential_calculation", {}),
+        ("respond_to_user", {"text": "Calculando.", "waits_for": "calculation"}),
+    ], [])
+    kept = tool_result(llm, 1)
+    assert kept["errors"] == [] and kept["kept_for_calculation"]["options"]["split_factor"] == 0.62
+    queued = tool_result(llm, 2)
+    assert queued["queued"] and queued["parameters"]["x_over_r"] == 14
+    assert queued["parameters"]["fault_split"]["split_factor"] == 0.62
+
+
+def test_a_rejected_calculation_is_not_queued_again(chat):
+    services, client, tokens, project, conversation, _, _ = chat
+    calculation_setup(chat)
+    sent = send(client, tokens, conversation, "Calcula la seguridad")
+    llm = calc_step(services, sent["run_id"], [
+        ("request_potential_calculation", {"x_over_r": 10}),
+        ("respond_to_user", {"text": "Calculando.", "waits_for": "calculation"}),
+    ], [])
+    first = tool_result(llm, 1)["calculation_id"]
+    with services.store.transaction(write=True) as db:
+        db.change("calculos_potencial_tierras", first, status="rejected", error="duplicate segment geometry: a and b")
+    AgentRuns(services.store).calculation_finished(first)
+    llm = calc_step(services, sent["run_id"], [
+        ("request_potential_calculation", {"x_over_r": 10}),
+        ("respond_to_user", {"text": "El cálculo falló: hay dos varillas en el mismo punto.", "waits_for": "nothing"}),
+    ], [])
+    again = tool_result(llm, 1)
+    assert again["queued"] is False and again["already_failed"] and "duplicate" in again["error"]
+
+
+def test_a_question_for_missing_inputs_cites_what_the_files_hold():
+    from src.infrastructure.agents.design_agent import cite_found_inputs
+    found = {"fault.current_a": {"state": "conflicto", "candidates": [
+        {"value": 9200.0, "unit": "A", "file": "cortocircuito.pdf"}, {"value": 8500.0, "unit": "A", "file": "cortocircuito.pdf"}]},
+        "fault.clearing_time_s": {"state": "encontrado", "candidates": [{"value": 0.5, "unit": "s", "file": "cortocircuito.pdf"}]}}
+    text = cite_found_inputs("Faltan la corriente de falla y el tiempo de despeje.", found)
+    assert text.endswith("En tus documentos encontré:\n- Corriente de falla: 9.200 A o 8.500 A (cortocircuito.pdf)\n"
+                         "- Tiempo de despeje: 0,5 s (cortocircuito.pdf)\n\n¿Uso estos valores?")
+    assert cite_found_inputs("Faltan datos.", {}) == "Faltan datos."
+
+
+def test_a_design_change_sent_as_text_is_asked_again(chat):
+    services, client, tokens, project, conversation, _, _ = chat
+    sent = send(client, tokens, conversation, "Malla de 40 x 30 m con retícula de 5 m")
+    llm = step(services, sent["run_id"], [
+        ("delegate_grid_designer", {"task": f"Mensaje {sent['id']}"}),
+        ("submit_grid_design", {"rationale": "Malla", "changes": ["geometry.length_m=40"]}),
+        designer(sent["id"], ("geometry.length_m", 40, "user"), ("geometry.width_m", 30, "user"),
+                 ("geometry.conductor_spacing_m", 5, "user")),
+        ("apply_changes", {"summary": "Malla"}),
+        ("respond_to_user", {"text": "Listo.", "waits_for": "nothing"}),
+    ])
+    assert "must be an object" in tool_result(llm, 2)["error"]
+    assert artifacts(client, tokens, project)[0]["snapshot"]["geometry"]["length_m"] == 40

@@ -91,6 +91,21 @@ def rod_length_conflicts(geometry: dict) -> list[dict]:
     return conflicts
 
 
+def unique_rods(rods: list[dict]) -> tuple[list[dict], int]:
+    """Rods without repeats at the same plan point (the first one wins), and how many were dropped."""
+    kept, seen = [], set()
+    for rod in rods:
+        try:
+            key = (round(float(rod["x"]) / TOLERANCE_M), round(float(rod["y"]) / TOLERANCE_M))
+        except (KeyError, TypeError, ValueError):
+            kept.append(rod)
+            continue
+        if key not in seen:
+            seen.add(key)
+            kept.append(rod)
+    return kept, len(rods) - len(kept)
+
+
 def rod_points(geometry: dict) -> list[tuple[float, float, float]]:
     """(x, y, effective length) of every rod: its own `length_m`, else `rod_length_m`, else 2.4 m."""
     default_length = float(geometry.get("rod_length_m") or 2.4)
@@ -647,6 +662,15 @@ def geometry_conflicts(geometry: dict) -> list[dict]:
         if allowed and not any(_point_in_area(x, y, area) for area in allowed):
             conflicts.append(_conflict("rod", index, "outside_areas",
                                        f"geometry.rods[{index}] at ({x:g}, {y:g}) is outside the intervenible areas"))
+    seen = {}
+    for index, (x, y, _) in enumerate(rods):
+        key = (round(x / TOLERANCE_M), round(y / TOLERANCE_M))
+        if key in seen:
+            conflicts.append(_conflict("rod", index, "duplicate",
+                                       f"geometry.rods[{index}] at ({x:g}, {y:g}) repeats geometry.rods[{seen[key]}]",
+                                       other=seen[key]))
+        else:
+            seen[key] = index
     for structure_index, structure in enumerate(geometry.get("structures") or []):
         half_w, half_h = float(structure["width"]) / 2, float(structure["height"]) / 2
         if not (-TOLERANCE_M <= structure["x"] - half_w and structure["x"] + half_w <= length + TOLERANCE_M

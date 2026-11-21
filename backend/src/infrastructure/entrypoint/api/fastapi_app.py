@@ -170,6 +170,9 @@ def create_app(settings=None, services=None):
     def delete_project(project_id: str, actor=Depends(require())):
         with app.state.services.store.transaction(write=True) as db:
             project_record(db, project_id, actor)
+            # Chat messages hold their attachments (RESTRICT): remove the conversations before the files go.
+            for conversation in db.many("conversations", project_id=project_id, limit=None):
+                db.remove("conversations", conversation["id"])
             db.remove("projects", project_id)
         return Response(status_code=204)
 

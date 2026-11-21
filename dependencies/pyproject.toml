@@ -33,8 +33,9 @@ api = [
   "pillow>=10,<13",
 ]
 # Phoenix: prompt catalog + traces (OpenTelemetry/OpenInference) of every unit of work.
+# neo4j: the orchestrator reads what the project's files say (knowledge graph) before asking the user.
 agent = ["arize-phoenix-client>=3,<4", "arize-phoenix-otel>=0.17,<1",
-         "openinference-instrumentation-openai>=0.1.75,<0.2", "openai>=1.68,<3"]
+         "openinference-instrumentation-openai>=0.1.75,<0.2", "openai>=1.68,<3", "neo4j>=5.26,<7"]
 documents = [
   "pypdf>=5.0,<7",
   "pypdfium2>=4.30,<6",

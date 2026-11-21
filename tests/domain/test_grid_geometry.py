@@ -281,3 +281,11 @@ def test_only_the_rods_that_cross_a_soil_interface_are_cut_there():
     assert not any(min(s.start_m[2], s.end_m[2]) < -2.0 < max(s.start_m[2], s.end_m[2]) for s in rods)
     short = [s for s in rods if (round(s.start_m[0], 6), round(s.start_m[1], 6)) == (-10.0, -10.0)]
     assert min(min(s.start_m[2], s.end_m[2]) for s in short) == pytest.approx(-1.5)
+
+
+def test_two_rods_at_the_same_point_are_a_plan_error():
+    from src.domain.spat.grid_geometry import unique_rods
+    rods = [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 0.0, "y": 0.0004}]
+    [conflict] = [c for c in geometry_conflicts({**REGULAR, "rods": rods}) if c["kind"] == "duplicate"]
+    assert (conflict["element"], conflict["index"], conflict["other"]) == ("rod", 2, 0)
+    assert unique_rods(rods) == ([{"x": 0, "y": 0}, {"x": 10, "y": 0}], 1)

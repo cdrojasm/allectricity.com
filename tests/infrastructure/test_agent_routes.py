@@ -214,3 +214,19 @@ def test_autonomous_optimization_run_starts_from_the_current_completed_calculati
     assert run["mode"] == "autonomo"
     assert run["artifact_id"] == artifact["artifact_id"]
     assert run["pending_calculation_id"] == calculation_id
+
+
+def test_a_project_with_files_sent_in_the_chat_can_be_deleted(chat):
+    services, client, tokens, project, conversation, _, _ = chat
+    upload_id = "00000000-0000-0000-0000-0000000de1e7"
+    with services.store.transaction(write=True) as db:
+        owner = db.one("projects", id=project["id"])["owner_id"]
+        db.add("file_uploads", id=upload_id, owner_id=owner, project_id=project["id"], filename="plano.pdf",
+               quarantine_key="q/plano.pdf", target_bucket="documents", object_key="p/plano.pdf",
+               expected_mime="application/pdf", status="available", created_at=0, updated_at=0)
+    sent = client.post(f"/api/v1/conversations/{conversation['id']}/messages", headers=headers(tokens),
+                       json={"text": "Te envío el plano", "type": "file", "contents": [{"upload_id": upload_id}]})
+    assert sent.status_code == 201, sent.text
+    assert client.delete(f"/api/v1/projects/{project['id']}", headers=headers(tokens)).status_code == 204
+    with services.store.transaction() as db:
+        assert db.one("projects", id=project["id"]) is None and db.one("file_uploads", id=upload_id) is None

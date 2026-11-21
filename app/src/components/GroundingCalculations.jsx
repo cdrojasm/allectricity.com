@@ -1219,7 +1219,9 @@ function GroundingCalculations({
                   <div className="soil-fit-result">
                     <div className="fit-title">
                       <Check size={16} /> Perfil ajustado{" "}
-                      <span>RMS {num(fit.rms_error_percent)}%</span>
+                      {Number.isFinite(Number(fit.rms_error_percent)) && fit.rms_error_percent !== null && (
+                        <span>RMS {num(fit.rms_error_percent, 2)}%</span>
+                      )}
                     </div>
                     {fit.warnings?.map((warning) => (
                       <small key={warning}>{warning}</small>
@@ -1278,7 +1280,7 @@ function GroundingCalculations({
                               type="number"
                               min="0.01"
                               step="any"
-                              value={layer.depth_m}
+                              value={typeof layer.depth_m === "number" ? Number(layer.depth_m.toFixed(3)) : layer.depth_m}
                               onChange={(e) =>
                                 updateSoilLayer(i, "depth_m", e.target.value)
                               }

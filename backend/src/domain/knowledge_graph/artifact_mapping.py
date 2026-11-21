@@ -67,6 +67,7 @@ def _candidate(claim: dict) -> dict:
         "subject_name": claim.get("subject_name"),
         "attribute": claim.get("attribute"),
         "evidence": claim.get("evidence", []),
+        "filename": claim.get("filename"),
     }
 
 

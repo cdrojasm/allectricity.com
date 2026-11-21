@@ -32,6 +32,7 @@ function conflictText(conflict) {
     case "regular_grid_over_areas": return "La retícula regular cubre todo el terreno: genera la malla en un área intervenible.";
     case "not_on_conductor": return `${element} no toca ningún conductor.`;
     case "overlap": return `${element} se superpone con otro conductor.`;
+    case "duplicate": return `${element} está en el mismo punto que otro electrodo.`;
     case "zero_length": return `${element} tiene longitud cero.`;
     case "bounds": return `${element} necesita mínimos menores que los máximos.`;
     default: return conflict.message;

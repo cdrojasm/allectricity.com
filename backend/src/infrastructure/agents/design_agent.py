@@ -30,6 +30,7 @@ from src.infrastructure.calculations.soil_sounding import fit_sounding
 from src.infrastructure.processing import measurement_tables
 from src.domain.spat.grid_geometry import (
     area_grid, clip_conductors, geometry_warnings, explicit_conductors, geometry_problems, missing_for_calculation, rod_layout,
+    unique_rods,
 )
 from src.domain.knowledge_graph.artifact_mapping import map_claims_to_artifact
 from src.domain.knowledge_graph.conflict_resolution import resolve_conflicts
@@ -49,6 +50,24 @@ FIELD_NAMES = {"geometry": set(ArtifactGeometryRequest.model_fields), "fault": s
                "conductor": set(GroundingConductorRequest.model_fields)}
 SECTION_MODELS = {"soil_layers": TypeAdapter(list[ArtifactSoilLayerRequest]),
                   "fault": TypeAdapter(ArtifactFaultRequest), "conductor": TypeAdapter(GroundingConductorRequest)}
+
+# S_f and X/R belong to the calculation request, not to the artifact; the agent often writes them as fault fields.
+CALCULATION_OPTION_PATHS = {path: option for option in ("split_factor", "x_over_r", "split_factor_origin")
+                            for path in (option, *(f"{section}.{option}" for section in
+                                                   ("fault", "calculation", "conductor", "geometry", "parameters")))}
+
+
+def _calculation_option_problem(option: str, value) -> str | None:
+    if option == "split_factor_origin":
+        return None if str(value or "").strip() else "debe describir de dónde sale S_f"
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "debe ser un número"
+    if option == "split_factor" and not 0 < value <= 1:
+        return "S_f debe estar entre 0 y 1"
+    if option == "x_over_r" and not 0 <= value <= 100:
+        return "X/R debe estar entre 0 y 100"
+    return None
+
 
 HISTORY_MESSAGES = 20
 ORCHESTRATOR_ROUNDS = 14
@@ -154,6 +173,73 @@ def _spanish_reason(reason: str) -> str:
     return text
 
 
+_FIELD_LABELS = {
+    "name": ("nombre", ""), "geometry.length_m": ("largo", " m"), "geometry.width_m": ("ancho", " m"),
+    "geometry.burial_depth_m": ("profundidad", " m"), "geometry.conductor_spacing_m": ("retícula", " m"),
+    "geometry.conductor_spacing_x_m": ("retícula en X", " m"), "geometry.conductor_spacing_y_m": ("retícula en Y", " m"),
+    "geometry.rod_length_m": ("largo de varilla", " m"), "geometry.rods_count": ("varillas", ""),
+    "fault.current_a": ("corriente de falla", " A"), "fault.clearing_time_s": ("tiempo de despeje", " s"),
+    "fault.surface_resistivity_ohm_m": ("capa superficial", " Ω·m"),
+    "fault.surface_thickness_m": ("espesor de la capa superficial", " m"),
+    "fault.body_weight_kg": ("peso corporal", " kg"), "soil_model": ("ajuste del suelo", ""), "conductor.cross_section_mm2": ("sección del conductor", " mm²"),
+}
+_LIST_LABELS = {"geometry.rods": "varillas", "geometry.conductors": "conductores", "geometry.areas": "áreas",
+                "geometry.structures": "estructuras", "soil_layers": "capas de suelo"}
+
+
+def _number(value) -> str:
+    """Spanish notation, whole above 1000 and four significant digits below: 19.227, 1,9999219 → 2, 0,15."""
+    rounded = float(round(value)) if abs(value) >= 1000 else float(f"{value:.4g}")
+    if rounded == int(rounded):
+        return f"{int(rounded):,}".replace(",", ".")
+    return f"{rounded:,.6f}".rstrip("0").replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+
+
+def _saved_field_text(path: str, value) -> str:
+    """A saved field in words for the chat: a label and a rounded value, never the raw JSON of a list."""
+    if path in _LIST_LABELS and isinstance(value, list):
+        return f"{_LIST_LABELS[path]}: {len(value)}"
+    if path == "soil_measurements" and isinstance(value, dict):
+        return f"mediciones de resistividad: {len(value.get('measurements') or [])}"
+    label, unit = _FIELD_LABELS.get(path, (path, ""))
+    if isinstance(value, bool) or value is None:
+        return f"{label}: {'sí' if value is True else 'no' if value is False else 'sin valor'}"
+    if isinstance(value, (int, float)):
+        return f"{label}: {_number(value)}{unit}"
+    if isinstance(value, str):
+        return f"{label}: {value[:80]}"
+    return label
+
+
+_INPUT_NAMES = {"fault.current_a": "corriente de falla", "fault.clearing_time_s": "tiempo de despeje",
+                "fault.surface_resistivity_ohm_m": "resistividad de la capa superficial",
+                "fault.surface_thickness_m": "espesor de la capa superficial",
+                "conductor.thermal_duration_s": "duración térmica", "soil_layers": "modelo de suelo"}
+_UNITS = {"ohm·m": "Ω·m", "ohm*m": "Ω·m"}
+
+
+def cite_found_inputs(text: str, found: dict) -> str:
+    """A question for missing inputs also says what the project's files hold for them, so the user confirms
+    a value instead of looking it up again."""
+    lines = []
+    for path, entry in (found or {}).items():
+        values = []
+        for candidate in entry.get("candidates") or []:
+            value = candidate.get("value")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                unit = _UNITS.get(candidate.get("unit") or "", candidate.get("unit") or "")
+                values.append(f"{_number(value)} {unit}".strip())
+        if not values:
+            continue
+        files = sorted({c.get("file") for c in entry.get("candidates") or [] if c.get("file")})
+        where = f" ({', '.join(files)})" if files else ""
+        label = _INPUT_NAMES.get(path, path)
+        lines.append(f"- {label[0].upper() + label[1:]}: {' o '.join(dict.fromkeys(values))}{where}")
+    if not lines or all(line.split(": ", 1)[1].split(" (")[0].split(" o ")[0] in text for line in lines):
+        return text
+    return f"{text.rstrip()}\n\nEn tus documentos encontré:\n" + "\n".join(lines) + "\n\n¿Uso estos valores?"
+
+
 def reconcile_final_response(text: str, applied: dict | None, rejected: list | None = None) -> str:
     """Build the final claim from persisted changes, never from the model's recollection.
 
@@ -168,10 +254,7 @@ def reconcile_final_response(text: str, applied: dict | None, rejected: list | N
             return f"{base.rstrip()} Cambios no aplicados: " + "; ".join(_spanish_reason(item) for item in rejected) + "."
     if applied:
         changes = applied.get("changes") or []
-        fields = ", ".join(
-            f"{item['path']}={json.dumps(item.get('after'), ensure_ascii=False, sort_keys=True)}"
-            for item in changes if item.get("path")
-        )
+        fields = ", ".join(_saved_field_text(item["path"], item.get("after")) for item in changes if item.get("path"))
         detail = f" Campos guardados: {fields}." if fields else ""
         summary = str(applied.get("summary") or "Cambios al artefacto").rstrip(". ")
         saved_paths = {item.get("path") for item in changes}
@@ -212,6 +295,9 @@ class ArtifactWorkspace:
         self._storage = storage
         self.sounding, self.fits = None, {}
         self.pending_layout = None  # a rod layout that failed and is retried when the grid changes
+        self.calculation_options = {}  # S_f and X/R given while editing; they are calculation parameters
+        self.source_inputs = {}  # artifact_inputs read from the project's files (knowledge graph), by path
+        self.found_for_missing = {}  # source values for the inputs the last calculation check found missing
         self.queued_calculation = None
         self.applied = False
         self.last_applied = None
@@ -267,11 +353,19 @@ class ArtifactWorkspace:
         if not self._is_user_message(message_id):
             return {"error": "message_id must be the user message where they confirmed the values"}
         confirmed, errors = [], []
+        stated = args.get("values") if isinstance(args.get("values"), dict) else {}
         for path in args.get("paths") or []:
+            current = get_path(self.draft, path)
+            said = stated.get(path)
             if path not in CRITICAL:
                 errors.append(f"{path}: only critical inputs need confirmation ({sorted(CRITICAL)})")
-            elif get_path(self.draft, path) in (None, []):
+            elif current in (None, []):
                 errors.append(f"{path}: has no value to confirm; set it with set_fields")
+            elif isinstance(said, (int, float)) and not isinstance(said, bool) and isinstance(current, (int, float)) \
+                    and abs(float(said) - float(current)) > 1e-6 * max(1.0, abs(float(current))):
+                # The user gave another value: confirming would record the draft's value as theirs.
+                errors.append(f"{path}: the user said {said:g} but the draft has {current:g}; "
+                              f"save the user's value with set_fields instead of confirming")
             else:
                 self.provenance[path] = {"kind": "user", "ref": message_id, "note": "Confirmado por el usuario"}
                 confirmed.append({"path": path, "value": get_path(self.draft, path)})
@@ -321,7 +415,7 @@ class ArtifactWorkspace:
         {"pattern", "spacing_x_m", "spacing_y_m"} that is expanded on the updated grid, and
         `geometry.conductors` a grid inside chosen intervenible areas
         {"pattern": "areas", "areas", "spacing_x_m", "spacing_y_m", "bounds"?} (see grid_in_areas)."""
-        applied, errors, layouts, grids = [], [], [], []
+        applied, errors, layouts, grids, remembered = [], [], [], [], []
         for change in args.get("changes") or []:
             path, value = change.get("path"), change.get("value")
             try:
@@ -341,6 +435,17 @@ class ArtifactWorkspace:
                 grids.append((value, entry))
                 continue
             section, _, field = path.partition(".")
+            option = CALCULATION_OPTION_PATHS.get(path)
+            if option:
+                problem = _calculation_option_problem(option, value)
+                if problem:
+                    errors.append(f"{path}: {problem}")
+                else:
+                    self.calculation_options[option] = value
+                    if option == "split_factor" and entry.get("note"):
+                        self.calculation_options.setdefault("split_factor_origin", str(entry["note"])[:200])
+                    remembered.append(path)
+                continue
             if field and section in FIELD_NAMES and field not in FIELD_NAMES[section]:
                 errors.append(f"{path}: unknown field; {section} has {sorted(FIELD_NAMES[section])}")
                 continue
@@ -380,13 +485,26 @@ class ArtifactWorkspace:
             self.draft = set_path(self.draft, "geometry.rods", rods)
             self.provenance["geometry.rods"] = {**entry, "note": entry.get("note") or f"Patrón {layout.get('pattern')}"}
             applied.append("geometry.rods")
+        dropped = 0
+        if "geometry.rods" in applied:  # "corners and every 10 m" names the corners twice: one rod per point
+            rods, dropped = unique_rods((self.draft.get("geometry") or {}).get("rods") or [])
+            if dropped:
+                self.draft = set_path(self.draft, "geometry.rods", rods)
         if applied:
             self._save()
             self.runs.progress(self.run["id"], EventType.TOOL_CALLED,
                                f"Actualicé {len(applied)} campo(s) del borrador",
                                payload={"paths": applied, "reason": str(args.get("reason") or "")[:300]})
         self.rejected_changes.extend(errors)
-        return {"applied": applied, "errors": errors}
+        result = {"applied": applied, "errors": errors}
+        if dropped:
+            result["duplicate_rods_removed"] = dropped
+        if remembered:
+            result["kept_for_calculation"] = {"paths": remembered, "options": dict(self.calculation_options),
+                                              "note": "Saved as calculation parameters (not artifact fields): "
+                                                      "request_potential_calculation uses them. Report them as "
+                                                      "saved for the calculation, never as not saved."}
+        return result
 
     def _set_conductors(self, conductors: list[dict], ref: str, note: str) -> dict:
         self.draft = set_path(self.draft, "geometry.conductors", conductors)
@@ -592,11 +710,17 @@ class ArtifactWorkspace:
         self.provenance["soil_measurements"] = dict(self.sounding["source"])
         layers = [{**layer, "material": None} for layer in fit["soil_layers"]]
         self.draft = set_path(self.draft, "soil_layers", layers)
+        # The same fit record the soil panel saves, so the panel shows this fit's error.
+        self.draft = set_path(self.draft, "soil_model", {
+            "source": "file", "layer_count": int(layer_count),
+            "fit": {key: fit.get(key) for key in ("rms_error_percent", "uniform_rms_error_percent", "warnings",
+                                                  "forward_model", "relative_uncertainty_percent", "excluded")}})
+        self.provenance["soil_model"] = {"kind": "tool", "ref": f"fit_sounding:{layer_count}", "note": None}
         self.provenance["soil_layers"] = {
             "kind": "tool", "ref": f"fit_sounding:{layer_count}",
             "note": f"Ajuste {fit['forward_model']}, RMS {fit['rms_error_percent']:.2f} %. {rationale}"[:300]}
         self._save()
-        return {"applied": ["soil_measurements", "soil_layers"], "soil_layers": layers,
+        return {"applied": ["soil_measurements", "soil_layers", "soil_model"], "soil_layers": layers,
                 "rms_error_percent": fit["rms_error_percent"], "warnings": fit["warnings"]}
 
     def _is_user_message(self, message_id) -> bool:
@@ -618,7 +742,55 @@ class ArtifactWorkspace:
         if not self.draft.get("name") and self.draft:
             self._default_name()
             self._save()
-        return {k: v for k, v in self.validate().items() if k != "normalized"}
+        result = {k: v for k, v in self.validate().items() if k != "normalized"}
+        self.found_for_missing = self._found_in_sources(result.get("missing_for_calculation") or [])
+        if self.found_for_missing:
+            result["found_in_sources"] = self.found_for_missing
+        return result
+
+    def _found_in_sources(self, paths) -> dict:
+        """What the project's files say about these paths: each candidate value with the file it came from."""
+        found = {}
+        for path in paths:
+            entry = self.source_inputs.get(path) or {}
+            candidates = [{"value": c.get("value"), "unit": c.get("unit"),
+                           "file": c.get("filename"),
+                           "page": next((e.get("page") for e in c.get("evidence") or [] if e.get("page")), None),
+                           "quote": next((str(e.get("quote"))[:160] for e in c.get("evidence") or []
+                                          if e.get("quote")), None)}
+                          for c in entry.get("candidates") or []]
+            if candidates:
+                found[path] = {"state": entry.get("state"), "candidates": candidates[:4]}
+        return found
+
+    def found_for_questions(self) -> dict:
+        """Source values for every input the calculation still lacks or needs confirmed, checked now, so a
+        question cites them even when the agent asked without running a check."""
+        if not self.source_inputs:
+            return self.found_for_missing
+        check = self.validate()
+        if not check["valid"]:
+            return self.found_for_missing
+        paths = list(dict.fromkeys([*check["missing_for_calculation"], *check["unconfirmed_critical"]]))
+        return self._found_in_sources(paths) or self.found_for_missing
+
+    def _carried_calculation_options(self) -> dict:
+        """S_f and X/R for a calculation that does not give them: the ones given in this run, else the ones of
+        the artifact's latest calculation, so a redesign is checked under the same fault conditions."""
+        carried = {}
+        if self.artifact_id:
+            with self.store.transaction() as db:
+                rows = db.many("calculos_potencial_tierras", project_id=self.run["project_id"],
+                               artifact_id=self.artifact_id)
+            latest = max(rows, key=lambda row: row["updated_at"], default=None)
+            parameters = (latest or {}).get("parameters") or {}
+            if parameters.get("x_over_r") is not None:
+                carried["x_over_r"] = parameters["x_over_r"]
+            split = parameters.get("fault_split") or {}
+            if split.get("split_factor") is not None:
+                carried["split_factor"] = split["split_factor"]
+                carried["split_factor_origin"] = split.get("split_factor_origin") or "Cálculo anterior del diseño"
+        return {**carried, **self.calculation_options}
 
     def request_calculation(self, args=None) -> dict:
         """Validate the exact persisted artifact version and create its calculation.
@@ -628,12 +800,18 @@ class ArtifactWorkspace:
         """
         if self.queued_calculation:
             return {"queued": False, "suggestion": "Ya hay un cálculo encolado en este paso; termina con waits_for 'calculation'."}
+        self.found_for_missing = {}
         check = self.validate()
         if not check["valid"]:
             return {"queued": False, "errors": check["errors"], "suggestion": "Corrige los errores del artefacto antes de calcular."}
         if check["missing_for_calculation"]:
+            found = self._found_in_sources(check["missing_for_calculation"])
+            self.found_for_missing = found
             return {"queued": False, "missing": check["missing_for_calculation"],
-                    "suggestion": "Pide al usuario los datos faltantes o complétalos desde una fuente confirmada."}
+                    **({"found_in_sources": found} if found else {}),
+                    "suggestion": "Pide al usuario los datos faltantes o complétalos desde una fuente confirmada."
+                                  + (" Para los que están en found_in_sources, cita el valor y el archivo y pide "
+                                     "que lo confirme; no le pidas que lo escriba." if found else "")}
         if check["unconfirmed_critical"]:
             return {"queued": False, "unconfirmed_critical": check["unconfirmed_critical"],
                     "current_values": {p: get_path(check["normalized"], p) for p in check["unconfirmed_critical"]},
@@ -649,9 +827,10 @@ class ArtifactWorkspace:
             saved = self.apply({"summary": "Confirmación de datos críticos para el cálculo"})
             if "error" in saved:
                 return {"queued": False, "errors": [saved["error"]], "suggestion": "No se pudo guardar la confirmación."}
-        options = {k: v for k, v in (args or {}).items() if v not in (None, [], "") and k not in
+        args = {**self._carried_calculation_options(), **{k: v for k, v in (args or {}).items() if v not in (None, [], "")}}
+        options = {k: v for k, v in args.items() if v not in (None, [], "") and k not in
                    {"split_factor", "split_factor_origin"}}
-        if (args or {}).get("split_factor") not in (None, ""):
+        if args.get("split_factor") not in (None, ""):
             options["fault_split"] = {"split_factor": args["split_factor"],
                                       "split_factor_origin": str(args.get("split_factor_origin") or "Indicado por el usuario")}
         try:
@@ -679,6 +858,17 @@ class ArtifactWorkspace:
                     "suggestion": "This version was already calculated with these parameters: report this result "
                                   "and do not wait for a calculation. To recalculate, change the design or the "
                                   "parameters first."}
+        with self.store.transaction() as db:
+            failed = [row for row in db.many("calculos_potencial_tierras", project_id=self.run["project_id"],
+                                             artifact_id=self.artifact_id, artifact_version=self.base_version)
+                      if row["status"] == "rejected" and _solver_inputs(row["parameters"]) == _solver_inputs(parameters)]
+        if failed:
+            # The solver rejected these inputs: queuing the same version again is rejected the same way.
+            latest = max(failed, key=lambda row: row["updated_at"])
+            return {"queued": False, "already_failed": True, "error": latest.get("error"),
+                    "suggestion": "The solver already rejected this version with these parameters. Do not say the calculation is "
+                                  "running: tell the user what failed in plain words and fix the design (or ask how) "
+                                  "before calculating again."}
         try:
             with self.store.transaction(write=True) as db:
                 row = potential_calculations.create_calculation(db, self.run["project_id"], self.artifact_id,
@@ -897,6 +1087,9 @@ def run_grid_designer(client, prompts, workspace: ArtifactWorkspace, task: str, 
     outcome = {}
 
     def finalize(args):
+        if any(not isinstance(c, dict) for c in args.get("changes") or []):
+            # The model sometimes sends a change as text: ask again instead of failing the whole run.
+            return False, {"error": "Each change must be an object with path, value, source_kind, message_id and note"}
         changes = [{"path": c.get("path"), "value": c.get("value"),
                     "source": {"kind": c.get("source_kind"), "ref": c.get("message_id"), "note": c.get("note")}}
                    for c in args.get("changes") or []]
@@ -1078,6 +1271,7 @@ class GroundingDesignAgent:
                     # PR-24: el orquestador recibe el resultado del mapeo completo, no una
                     # muestra arbitraria de 12 afirmaciones recientes.
                     context["sources"]["artifact_inputs"] = map_claims_to_artifact(claims)
+                    workspace.source_inputs = context["sources"]["artifact_inputs"]
                     context["sources"]["input_resolution"] = resolve_conflicts(claims)
                     context["sources"]["claims_count"] = len(claims)
                 finally:
@@ -1134,7 +1328,10 @@ class GroundingDesignAgent:
                      "\nConstruction rule: when artifact_inputs contain confirmed values, build in this order: "
                      "map inputs, delegate soil_modeler for resistivity readings, delegate grid_designer for geometry, "
                      "apply the resulting draft, then request_potential_calculation. Do not ask the user to retype "
-                     "a value already present in artifact_inputs; ask only for missing or conflicting inputs." +
+                     "a value already present in artifact_inputs; ask only for missing or conflicting inputs. When an input is in "
+                     "conflict, or a source file may hold it, ask with what the sources say (each candidate value and "
+                     "its file) instead of asking the user to type it from scratch. S_f and X/R are calculation "
+                     "parameters: pass them to request_potential_calculation, never as fault fields." +
                      "\nLong-term memory rule: reuse project_memory across all conversations." + (
                          "" if mode == AgentMode.CONSULTA else
                          " When the user confirms a durable decision, assumption or pending question, call "
@@ -1190,9 +1387,12 @@ class GroundingDesignAgent:
                              "sees an 'artifact edited' card and the artifact view reloads.",
                              {"summary": {"type": "string"}}, ["summary"]),
                 runtime.tool("confirm_inputs", "Record that the user confirmed the CURRENT value of critical inputs "
-                             "(for example the default surface layer 3000 ohm-m / 0.1 m) in a message.", {
+                             "(for example the default surface layer 3000 ohm-m / 0.1 m) in a message. If the user "
+                             "gave a different value, save it with set_fields instead.", {
                                  "paths": {"type": "array", "items": {"type": "string"}},
-                                 "message_id": {"type": "string"}}, ["paths", "message_id"]),
+                                 "values": {"type": "object", "description": "path -> the value the user stated in "
+                                            "that message, as a number"},
+                                 "message_id": {"type": "string"}}, ["paths", "values", "message_id"]),
                 runtime.tool("request_potential_calculation", "Run the grounding solver only after deterministic checks "
                              "confirm that the saved artifact is valid, complete, and has no unconfirmed critical inputs. "
                              "If blocked, return missing fields and a suggestion; if queued, finish with waits_for "
@@ -1272,6 +1472,8 @@ class GroundingDesignAgent:
                                "pending_changes": [c["path"] for c in pending]}
             args["text"] = reconcile_final_response(str(args.get("text") or ""), workspace.last_applied,
                                                     list(workspace.rejected_changes))
+            if args.get("waits_for") == "answer":
+                args["text"] = cite_found_inputs(args["text"], workspace.found_for_questions())
             workspace.last_applied = None
             workspace.rejected_changes.clear()
             return True, {"ok": True}

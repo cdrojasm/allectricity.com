@@ -17,7 +17,7 @@ COPY dependencies/pyproject.toml ./
 # The stub package lets pip resolve the project's extras; the project itself is installed after its sources.
 FROM base AS runtime-deps
 RUN mkdir src && touch src/__init__.py \
-    && pip install --no-cache-dir '.[api,agent,billing]' && pip uninstall -y spat-design-agent \
+    && pip install --no-cache-dir '.[api,agent,billing,parsers]' && pip uninstall -y spat-design-agent \
     && rm -rf src build ./*.egg-info
 
 FROM runtime-deps AS runtime
