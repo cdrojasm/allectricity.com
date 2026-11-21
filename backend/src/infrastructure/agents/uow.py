@@ -233,9 +233,13 @@ class UnitOfWork:
         instructions = "\n\n".join(str(message.get("content") or "") for message in self.system_messages
                                    if message.get("role") in {"system", "developer"})
         with self._span("CHAIN", input_value=input_text) as current:
+            parameters = self._call_parameters(params)
+            if effort := parameters.pop("reasoning_effort", None):  # Responses API spelling
+                parameters.setdefault("reasoning", {"effort": effort})
+            if (limit := parameters.pop("max_tokens", None)) is not None:
+                parameters.setdefault("max_output_tokens", limit)
             response = self.client.responses.create(
-                **self._call_parameters(params), model=self.model, instructions=instructions or None,
-                input=input_text)
+                **parameters, model=self.model, instructions=instructions or None, input=input_text)
             self._account(response)
             telemetry.set_output(current, getattr(response, "output_text", "") or "")
             return response

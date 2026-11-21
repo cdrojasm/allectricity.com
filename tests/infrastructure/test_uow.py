@@ -237,6 +237,20 @@ def test_responses_api_uses_the_prompt_as_instructions_and_is_charged(store):
     assert [(row["action"], row["total_tokens"]) for row in ledger(store)] == [("spat-material-search", 60)]
 
 
+def test_phoenix_reasoning_effort_reaches_both_apis_in_their_own_spelling(store):
+    add_budget(store, 100_000)
+    client = FakeClient(["ok"])
+    tuned = prompt(model="openai/gpt-6.2-sol", parameters={"reasoning_effort": "medium", "max_tokens": 900})
+    work = uow.UnitOfWork("spat-study-writer", uow.WorkContext(user_id=store.user_id), client=client,
+                          store=store, prompt=tuned)
+    work.complete([{"role": "user", "content": "a"}])
+    assert client.requests[0]["reasoning_effort"] == "medium" and client.requests[0]["max_tokens"] == 900
+    work.respond("b")
+    sent = client.responses_requests[0]
+    assert sent["reasoning"] == {"effort": "medium"} and sent["max_output_tokens"] == 900
+    assert "reasoning_effort" not in sent and "max_tokens" not in sent
+
+
 def test_tracing_setup_is_a_no_op_without_phoenix(monkeypatch):
     monkeypatch.setattr(telemetry, "_state", {"configured": False, "enabled": False})
     monkeypatch.delenv("PHOENIX_ENDPOINT", raising=False)

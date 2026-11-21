@@ -36,6 +36,7 @@ help:
 	  '  smoke-local    Verify frontend, health per component and templates (temporary viewer)' \
 	  '  templates      Regenerate the soil-resistivity templates seeded into MinIO' \
 	  '  sync-prompts   Publish prompt seeds as new Phoenix versions tagged staging' \
+	  '  phoenix-openrouter OpenRouter provider + every model with prices in Phoenix' \
 	  '  eval-extraction Evaluate document extraction against the gold set (ARGS=...)'
 
 .PHONY: local-up local-down local-build test lint
@@ -81,7 +82,7 @@ lint:
 	$(COMPOSE) --profile test build tests
 	$(COMPOSE) --profile test run --rm --no-deps tests ruff check --no-cache src tests --select E9,F63,F7,F82
 
-.PHONY: local-config migrate create-admin sync-prompts smoke-local templates eval-extraction
+.PHONY: local-config migrate create-admin sync-prompts phoenix-openrouter smoke-local templates eval-extraction
 local-config:
 	docker run --rm --name grounding-design-ai-config -v "$(CURDIR):/workspace" -w /workspace python:3.12-alpine python scripts/configure_local.py
 
@@ -91,14 +92,20 @@ migrate:
 create-admin:
 	$(COMPOSE) exec api python -m src.infrastructure.entrypoint.bootstrap_admin
 
+# OpenRouter in Phoenix: custom provider + every model with its price (re-run to pick up new models).
+phoenix-openrouter:
+	OPENROUTER_API_KEY=$$(sed -n 's/^OPENROUTER_API_KEY=//p' .env) PHOENIX_ENDPOINT=$${PHOENIX_ENDPOINT:-http://localhost:$${PHOENIX_PORT:-6016}} python3 scripts/phoenix_openrouter.py
+
 # PHOENIX_SEED_TAG=production publishes straight to what the app reads (default: staging, for review).
 PHOENIX_SEED_TAG ?= staging
 # PHOENIX_SEED_MODEL=<openrouter id> moves every application to that model (default: keep each one's).
 PHOENIX_SEED_MODEL ?=
 # PHOENIX_SEED_ONLY=spat-study-writer,... limits the run to those applications.
 PHOENIX_SEED_ONLY ?=
+# PHOENIX_SEED_REASONING=low|medium|high sets the reasoning effort of those versions (none removes it).
+PHOENIX_SEED_REASONING ?=
 sync-prompts:
-	$(COMPOSE) run --rm --no-deps -e PHOENIX_SEED_TAG=$(PHOENIX_SEED_TAG) -e PHOENIX_SEED_MODEL=$(PHOENIX_SEED_MODEL) -e PHOENIX_SEED_ONLY=$(PHOENIX_SEED_ONLY) \
+	$(COMPOSE) run --rm --no-deps -e PHOENIX_SEED_TAG=$(PHOENIX_SEED_TAG) -e PHOENIX_SEED_MODEL=$(PHOENIX_SEED_MODEL) -e PHOENIX_SEED_ONLY=$(PHOENIX_SEED_ONLY) -e PHOENIX_SEED_REASONING=$(PHOENIX_SEED_REASONING) \
 	  -v $(CURDIR)/scripts/sync_phoenix_prompts.py:/app/scripts/sync_phoenix_prompts.py:ro \
 	  -v $(CURDIR)/prompts:/app/prompts:ro agent-worker python scripts/sync_phoenix_prompts.py
 
