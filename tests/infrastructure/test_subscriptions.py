@@ -20,6 +20,9 @@ IDS = {"essentials": "9f1ca811c2db499598697d156beaf9e9", "standard": "14e257fd31
        "ultimate": "62b409bce249407ead542534fed45475"}
 
 
+ACCOUNT = 3860579022
+
+
 class Clock:
     def __init__(self):
         self.value = 1_800_000_000
@@ -54,6 +57,7 @@ def billing(tmp_path, monkeypatch):
                                                          last_name="Test", phone=None, locale="es-CO", timezone="UTC"))
     clock = Clock()
     monkeypatch.setattr(subscriptions, "_now", clock)
+    monkeypatch.setattr(mercadopago, "_accounts", {})
     yield services, admin, user, clock
     services.store.engine.dispose()
 
@@ -89,7 +93,15 @@ class FakeMercadoPago:
 def mp():
     from mercadopago.http import HttpClient
 
-    return type("Fake", (FakeMercadoPago, HttpClient), {})()
+    fake = type("Fake", (FakeMercadoPago, HttpClient), {})()
+    fake.answer("GET", "/users/me", 200, {"id": ACCOUNT, "tags": ["normal"]})
+    return fake
+
+
+def genuine(preapproval_id, tier, **extra):
+    """An authorized preapproval that charges our account for `tier`'s plan."""
+    return {"id": preapproval_id, "status": "authorized", "collector_id": ACCOUNT, "preapproval_plan_id": IDS[tier],
+            **extra}
 
 
 def budget(store, subscription_id):
@@ -105,8 +117,7 @@ def row(store, subscription_id):
 def activate(services, user, mp, tier="essentials", preapproval="pre-1"):
     service = Subscriptions(services.store, mp)
     pending = service.start_checkout(user["id"], tier)
-    mp.answer("POST", "/preapproval", 201, {"id": preapproval, "status": "authorized",
-                                             "external_reference": pending["id"]})
+    mp.answer("POST", "/preapproval", 201, genuine(preapproval, tier, external_reference=pending["id"]))
     assert service.create_remote(pending["id"], "card-token-1", "payer@testuser.com") == "activated"
     return service, pending["id"]
 
@@ -143,7 +154,7 @@ def test_enforce_loads_the_budget_of_an_active_subscription_that_has_none(billin
     services, _, user, _ = billing
     service = Subscriptions(services.store, mp)
     pending = service.start_checkout(user["id"], "essentials")
-    mp.answer("POST", "/preapproval", 201, {"id": "pre-1", "status": "authorized", "external_reference": pending["id"]})
+    mp.answer("POST", "/preapproval", 201, genuine("pre-1", "essentials", external_reference=pending["id"]))
     # The worker that activated it could not read the tiers (MP_PLAN_* missing in its environment).
     with monkeypatch.context() as env:
         env.delenv("MP_PLAN_NAMES")
@@ -155,6 +166,52 @@ def test_enforce_loads_the_budget_of_an_active_subscription_that_has_none(billin
     assert service.enforce()["repaired"] == 1
     assert budget(services.store, pending["id"])["total_tokens"] == 3_000_000
     assert service.enforce()["repaired"] == 0
+
+
+@pytest.mark.parametrize("preapproval, reason", [
+    (genuine("pre-x", "essentials", collector_id=111), "no es para la cuenta"),     # money to another account
+    (genuine("pre-x", "essentials", preapproval_plan_id=IDS["ultimate"]), "plan"),  # another plan
+])
+def test_a_preapproval_that_is_not_ours_never_unlocks_the_tier(billing, mp, preapproval, reason):
+    services, _, user, _ = billing
+    service = Subscriptions(services.store, mp)
+    pending = service.start_checkout(user["id"], "essentials")
+    mp.answer("POST", "/preapproval", 201, {**preapproval, "external_reference": pending["id"]})
+    assert service.create_remote(pending["id"], "token", "payer@testuser.com") == "rejected"
+    failed = row(services.store, pending["id"])
+    assert failed["status"] == "failed" and reason in failed["error"] and budget(services.store, pending["id"]) is None
+    assert service.summary(user["id"])["subscription"] is None
+
+
+def test_production_refuses_the_credentials_of_a_test_account(billing, mp, monkeypatch):
+    services, _, user, _ = billing
+    monkeypatch.setenv("MP_MODE", "prod")
+    monkeypatch.setenv("MP_PROD_ACCESS_TOKEN", "APP_USR-test-seller")
+    mp.answer("GET", "/users/me", 200, {"id": ACCOUNT, "tags": ["test_user", "normal"]})  # test cards work here
+    service = Subscriptions(services.store, mp)
+    pending = service.start_checkout(user["id"], "essentials")
+    mp.answer("POST", "/preapproval", 201, genuine("pre-1", "essentials", external_reference=pending["id"]))
+    assert service.create_remote(pending["id"], "token", "payer@testuser.com") == "rejected"
+    assert "cuenta de prueba" in row(services.store, pending["id"])["error"]
+    assert budget(services.store, pending["id"]) is None
+
+
+def test_a_first_charge_activates_only_through_its_verified_preapproval(billing, mp):
+    services, _, user, _ = billing
+    service = Subscriptions(services.store, mp)
+    pending = service.start_checkout(user["id"], "standard")
+    with services.store.transaction(write=True) as db:
+        db.change("billing_subscriptions", pending["id"], provider_ref="pre-5")
+    charge = {"id": 601, "preapproval_id": "pre-5", "status": "processed", "payment": {"id": 9101, "status": "approved"}}
+    mp.answer("GET", "/preapproval/pre-5", 200, genuine("pre-5", "standard", collector_id=999))
+    assert service.apply_authorized_payment(charge) == "rejected"
+    assert budget(services.store, pending["id"]) is None
+    with services.store.transaction(write=True) as db:  # a fresh checkout row for the genuine case
+        db.change("billing_subscriptions", pending["id"], status="pending", error=None)
+    mp.answer("GET", "/preapproval/pre-5", 200, genuine("pre-5", "standard"))
+    assert service.apply_authorized_payment(charge) == "activated"
+    assert budget(services.store, pending["id"])["total_tokens"] == 8_000_000
+    assert service.apply_authorized_payment(charge) == "duplicate"
 
 
 def test_rejected_card_fails_the_checkout_with_mercado_pagos_reason(billing, mp):
@@ -178,7 +235,7 @@ def test_a_retry_reuses_the_preapproval_created_by_a_lost_attempt(billing, mp):
     mp.answer("POST", "/preapproval", 503, {"message": "unavailable"})
     with pytest.raises(mercadopago.ResourceUnavailable):
         service.create_remote(pending["id"], "token", "payer@testuser.com")
-    mp.answer("GET", "/preapproval/search", 200, {"results": [{"id": "pre-9", "status": "authorized"}]})
+    mp.answer("GET", "/preapproval/search", 200, {"results": [genuine("pre-9", "essentials")]})
     assert service.create_remote(pending["id"], "token", "payer@testuser.com", retry=True) == "activated"
     assert [call[:2] for call in mp.calls].count(("POST", "/preapproval")) == 1  # never a second creation
     assert row(services.store, pending["id"])["provider_ref"] == "pre-9"
@@ -193,7 +250,7 @@ def test_upgrade_only_and_the_old_subscription_is_cancelled_once_the_new_one_is_
         assert lower.value.status == 409
     new = service.start_checkout(user["id"], "ultimate")
     assert new["replaces_id"] == old_id and row(services.store, old_id)["status"] == "authorized"
-    mp.answer("POST", "/preapproval", 201, {"id": "pre-new", "status": "authorized"})
+    mp.answer("POST", "/preapproval", 201, genuine("pre-new", "ultimate"))
     mp.answer("PUT", "/preapproval/pre-old", 200, {"id": "pre-old", "status": "cancelled"})
     assert service.create_remote(new["id"], "token", "payer@testuser.com") == "activated"
     assert ("PUT", "/preapproval/pre-old", {"status": "cancelled"}) in mp.calls
@@ -207,7 +264,7 @@ def test_a_failed_remote_cancellation_is_retried_by_enforce(billing, mp):
     services, _, user, _ = billing
     service, old_id = activate(services, user, mp, "essentials", "pre-old")
     new = service.start_checkout(user["id"], "standard")
-    mp.answer("POST", "/preapproval", 201, {"id": "pre-new", "status": "authorized"})
+    mp.answer("POST", "/preapproval", 201, genuine("pre-new", "standard"))
     mp.answer("PUT", "/preapproval/pre-old", 503, {})
     service.create_remote(new["id"], "token", "payer@testuser.com")
     assert row(services.store, old_id)["error"] == subscriptions.REMOTE_CANCEL_PENDING
@@ -270,8 +327,8 @@ def test_webhook_events_are_applied_to_the_subscription(billing, mp):
         db.add("billing_webhook_events", id="evt-1", provider="mercadopago", mode="test", dedup_key="k", topic=
                "subscription_preapproval", action="updated", resource_id="pre-7", notification_id="1", request_id="r",
                live_mode=False, payload={}, status="received", attempts=0, received_at=1, updated_at=1)
-    mp.answer("GET", "/preapproval/pre-7", 200, {"id": "pre-7", "status": "authorized",
-                                                 "external_reference": pending["id"], "payer_email": "x@y.z"})
+    mp.answer("GET", "/preapproval/pre-7", 200, genuine("pre-7", "standard", external_reference=pending["id"],
+                                                         payer_email="x@y.z"))
     assert events.process_event(services.store, "evt-1", mp) == "fetched"
     assert row(services.store, pending["id"])["status"] == "authorized"
     with services.store.transaction() as db:
@@ -347,6 +404,13 @@ def test_routes(billing, monkeypatch):
         assert catalog["public_key"] == "TEST-public" and catalog["mode"] == "test"
         assert [plan["name"] for plan in catalog["plans"]] == ["essentials", "standard", "ultimate"]
         assert all(plan["available"] for plan in catalog["plans"])
+        # Test mode: the public test cards would give tokens away, so only administrators can buy by default.
+        assert catalog["checkout"]["enabled"] is False and "licencia" in catalog["checkout"]["reason"]
+        assert client.post("/api/v1/billing/checkout", headers=engineer, json={
+            "tier": "standard", "card_token": "tok_12345678", "payer_email": "payer@testuser.com"}).status_code == 403
+        assert client.get("/api/v1/billing/plans", headers=admin).json()["checkout"]["enabled"] is True
+        monkeypatch.setenv("MP_TEST_CHECKOUT", "everyone")
+        assert client.get("/api/v1/billing/plans", headers=engineer).json()["checkout"]["enabled"] is True
 
         started = client.post("/api/v1/billing/checkout", headers=engineer,
                               json={"tier": "standard", "card_token": "tok_12345678", "payer_email": "payer@testuser.com"})

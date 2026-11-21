@@ -8,13 +8,14 @@
 """
 
 import logging
+import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from src.domain.identity import ServiceError
-from src.infrastructure.billing import plans
+from src.infrastructure.billing import mercadopago, plans
 from src.infrastructure.billing.subscriptions import Subscriptions
 from src.infrastructure.entrypoint.worker.tasks import create_mercadopago_subscription
 from src.infrastructure.security.middleware import require
@@ -57,10 +58,29 @@ def _configured() -> list:
         raise HTTPException(503, "Los planes no están configurados correctamente.") from exc
 
 
+def _checkout_block(actor, mode: str) -> str | None:
+    """Why this user cannot buy right now, or None.
+
+    In test mode the published test cards would unlock real tokens for free, so by default only administrators
+    can buy (MP_TEST_CHECKOUT=everyone opens it, e.g. locally). In production the credentials must belong to a
+    real Mercado Pago account: a test seller accepts test cards."""
+    if mode == "test":
+        everyone = os.getenv("MP_TEST_CHECKOUT", "admins").strip().lower() == "everyone"
+        return None if everyone or actor.privileged else "Los pagos aún no están habilitados. Usa un código de licencia."
+    try:
+        if mercadopago.account(mode)["test_user"]:
+            log.error("MP_PROD_ACCESS_TOKEN belongs to a Mercado Pago test account: checkout disabled")
+            return "Los pagos aún no están habilitados. Usa un código de licencia."
+    except (LookupError, mercadopago.ResourceUnavailable, mercadopago.GatewayRejected):
+        return "Los pagos no están disponibles en este momento. Inténtalo más tarde."
+    return None
+
+
 @router.get("/plans")
-def list_plans(_actor=Depends(require())):
+def list_plans(actor=Depends(require())):
     mode = plans.mode()
     public_key = plans.public_key(mode)
+    blocked = _checkout_block(actor, mode)
     result = []
     for plan in _configured():
         info = plans.details(plan, mode)
@@ -71,7 +91,8 @@ def list_plans(_actor=Depends(require())):
                        "available": bool(info.get("available") and public_key and info.get("amount")),
                        "unavailable_reason": info.get("unavailable_reason") or (None if info.get("available")
                                                                                  else info.get("reason"))})
-    return {"mode": mode, "public_key": public_key or None, "plans": result}
+    return {"mode": mode, "public_key": public_key or None, "plans": result,
+            "checkout": {"enabled": blocked is None, "reason": blocked}}
 
 
 @router.get("/subscription")
@@ -83,6 +104,8 @@ def my_subscription(request: Request, actor=Depends(require())):
 def checkout(payload: CheckoutRequest, request: Request, actor=Depends(require())):
     """Store a pending subscription and hand the card token to the billing worker; poll /subscription."""
     _configured()
+    if blocked := _checkout_block(actor, plans.mode()):
+        raise HTTPException(403, blocked)
     service = _service(request)
     try:
         row = service.start_checkout(actor.user_id, payload.tier)

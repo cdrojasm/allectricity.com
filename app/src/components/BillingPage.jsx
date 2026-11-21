@@ -81,6 +81,7 @@ export function BillingPage({ token, user, onNotice }) {
   const current = summary?.subscription;
   const plans = [...(catalog?.plans || [])].sort((a, b) => a.rank - b.rank);
   const currentRank = plans.find((plan) => plan.name === current?.tier)?.rank ?? -1;
+  const canBuy = catalog?.checkout?.enabled !== false;
   const used = current?.tokens?.used || 0;
   const total = current?.tokens?.total || 0;
 
@@ -99,7 +100,8 @@ export function BillingPage({ token, user, onNotice }) {
   return <section className="projects-page billing-page">
     <div className="projects-topline"><div><div className="eyebrow">TERRA WORKSPACE / PLAN</div><h1>Plan y facturación</h1><p>Tu plan define los tokens mensuales del agente. Los tokens se renuevan en cada cobro y no se acumulan.</p></div></div>
     {error && <div className="project-error" role="alert">{error}<button onClick={() => setError("")} aria-label="Cerrar"><X size={14}/></button></div>}
-    {catalog?.mode === "test" && <div className="billing-test-banner"><CircleAlert size={15}/> Modo de prueba de Mercado Pago: usa tarjetas y compradores de prueba.</div>}
+    {canBuy && catalog?.mode === "test" && <div className="billing-test-banner"><CircleAlert size={15}/> Modo de prueba de Mercado Pago: usa tarjetas y compradores de prueba.</div>}
+    {catalog && !canBuy && <div className="billing-test-banner" role="status"><CircleAlert size={15}/> {catalog.checkout?.reason || "Los pagos aún no están habilitados."}</div>}
 
     <div className="billing-current" data-testid="billing-current">
       {current ? <>
@@ -125,8 +127,8 @@ export function BillingPage({ token, user, onNotice }) {
           <div className="plan-price"><strong>{money(plan.amount, plan.currency)}</strong><span>/mes</span></div>
           <small className="plan-usd">≈ USD {plan.price_usd}</small>
           <ul><li><Zap size={13}/> {tokens(plan.monthly_tokens)} tokens del agente al mes</li><li><ShieldCheck size={13}/> Se renuevan en cada cobro mensual</li></ul>
-          <button className={`button ${lower ? "" : "primary"}`} disabled={lower || pending || !plan.available} onClick={() => { setError(""); setSelected(plan); }}>
-            <CreditCard size={14}/> {plan.available ? label : "No disponible"}</button>
+          <button className={`button ${lower || !canBuy ? "" : "primary"}`} disabled={lower || pending || !plan.available || !canBuy} onClick={() => { setError(""); setSelected(plan); }}>
+            <CreditCard size={14}/> {!plan.available ? "No disponible" : !canBuy && !lower ? "Próximamente" : label}</button>
           {!plan.available && plan.unavailable_reason && <small className="plan-unavailable">{plan.unavailable_reason}</small>}
         </article>;
       })}

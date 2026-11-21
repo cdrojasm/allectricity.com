@@ -147,6 +147,26 @@ def find_preapproval(mode, external_reference: str, http_client=None) -> dict | 
     return results[0] if results else None
 
 
+_accounts: dict = {}
+
+
+def account(mode, http_client=None) -> dict:
+    """The Mercado Pago account behind MP_<MODE>_ACCESS_TOKEN: {"id", "test_user"} (cached per process).
+
+    `live_mode` does not tell test money apart (a test seller's payments report live_mode=true); the account's
+    `test_user` tag does, and only a test seller accepts test cards."""
+    token = access_token(mode)
+    if token in _accounts:
+        return _accounts[token]
+    client = sdk(mode, http_client)
+    me = _result(lambda: client.user().get(_options(mode)))
+    info = {"id": str(me.get("id") or ""), "test_user": "test_user" in (me.get("tags") or [])}
+    if not info["id"]:
+        raise ResourceUnavailable("Mercado Pago no devolvió la cuenta de las credenciales")
+    _accounts[token] = info
+    return info
+
+
 def cancel_preapproval(mode, preapproval_id: str, http_client=None) -> dict:
     client = sdk(mode, http_client)
     return _result(lambda: client.preapproval().update(preapproval_id, {"status": "cancelled"}, _options(mode)))

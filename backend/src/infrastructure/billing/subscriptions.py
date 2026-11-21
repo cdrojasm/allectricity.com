@@ -234,9 +234,30 @@ class Subscriptions:
         with self.store.transaction(write=True) as db:
             db.change(TABLE, old["id"], error=None, updated_at=_now())
 
+    def _verify(self, row: dict, preapproval: dict) -> str | None:
+        """Why this authorized preapproval must not unlock the tier, or None when it is genuine money for us.
+
+        It must charge our own account (collector), for the plan of the tier that was bought, and in production
+        the account behind the credentials must be a real one: test cards only work against test sellers."""
+        mode = row.get("mode") or plans.mode()
+        owner = mercadopago.account(mode, http_client=self.http_client)  # ResourceUnavailable → retried
+        if mode == "prod" and owner["test_user"]:
+            return "Las credenciales de producción son de una cuenta de prueba de Mercado Pago"
+        if str(preapproval.get("collector_id") or "") != owner["id"]:
+            return "El cobro no es para la cuenta de Mercado Pago de Terra"
+        if str(preapproval.get("preapproval_plan_id") or "") != row["plan_id"]:
+            return f"La suscripción no corresponde al plan {row['tier']}"
+        return None
+
     def apply_preapproval(self, resource: dict) -> str:
         at, status = _now(), resource.get("status")
         old, outcome = None, "ignored"
+        problem = None
+        if status == "authorized":
+            with self.store.transaction() as db:
+                candidate = self._find(db, resource.get("id"), resource.get("external_reference"))
+            if candidate and candidate["status"] in ("pending", "failed"):
+                problem = self._verify(candidate, resource)
         with self.store.transaction(write=True) as db:
             row = self._find(db, resource.get("id"), resource.get("external_reference"))
             if row is None:
@@ -244,6 +265,13 @@ class Subscriptions:
             if resource.get("id") and not row.get("provider_ref"):
                 db.change(TABLE, row["id"], provider_ref=str(resource["id"]), updated_at=at)
                 row = db.one(TABLE, id=row["id"])
+            if problem and status == "authorized" and row["status"] in ("pending", "failed"):
+                logger.error("Subscription %s not activated: %s (preapproval %s)", row["id"], problem,
+                             resource.get("id"))
+                db.change(TABLE, row["id"], status="failed", updated_at=at,
+                          error=f"No pudimos verificar el pago: {problem}. Escríbenos si se te cobró.")
+                audit(db, row["user_id"], "billing.verification_failed", row["id"])
+                return "rejected"
             if status == "authorized" and row["status"] in ("pending", "failed"):
                 old, outcome = self._activate(db, row, at, resource.get("next_payment_date")), "activated"
             elif status == "paused" and row["status"] == "authorized":
@@ -266,6 +294,23 @@ class Subscriptions:
         payment = resource.get("payment") or {}
         reference = str(resource.get("id") or payment.get("id") or "")
         old, outcome = None, "ignored"
+        if payment.get("status") == "approved":
+            with self.store.transaction() as db:
+                row = self._find(db, resource.get("preapproval_id"))
+            if row and row["status"] in ("pending", "failed"):
+                # A first charge activates through its preapproval, so it passes the same verification.
+                preapproval_id = row.get("provider_ref") or resource.get("preapproval_id")
+                status, preapproval = mercadopago.fetch_resource(row["mode"] or plans.mode(),
+                                                                 "subscription_preapproval", str(preapproval_id),
+                                                                 http_client=self.http_client)
+                if status != 200 or not isinstance(preapproval, dict):
+                    return "unknown"
+                outcome = self.apply_preapproval({**preapproval, "external_reference": row["id"]})
+                if outcome != "activated":
+                    return outcome
+                with self.store.transaction(write=True) as db:
+                    db.change(TABLE, row["id"], last_payment_ref=reference or None, updated_at=_now())
+                return outcome
         with self.store.transaction(write=True) as db:
             row = self._find(db, resource.get("preapproval_id"))
             if row is None:
@@ -273,9 +318,7 @@ class Subscriptions:
             if payment.get("status") == "approved":
                 if reference and row.get("last_payment_ref") == reference:
                     return "duplicate"
-                if row["status"] in ("pending", "failed"):
-                    old, outcome = self._activate(db, row, at), "activated"
-                elif row["status"] in ("authorized", "past_due", "suspended"):
+                if row["status"] in ("authorized", "past_due", "suspended"):
                     reset = not row.get("last_reset_at") or at - row["last_reset_at"] >= reset_min_seconds()
                     if reset:
                         _grant(db, row, at)
