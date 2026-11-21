@@ -7,6 +7,8 @@
   PHOENIX_PROMPT_TAG supplies the system messages, the model and the sampling parameters; while Phoenix is
   unreachable the checked-in seed (prompts/phoenix/<file>) and OPENROUTER_MODEL are used. A version can be pinned
   with <APPLICATION>_PROMPT_VERSION (e.g. DOCUMENT_EXTRACTOR_PROMPT_VERSION for spat-document-extractor).
+  The model of one application can be forced with <APPLICATION>_MODEL (e.g. STUDY_WRITER_MODEL), which wins over
+  Phoenix; precedence: <APPLICATION>_MODEL > Phoenix version > OPENROUTER_MODEL.
 - Telemetry: each call opens a span named after the application carrying user, project, session and entity;
   units opened inside it (subagents, tools) nest under it and inherit that context.
 - Billing: each model response is debited from the user's token budget under the application id.
@@ -68,6 +70,11 @@ class BudgetUnavailable(RuntimeError):
 
 def version_variable(application: str) -> str:
     return application.removeprefix("spat-").upper().replace("-", "_") + "_PROMPT_VERSION"
+
+
+def model_variable(application: str) -> str:
+    """<APPLICATION>_MODEL, e.g. STUDY_WRITER_MODEL for spat-study-writer: an OpenRouter id that wins over Phoenix."""
+    return application.removeprefix("spat-").upper().replace("-", "_") + "_MODEL"
 
 
 def load_prompt(application: str, catalog=None) -> PromptSnapshot:
@@ -146,7 +153,9 @@ class UnitOfWork:
 
     @property
     def model(self) -> str:
-        return llm_provider.model(getattr(self.prompt, "model_name", None))
+        # Environment (per application) > Phoenix prompt version > OPENROUTER_MODEL.
+        return llm_provider.model(os.getenv(model_variable(self.application)),
+                                  getattr(self.prompt, "model_name", None))
 
     @property
     def parameters(self) -> dict:

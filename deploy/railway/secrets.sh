@@ -70,6 +70,16 @@ case "$smtp_host" in
      put api SMTP_STARTTLS "true" ;;
 esac
 put api PHOENIX_PROMPT_TAG "production"
+# Per-application model (<APPLICATION>_MODEL) for every service that calls the LLM; an empty value clears it.
+for key in AGENT_ORCHESTRATOR_MODEL AGENT_GRID_DESIGNER_MODEL AGENT_SOIL_MODELER_MODEL AGENT_SAFETY_ANALYST_MODEL \
+           DOCUMENT_EXTRACTOR_MODEL DOCUMENT_CONSOLIDATOR_MODEL STUDY_WRITER_MODEL PLAN_VISION_MODEL \
+           MATERIAL_ASSISTANT_MODEL MATERIAL_SEARCH_MODEL MATERIAL_EXTRACTOR_MODEL; do
+  value=$(value_of "$key")
+  for service in api agent-worker document-worker; do
+    if [ -n "$value" ]; then put "$service" "$key" "$value"
+    elif has "$service" "$key"; then railway variable delete -s "$service" "$key" >/dev/null 2>&1 || true; fi
+  done
+done
 # Pinned so traces never split across projects when services run different code versions.
 for service in api agent-worker document-worker; do put "$service" PHOENIX_PROJECT_NAME "allectricity"; done
 

@@ -147,6 +147,17 @@ def test_seed_is_used_while_phoenix_is_down_and_a_version_can_be_pinned(monkeypa
         "document-extractor.md")
 
 
+def test_the_model_of_one_application_can_be_chosen_by_environment(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-4.1")
+    context = uow.WorkContext(user_id="u-1")
+    work = uow.UnitOfWork("spat-study-writer", context, client=object(), prompt=prompt(model="openai/gpt-4.1-mini"))
+    assert work.model == "openai/gpt-4.1-mini"  # Phoenix version
+    monkeypatch.setenv("STUDY_WRITER_MODEL", "anthropic/claude-sonnet-4")
+    assert work.model == "anthropic/claude-sonnet-4"  # environment wins
+    other = uow.UnitOfWork("spat-plan-vision", context, client=object(), prompt=prompt())
+    assert other.model == "openai/gpt-4.1"  # untouched applications keep their default
+
+
 def test_each_response_is_charged_once_to_the_user_under_the_application(store):
     budget = add_budget(store, 100_000)
     context = uow.WorkContext(user_id=store.user_id, project_id="p-1", entity="study:1")
