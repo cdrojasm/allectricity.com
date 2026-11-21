@@ -70,6 +70,8 @@ case "$smtp_host" in
      put api SMTP_STARTTLS "true" ;;
 esac
 put api PHOENIX_PROMPT_TAG "production"
+# Pinned so traces never split across projects when services run different code versions.
+for service in api agent-worker document-worker; do put "$service" PHOENIX_PROJECT_NAME "allectricity"; done
 
 # References for the backend services (projects created before these keys existed need them too).
 for service in $BACKEND; do
