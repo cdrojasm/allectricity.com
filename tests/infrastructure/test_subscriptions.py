@@ -340,7 +340,7 @@ def test_license_codes_are_single_use_and_recharge_every_month(billing):
     service = Subscriptions(services.store)
     [license_code] = service.create_licenses(admin["id"], "standard", months=2, count=1, note="ACME")
     code = license_code["code"]
-    assert code.startswith("TERRA-") and len(code) == 20
+    assert code.startswith("ALLECTRICITY-") and len(code) == 27
     with services.store.transaction() as db:
         stored = db.one("billing_licenses", id=license_code["id"])
     assert code not in json.dumps(stored) and stored["code_hint"] == code.replace("-", "")[-4:]

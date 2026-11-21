@@ -73,7 +73,7 @@ export function UsersAdminPage({ token, onNotice }) {
   }
 
   return <section className="projects-page users-admin-page">
-    <div className="projects-topline"><div><div className="eyebrow">TERRA WORKSPACE / USUARIOS</div><h1>Usuarios</h1><p>Invita ingenieros al piloto con permiso de diseño y una bolsa de tokens para el agente.</p></div><button className="button primary" onClick={() => setOpen(true)}><UserPlus size={15}/> Invitar ingeniero</button></div>
+    <div className="projects-topline"><div><div className="eyebrow">ALLECTRICITY WORKSPACE / USUARIOS</div><h1>Usuarios</h1><p>Invita ingenieros al piloto con permiso de diseño y una bolsa de tokens para el agente.</p></div><button className="button primary" onClick={() => setOpen(true)}><UserPlus size={15}/> Invitar ingeniero</button></div>
     <div className="project-summary"><span><Users size={17}/><strong>{users.length}</strong> usuarios</span></div>
     {error && <div className="project-error" role="alert">{error}<button onClick={() => setError("")} aria-label="Cerrar"><X size={14}/></button></div>}
     <div className="projects-table-wrap"><table className="projects-table" data-testid="users-table"><thead><tr><th>USUARIO</th><th>ROLES</th><th>TOKENS</th><th>ESTADO</th><th></th></tr></thead><tbody>

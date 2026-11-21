@@ -133,7 +133,7 @@ def render_study_pdf(study_id):
 
 
 # The same mail serves an invitation (new engineer) and a forgotten password, so the copy fits both.
-RESET_SUBJECT = "Tu enlace de acceso a Terra"
+RESET_SUBJECT = "Tu enlace de acceso a Allectricity"
 
 
 def _reset_minutes():
@@ -143,11 +143,11 @@ def _reset_minutes():
 def reset_body(reset_url):
     return (
         "Hola,\n\n"
-        "Usa este enlace para crear o cambiar tu contraseña de Terra:\n\n"
+        "Usa este enlace para crear o cambiar tu contraseña de Allectricity:\n\n"
         + reset_url
         + f"\n\nEl enlace vence en {_reset_minutes()} minutos y solo sirve una vez.\n"
         "Si no lo pediste, ignora este correo: tu cuenta sigue igual.\n\n"
-        "— Terra · Diseño de puesta a tierra"
+        "— Allectricity · Diseño de puesta a tierra"
     )
 
 
@@ -166,13 +166,13 @@ def reset_html(reset_url):
 <tr><td align="center">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e5ebe8;">
     <tr><td style="background:#247c6c;padding:22px 32px;font-family:{font};">
-      <span style="color:#ffffff;font-size:20px;font-weight:700;letter-spacing:.3px;">Terra</span>
+      <span style="color:#ffffff;font-size:20px;font-weight:700;letter-spacing:.3px;">Allectricity</span>
       <span style="color:#cfe6e1;font-size:13px;padding-left:8px;">Diseño de puesta a tierra</span>
     </td></tr>
     <tr><td style="padding:32px 32px 8px;font-family:{font};color:#1f2a30;">
       <h1 style="margin:0 0 12px;font-size:22px;line-height:1.3;font-weight:700;">Tu enlace de acceso</h1>
       <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#5d6b74;">
-        Usa este botón para crear o cambiar tu contraseña y entrar a Terra.</p>
+        Usa este botón para crear o cambiar tu contraseña y entrar a Allectricity.</p>
       <table role="presentation" cellpadding="0" cellspacing="0"><tr>
         <td style="border-radius:10px;background:#247c6c;">
           <a href="{url}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;">Elegir mi contraseña</a>

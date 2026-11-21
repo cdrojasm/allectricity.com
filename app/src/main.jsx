@@ -70,8 +70,10 @@ function App() {
   }, [token]);
   useEffect(() => {
     if (!user?.id) return;
-    const key = `terra_last_visit:${user.id}`;
-    const previousVisit = Number(localStorage.getItem(key));
+    const key = `allectricity_last_visit:${user.id}`;
+    const legacyKey = `terra_last_visit:${user.id}`;
+    const previousVisit = Number(localStorage.getItem(key) || localStorage.getItem(legacyKey));
+    if (previousVisit) localStorage.removeItem(legacyKey);
     setLastVisit(previousVisit || null);
     localStorage.setItem(key, String(Date.now()));
   }, [user?.id]);
@@ -175,7 +177,7 @@ function App() {
   return (
     <div className="app-shell">
       <nav className="rail" aria-label="Main navigation">
-        <a className="brand" href="/" aria-label="Terra home" onClick={(event) => { event.preventDefault(); showDashboard(); }}>
+        <a className="brand" href="/" aria-label="Allectricity home" onClick={(event) => { event.preventDefault(); showDashboard(); }}>
           <Zap size={23} fill="currentColor" />
         </a>
         <div className="rail-top">

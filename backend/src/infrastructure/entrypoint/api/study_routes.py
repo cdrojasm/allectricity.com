@@ -24,7 +24,7 @@ DEFAULT_CONFIG = {
         {"id": "references", "label": "Referencias", "enabled": True, "text": ""},
     ],
     "logo_upload_id": None,
-    "show_terra_brand": True,
+    "show_allectricity_brand": True,
     "traceability": "appendix",
 }
 
@@ -58,6 +58,24 @@ class StudyAccessRequest(BaseModel):
 
 class SectionGenerationRequest(BaseModel):
     instruction: str | None = Field(default=None, max_length=1000)
+
+
+def _merge_study_config(base: dict | None, updates: dict | None) -> dict:
+    base, updates = base or {}, updates or {}
+    merged = {**base, **updates}
+    if "show_allectricity_brand" in updates:
+        merged["show_allectricity_brand"] = updates["show_allectricity_brand"]
+    elif "show_terra_brand" in updates:
+        # Older clients still send this field.
+        merged["show_allectricity_brand"] = updates["show_terra_brand"]
+    elif "show_allectricity_brand" in base:
+        merged["show_allectricity_brand"] = base["show_allectricity_brand"]
+    elif "show_terra_brand" in merged:
+        # Existing studies and older clients still send this field.
+        merged["show_allectricity_brand"] = merged["show_terra_brand"]
+    else:
+        merged["show_allectricity_brand"] = True
+    return merged
 
 
 def _hash(value):
@@ -294,7 +312,7 @@ def create_study(project_id: str, data: StudyRequest, request: Request, actor=De
         slug = data.slug or _slug(data.title)
         if db.one("studies", slug=slug):
             slug = f"{slug}-{uuid4().hex[:6]}"
-        row = {"id": str(uuid4()), "project_id": project_id, "owner_id": actor.user_id, "slug": slug, "artifact_id": data.artifact_id, "artifact_version": artifact["version"], "title": data.title, "access": data.access, "status": "draft", "config": {**DEFAULT_CONFIG, **(data.config or {})}, "password_hash": _hash(data.password), "expires_at": data.expires_at, "published_at": None, "created_at": now, "updated_at": now}
+        row = {"id": str(uuid4()), "project_id": project_id, "owner_id": actor.user_id, "slug": slug, "artifact_id": data.artifact_id, "artifact_version": artifact["version"], "title": data.title, "access": data.access, "status": "draft", "config": _merge_study_config(DEFAULT_CONFIG, data.config), "password_hash": _hash(data.password), "expires_at": data.expires_at, "published_at": None, "created_at": now, "updated_at": now}
         db.add("studies", **row)
         return row
 
@@ -307,7 +325,7 @@ def update_study(project_id: str, study_id: str, data: StudyRequest, request: Re
         if not study: raise HTTPException(404, "Study not found")
         version = data.artifact_version or study["artifact_version"]
         if not db.one("artefacto_diseno_tierras", project_id=project_id, artifact_id=data.artifact_id, version=version): raise HTTPException(404, "Artifact version not found")
-        changes = {"artifact_id": data.artifact_id, "artifact_version": version, "title": data.title, "access": data.access, "password_hash": _hash(data.password) if data.password else study["password_hash"], "expires_at": data.expires_at, "config": {**study["config"], **(data.config or {})}, "updated_at": int(time())}
+        changes = {"artifact_id": data.artifact_id, "artifact_version": version, "title": data.title, "access": data.access, "password_hash": _hash(data.password) if data.password else study["password_hash"], "expires_at": data.expires_at, "config": _merge_study_config(study["config"], data.config), "updated_at": int(time())}
         db.change("studies", study_id, **changes)
         return db.one("studies", id=study_id)
 
@@ -382,7 +400,7 @@ def republish_study(project_id: str, study_id: str, data: StudyRequest, request:
         if not artifact: raise HTTPException(404, "Artifact version not found")
         slug = data.slug or f"{previous['slug']}-v{artifact['version']}"
         if db.one("studies", slug=slug): slug = f"{slug}-{uuid4().hex[:6]}"
-        row = {"id": str(uuid4()), "project_id": project_id, "owner_id": actor.user_id, "slug": slug, "artifact_id": data.artifact_id, "artifact_version": artifact["version"], "title": data.title, "access": data.access, "status": "published", "config": {**(previous["config"] or {}), **(data.config or {})}, "password_hash": _hash(data.password) or previous["password_hash"], "expires_at": data.expires_at, "published_at": now, "created_at": now, "updated_at": now}
+        row = {"id": str(uuid4()), "project_id": project_id, "owner_id": actor.user_id, "slug": slug, "artifact_id": data.artifact_id, "artifact_version": artifact["version"], "title": data.title, "access": data.access, "status": "published", "config": _merge_study_config(previous["config"], data.config), "password_hash": _hash(data.password) or previous["password_hash"], "expires_at": data.expires_at, "published_at": now, "created_at": now, "updated_at": now}
         db.add("studies", **row)
         return row
 

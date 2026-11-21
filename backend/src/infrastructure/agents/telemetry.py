@@ -5,7 +5,7 @@ its application id, the user, the project and the entity. Tracing never breaks a
 PHOENIX_ENDPOINT, without the packages (mail worker) or if Phoenix is down, spans are simply not exported.
 
 Variables: PHOENIX_ENDPOINT (or PHOENIX_COLLECTOR_ENDPOINT), PHOENIX_API_KEY, PHOENIX_PROJECT_NAME (default
-"terra"), PHOENIX_TRACING=false to switch it off.
+"allectricity"), PHOENIX_TRACING=false to switch it off.
 """
 
 import json
@@ -40,7 +40,7 @@ def setup(service: str) -> bool:
 
             # A private provider: only units of work and the OpenAI (OpenRouter) calls are exported. A global one
             # would also pick up the spans FastAPI emits by itself (every request, health checks included).
-            options = {"project_name": os.getenv("PHOENIX_PROJECT_NAME", "terra"),
+            options = {"project_name": os.getenv("PHOENIX_PROJECT_NAME", "allectricity"),
                        "endpoint": endpoint.rstrip("/") + "/v1/traces", "batch": True,
                        "auto_instrument": True, "set_global_tracer_provider": False}
             if api_key := os.getenv("PHOENIX_API_KEY"):
@@ -67,7 +67,7 @@ def _tracer():
     from opentelemetry import trace
 
     provider = _state.get("provider")
-    return provider.get_tracer("terra.uow") if provider is not None else trace.get_tracer("terra.uow")
+    return provider.get_tracer("allectricity.uow") if provider is not None else trace.get_tracer("allectricity.uow")
 
 
 def _clip(value) -> str:

@@ -7,7 +7,7 @@ ni acceso al backend, así que sirve igual en local, desarrollo (OKD) y producci
 
 | Variable | Significado |
 |---|---|
-| `SMOKE_BASE_URL` | URL de la aplicación, p. ej. `https://terra.ejemplo.com` |
+| `SMOKE_BASE_URL` | URL de la aplicación, p. ej. `https://allectricity.ejemplo.com` |
 | `SMOKE_<ROL>_EMAIL` / `SMOKE_<ROL>_PASSWORD` | Un par por perfil. `<ROL>` ∈ `DESIGNER`, `VIEWER`, `USER_ADMIN`, `SUPER_ADMIN`. Se prueban los que estén definidos |
 | `SMOKE_CONFIRM_REMOTE=yes` | Obligatoria si la URL no es local; es la confirmación explícita |
 | `SMOKE_LIFECYCLE_ROLES` | Perfiles que ejecutan el ciclo crear/editar/borrar (por defecto `designer`) |

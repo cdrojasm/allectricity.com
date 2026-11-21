@@ -1,4 +1,4 @@
-# Runbook de operación — Terra
+# Runbook de operación — Allectricity
 
 Qué hacer para mantener el servicio y recuperarlo. Cada bloque dice si está **probado** (con fecha) o si es
 **procedimiento sin probar** en el entorno indicado.

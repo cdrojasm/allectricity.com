@@ -154,7 +154,7 @@ BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
 def workbook(spec: dict) -> bytes:
     book = Workbook()
-    book.properties.creator = "Terra Workspace"
+    book.properties.creator = "Allectricity Workspace"
     book.properties.title = f"Plantilla de resistividad — {spec['title']}"
     book.properties.created = book.properties.modified = FIXED_DATE
 

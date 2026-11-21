@@ -1,4 +1,4 @@
-# Terra frontend
+# Allectricity frontend
 
 React workspace for refining a grounding design. Run `npm ci` and `npm run dev`.
 `npm run build` produces `dist/`, which can be served by any static host. The

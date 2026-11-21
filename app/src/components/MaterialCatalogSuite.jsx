@@ -60,9 +60,28 @@ const HISTORY_ACTIONS = { created: "Creado", updated: "Actualizado", approved: "
 
 function readAssistantHistory(key) {
   try {
-    const saved = JSON.parse(localStorage.getItem(key) || "[]");
+    const legacyKey = key.replace("allectricity_material_catalog_", "terra_material_catalog_");
+    const raw = localStorage.getItem(key) || localStorage.getItem(legacyKey) || "[]";
+    if (!localStorage.getItem(key) && raw !== "[]") localStorage.setItem(key, raw);
+    if (localStorage.getItem(legacyKey)) localStorage.removeItem(legacyKey);
+    const saved = JSON.parse(raw);
     return Array.isArray(saved) ? saved : [];
   } catch { return []; }
+}
+
+function readMigratedItem(key) {
+  try {
+    const legacyKey = key.replace("allectricity_material_catalog_", "terra_material_catalog_");
+    const current = localStorage.getItem(key);
+    const legacy = localStorage.getItem(legacyKey);
+    if (current !== null) return current;
+    if (legacy !== null) {
+      localStorage.setItem(key, legacy);
+      localStorage.removeItem(legacyKey);
+      return legacy;
+    }
+  } catch { /* storage is optional */ }
+  return null;
 }
 
 function normalizeUnit(value) {
@@ -88,14 +107,14 @@ function money(value, currency) {
 }
 
 export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice }) {
-  const storageKey = `terra_material_catalog_project_v1:${userId || "local"}`;
+  const storageKey = `allectricity_material_catalog_project_v1:${userId || "local"}`;
   const [tab, setTab] = useState("discover");
   const [location, setLocation] = useState({ country: "Colombia", city: "", radius_km: "100", currency: "COP" });
   const [category, setCategory] = useState("Conductor");
   const [maxResults, setMaxResults] = useState(8);
   const [projects, setProjects] = useState([]);
-  const [projectId, setProjectId] = useState(() => { if (initialProjectId) return initialProjectId; try { return localStorage.getItem(storageKey) || ""; } catch { return ""; } });
-  const assistantStorageKey = `terra_material_catalog_assistant_v1:${userId || "local"}:${projectId || "sin-proyecto"}`;
+  const [projectId, setProjectId] = useState(() => initialProjectId || readMigratedItem(storageKey) || "");
+  const assistantStorageKey = `allectricity_material_catalog_assistant_v1:${userId || "local"}:${projectId || "sin-proyecto"}`;
   const [items, setItems] = useState([]);
   const [estimatedTotal, setEstimatedTotal] = useState(null);
   const [loadingCatalog, setLoadingCatalog] = useState(false);
@@ -105,7 +124,7 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantError, setAssistantError] = useState("");
-  const [assistantDraft, setAssistantDraft] = useState(() => { try { return localStorage.getItem(`${assistantStorageKey}:draft`) || ""; } catch { return ""; } });
+  const [assistantDraft, setAssistantDraft] = useState(() => readMigratedItem(`${assistantStorageKey}:draft`) || "");
   const [assistantMessages, setAssistantMessages] = useState(() => readAssistantHistory(assistantStorageKey));
   const [message, setMessage] = useState("");
   const [formOpen, setFormOpen] = useState(false);
@@ -194,9 +213,9 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
   }, [assistantStorageKey, assistantMessages, projectId, token]);
 
   function changeProject(nextProjectId) {
-    const key = `terra_material_catalog_assistant_v1:${userId || "local"}:${nextProjectId || "sin-proyecto"}`;
+    const key = `allectricity_material_catalog_assistant_v1:${userId || "local"}:${nextProjectId || "sin-proyecto"}`;
     setAssistantMessages(readAssistantHistory(key));
-    try { setAssistantDraft(localStorage.getItem(`${key}:draft`) || ""); } catch { setAssistantDraft(""); }
+    setAssistantDraft(readMigratedItem(`${key}:draft`) || "");
     setProjectId(nextProjectId);
     setItems([]);
     setMessage("");
@@ -364,7 +383,7 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
 
   return <main className="catalog-suite">
     <header className="catalog-topbar">
-      <div className="catalog-breadcrumb"><span>Terra</span><ChevronRight size={14}/><strong>Catálogo de materiales</strong></div>
+      <div className="catalog-breadcrumb"><span>Allectricity</span><ChevronRight size={14}/><strong>Catálogo de materiales</strong></div>
       <div className="catalog-topbar-actions"><div className="catalog-version-wrap"><button className="catalog-version-chip" aria-expanded={historyOpen} disabled={!projectId} onClick={() => { const opening = !historyOpen; setHistoryOpen(opening); if (opening) loadHistory(); }}>Historial · {items.length} renglones</button>{historyOpen && <div className="catalog-version-popover"><strong>Historial del inventario</strong>{historyLoading ? <p>Cargando historial…</p> : historyError ? <div role="alert"><p>{historyError}</p><button className="button" onClick={() => loadHistory()}>Reintentar</button></div> : historyVersions.length ? historyVersions.map((version) => { const snapshot = version.snapshot || {}; const specification = [snapshot.material, snapshot.specification, snapshot.quantity != null ? `${snapshot.quantity} ${snapshot.quantity_unit || ""}`.trim() : ""].filter(Boolean).join(" · "); const evidence = [displayDateTime(version.created_at), specification, snapshot.price_per_unit != null ? money(snapshot.price_per_unit, snapshot.price_currency || "COP") : "Precio pendiente", snapshot.supplier].filter(Boolean).join(" · "); return <div key={version.id || `${version.item_id}-${version.version}`}><span>v{version.version} · {HISTORY_ACTIONS[version.action] || version.action} · {snapshot.name || "Material"}</span><small>{evidence}</small></div>; }) : <p>Aún no hay cambios registrados.</p>}</div>}</div><div className="catalog-scope"><Globe2 size={15}/>{location.city ? `${location.city}, ${location.country}` : location.country || "Define una ubicación"}</div></div>
     </header>
 

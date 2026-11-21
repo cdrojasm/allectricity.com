@@ -98,12 +98,17 @@ def normalize_code(code: str) -> str:
 
 
 def code_hash(code: str) -> str:
+    return hashlib.sha256(f"allectricity-license:{normalize_code(code)}".encode()).hexdigest()
+
+
+def _legacy_code_hash(code: str) -> str:
+    """Keep issued Terra license codes redeemable after the brand change."""
     return hashlib.sha256(f"terra-license:{normalize_code(code)}".encode()).hexdigest()
 
 
 def new_code() -> str:
     body = "".join(secrets.choice(CODE_ALPHABET) for _ in range(12))  # 60 bits
-    return "TERRA-" + "-".join(body[i:i + 4] for i in range(0, 12, 4))
+    return "ALLECTRICITY-" + "-".join(body[i:i + 4] for i in range(0, 12, 4))
 
 
 def public_url(path: str) -> str:
@@ -244,7 +249,7 @@ class Subscriptions:
         if mode == "prod" and owner["test_user"]:
             return "Las credenciales de producción son de una cuenta de prueba de Mercado Pago"
         if str(preapproval.get("collector_id") or "") != owner["id"]:
-            return "El cobro no es para la cuenta de Mercado Pago de Terra"
+            return "El cobro no es para la cuenta de Mercado Pago de Allectricity"
         if str(preapproval.get("preapproval_plan_id") or "") != row["plan_id"]:
             return f"La suscripción no corresponde al plan {row['tier']}"
         return None
@@ -430,7 +435,11 @@ class Subscriptions:
     def redeem(self, user_id: str, code: str) -> dict:
         at = _now()
         with self.store.transaction(write=True) as db:
-            license_row = db.one(LICENSES, code_hash=code_hash(code)) if normalize_code(code) else None
+            license_row = None
+            if normalize_code(code):
+                license_row = db.one(LICENSES, code_hash=code_hash(code))
+                if license_row is None:
+                    license_row = db.one(LICENSES, code_hash=_legacy_code_hash(code))
             if license_row is None or license_row["revoked_at"]:
                 raise ServiceError(404, "Código inválido")
             if license_row["redeemed_at"]:

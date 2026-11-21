@@ -28,7 +28,7 @@ def test_mailer_defaults_to_smtp_and_picks_resend(monkeypatch):
 
 def test_resend_posts_the_reset_mail_with_an_idempotency_key(monkeypatch):
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
-    monkeypatch.setenv("MAIL_FROM", "Terra <no-reply@example.test>")
+    monkeypatch.setenv("MAIL_FROM", "Allectricity <no-reply@example.test>")
     sent = []
 
     def opener(request, timeout):
@@ -42,7 +42,7 @@ def test_resend_posts_the_reset_mail_with_an_idempotency_key(monkeypatch):
     assert request.full_url == "https://api.resend.com/emails" and request.method == "POST"
     assert request.get_header("Authorization") == "Bearer re_test"
     assert request.get_header("Idempotency-key") == "reset-m1"
-    assert payload["from"] == "Terra <no-reply@example.test>" and payload["to"] == ["eng@example.test"]
+    assert payload["from"] == "Allectricity <no-reply@example.test>" and payload["to"] == ["eng@example.test"]
     assert "https://app.test/reset-password#token=t" in payload["text"] and timeout == 20
     assert 'href="https://app.test/reset-password#token=t"' in payload["html"]
 

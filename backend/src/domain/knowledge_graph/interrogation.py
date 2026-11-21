@@ -5,7 +5,7 @@ from collections import defaultdict
 from src.domain.knowledge_graph.claims import LIVE_STATUSES, effective_value, same_value
 
 
-# Entradas que Terra necesita para poder proponer el primer cálculo desde documentos.
+# Entradas que Allectricity necesita para poder proponer el primer cálculo desde documentos.
 REQUIRED_INPUTS = (
     ("fault_current", "fault.current_a"),
     ("shock_duration", "fault.clearing_time_s"),

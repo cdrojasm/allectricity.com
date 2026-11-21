@@ -1,4 +1,4 @@
-# Caso de uso — Agente de diseño de puesta a tierra (Terra)
+# Caso de uso — Agente de diseño de puesta a tierra (Allectricity)
 
 Estado: **especificación para implementar** · Fecha: 2026-10-06 · Backlog: `AG-NN` (ver §12)
 

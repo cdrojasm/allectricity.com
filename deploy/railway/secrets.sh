@@ -37,7 +37,7 @@ put_once api AUTH_MAIL_ENCRYPTION_KEY "$(python3 -c 'import base64,os; print(bas
 put_once api OCR_INTERNAL_API_TOKEN "$(rand 32)"
 put_once api MINIO_WEBHOOK_AUTH_TOKEN "$(rand 32)"
 put_once api STUDY_RENDER_TOKEN "$(rand 32)"
-put_once minio MINIO_ROOT_USER "terra$(python3 -c 'import secrets; print(secrets.token_hex(4))')"
+put_once minio MINIO_ROOT_USER "allectricity$(python3 -c 'import secrets; print(secrets.token_hex(4))')"
 put_once minio MINIO_ROOT_PASSWORD "$(rand 32)"
 # The neo4j image turns every NEO4J_* variable into a server setting (NEO4J_PASSWORD → "PASSWORD", which makes
 # it refuse to start), so the password lives in GRAPH_PASSWORD and NEO4J_AUTH references it.

@@ -107,7 +107,7 @@ def create_app(settings=None, services=None):
         app.state.services.identity.throttle("location_search", "nominatim", limit=1, seconds=2)
         params = urlencode({"q": query, "format": "jsonv2", "addressdetails": 1, "limit": 5})
         url = f"{app.state.geocoder_search_url}?{params}"
-        request = UrlRequest(url, headers={"User-Agent": "TerraWorkspace/0.1 (location search)"})
+        request = UrlRequest(url, headers={"User-Agent": "AllectricityWorkspace/0.1 (location search)"})
         try:
             with urlopen(request, timeout=12) as response:
                 matches = json.loads(response.read(512_000))

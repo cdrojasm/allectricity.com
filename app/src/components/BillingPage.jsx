@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { CircleAlert, CreditCard, Gift, ShieldCheck, X, Zap } from "lucide-react";
 
 // Plan y facturación: the user's tier, its token balance, Mercado Pago checkout (Card Payment Brick: the card
-// never touches Terra, only a single-use token) and license codes. The charge is asynchronous: the API answers
+// never touches Allectricity, only a single-use token) and license codes. The charge is asynchronous: the API answers
 // 202 and this page polls /billing/subscription until the billing worker settles it.
 
 const SDK_URL = "https://sdk.mercadopago.com/js/v2";
@@ -98,7 +98,7 @@ export function BillingPage({ token, user, onNotice }) {
   }
 
   return <section className="projects-page billing-page">
-    <div className="projects-topline"><div><div className="eyebrow">TERRA WORKSPACE / PLAN</div><h1>Plan y facturación</h1><p>Tu plan define los tokens mensuales del agente. Los tokens se renuevan en cada cobro y no se acumulan.</p></div></div>
+    <div className="projects-topline"><div><div className="eyebrow">ALLECTRICITY WORKSPACE / PLAN</div><h1>Plan y facturación</h1><p>Tu plan define los tokens mensuales del agente. Los tokens se renuevan en cada cobro y no se acumulan.</p></div></div>
     {error && <div className="project-error" role="alert">{error}<button onClick={() => setError("")} aria-label="Cerrar"><X size={14}/></button></div>}
     {canBuy && catalog?.mode === "test" && <div className="billing-test-banner"><CircleAlert size={15}/> Modo de prueba de Mercado Pago: usa tarjetas y compradores de prueba.</div>}
     {catalog && !canBuy && <div className="billing-test-banner" role="status"><CircleAlert size={15}/> {catalog.checkout?.reason || "Los pagos aún no están habilitados."}</div>}
@@ -137,7 +137,7 @@ export function BillingPage({ token, user, onNotice }) {
 
     <form className="billing-redeem" onSubmit={redeem}>
       <Gift size={17}/><div><strong>¿Tienes un código de licencia?</strong><small>Un código por persona; se usa una sola vez.</small></div>
-      <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="TERRA-XXXX-XXXX-XXXX" maxLength={40} aria-label="Código de licencia" required/>
+    <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="ALLECTRICITY-XXXX-XXXX-XXXX" maxLength={48} aria-label="Código de licencia" required/>
       <button className="button" type="submit" disabled={redeeming || code.length < 6}>{redeeming ? "Canjeando…" : "Canjear"}</button>
     </form>
 
@@ -187,7 +187,7 @@ function CheckoutDialog({ token, user, catalog, plan, current, onClose, onStarte
       <div className="project-modal-head"><div><div className="eyebrow">MERCADO PAGO</div><h2>Plan {title(plan.name)} · {money(plan.amount, plan.currency)}/mes</h2></div><button type="button" className="icon-button" aria-label="Cerrar" onClick={onClose}><X size={18}/></button></div>
       <div className="project-form-body">
         {current && <p className="billing-upgrade-note">Al subir de plan se cobra hoy el plan {title(plan.name)} completo, tu fecha de cobro pasa a ser hoy y tu bolsa se reemplaza por {tokens(plan.monthly_tokens)} tokens. El plan {title(current.tier)} se cancela cuando el nuevo quede activo.</p>}
-        <p className="map-optional-hint">Cobro mensual recurrente. Los datos de la tarjeta los procesa Mercado Pago; Terra no los ve ni los guarda.</p>
+        <p className="map-optional-hint">Cobro mensual recurrente. Los datos de la tarjeta los procesa Mercado Pago; Allectricity no los ve ni los guarda.</p>
         {!ready && !error && <p className="map-optional-hint">Cargando formulario de pago…</p>}
         <div id={containerId}/>
       </div>

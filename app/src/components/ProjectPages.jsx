@@ -15,7 +15,7 @@ function ForgotPasswordForm({ initialEmail, onBack }) {
   return (
     <form className="login-card" onSubmit={submit} data-testid="forgot-password-form">
       <div className="login-brand"><Zap size={22} fill="currentColor" /></div>
-      <div className="eyebrow">TERRA WORKSPACE</div>
+      <div className="eyebrow">ALLECTRICITY WORKSPACE</div>
       <h1>Restablecer contraseña</h1>
       <p>Escribe el correo de tu cuenta y te enviaremos un enlace para elegir una contraseña nueva.</p>
       <label>Correo electrónico<input autoComplete="username" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
@@ -53,7 +53,7 @@ export function ResetPasswordPage() {
     <main className="login-page">
       <form className="login-card" onSubmit={submit} data-testid="reset-password-form">
         <div className="login-brand"><Zap size={22} fill="currentColor" /></div>
-        <div className="eyebrow">TERRA WORKSPACE</div>
+        <div className="eyebrow">ALLECTRICITY WORKSPACE</div>
         <h1>Elige una contraseña nueva</h1>
         {state === "done" ? <>
           <div className="login-notice" role="status">Tu contraseña se cambió. Las sesiones abiertas se cerraron por seguridad.</div>
@@ -103,7 +103,7 @@ function Login({ onLogin }) {
     <main className="login-page">
       <form className="login-card" onSubmit={submit}>
         <div className="login-brand"><Zap size={22} fill="currentColor" /></div>
-        <div className="eyebrow">TERRA WORKSPACE</div>
+        <div className="eyebrow">ALLECTRICITY WORKSPACE</div>
         <h1>Bienvenido de nuevo</h1>
         <p>Inicia sesión con tu cuenta para continuar.</p>
         <label>Correo electrónico<input autoComplete="username" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></label>
@@ -288,7 +288,7 @@ function ProjectsPage({ token, onNotice, onOpen }) {
     }
   }
   return <section className="projects-page">
-    <div className="projects-topline"><div><div className="eyebrow">TERRA WORKSPACE / PORTAFOLIO</div><h1>Proyectos</h1><p>Organiza tus proyectos de tierras y sus documentos de referencia.</p></div><button className="button primary" onClick={() => start()}><Plus size={15}/> Nuevo proyecto</button></div>
+    <div className="projects-topline"><div><div className="eyebrow">ALLECTRICITY WORKSPACE / PORTAFOLIO</div><h1>Proyectos</h1><p>Organiza tus proyectos de tierras y sus documentos de referencia.</p></div><button className="button primary" onClick={() => start()}><Plus size={15}/> Nuevo proyecto</button></div>
     <div className="project-summary"><span><Layers size={17}/><strong>{projects.length}</strong> proyectos</span><span>Tipo disponible: <strong>Tierras</strong></span></div>
     {error && <div className="project-error" role="alert">{error}<button onClick={() => setError("")}><X size={14}/></button></div>}
     <div className="projects-table-wrap"><table className="projects-table"><thead><tr><th>PROYECTO</th><th>TIPO</th><th>UBICACIÓN</th><th>ARCHIVOS</th><th>ACTUALIZADO</th><th></th></tr></thead><tbody>

@@ -1,4 +1,4 @@
-# Backlog de producto — Terra
+# Backlog de producto — Allectricity
 
 Estado: **propuesta acordada** · Fecha: 2026-10-07 · Ids: `PR-NN`
 
@@ -9,12 +9,12 @@ referencia cuando una tarea depende de él.
 ## 1. Visión
 
 **Para** ingenieros que necesitan diseñar una puesta a tierra o editar una existente,
-**Terra** convierte sus documentos en un estudio calculado, interpretado y listo para
+**Allectricity** convierte sus documentos en un estudio calculado, interpretado y listo para
 compartir, **sin llenar datos ni dibujar a mano** cuando se puede evitar. El ingeniero
 conversa con un agente que infiere las entradas, configura y corre el solver, e
 interpreta el resultado; cada número del estudio se puede rastrear hasta su fuente.
 
-**Promesa en una frase:** sube tus archivos y Terra te entrega un estudio completo en
+**Promesa en una frase:** sube tus archivos y Allectricity te entrega un estudio completo en
 borrador; confirmas lo que falta con un clic y lo compartes.
 
 **Lo que no es:** no certifica ni sustituye al ingeniero que firma; no es un CAD general;
@@ -49,7 +49,7 @@ Cada valor del artefacto lleva dos marcas:
 | D4 | La interfaz es **chat \| artefacto**. | Desaparece la columna de entradas; las entradas son secciones del artefacto. |
 | D5 | El usuario puede editar el artefacto directo (incluso forzar un valor). | Cada edición directa aparece como evento en el chat y propaga la vigencia. |
 | D6 | El estudio publicado queda fijado a una versión del artefacto. | Si el diseño cambia, el estudio muestra «existe una versión más reciente»; el autor decide republicar. |
-| D7 | La marca Terra se puede quitar; la trazabilidad técnica no se elimina, se puede mover a un anexo. | El estudio sigue siendo defendible ante revisión. |
+| D7 | La marca Allectricity se puede quitar; la trazabilidad técnica no se elimina, se puede mover a un anexo. | El estudio sigue siendo defendible ante revisión. |
 | D8 | **Reciclar antes que construir.** | Toda tarea indica qué reutiliza; lo nuevo se justifica. |
 
 ## 4. Inventario de reciclaje
@@ -80,7 +80,7 @@ Lo que ya existe y el papel que toma en el producto nuevo.
 | Hito | Resultado visible | Tareas |
 |---|---|---|
 | **H1 · Una sola verdad** | Lo que se ve es lo que está guardado; nada se contradice. | PR-01 a PR-06, PR-10 a PR-13 |
-| **H2 · Wow** | Subo archivos → Terra me interroga → construye todo → resultado interpretado en borrador. | PR-20 a PR-26, PR-30 a PR-32 |
+| **H2 · Wow** | Subo archivos → Allectricity me interroga → construye todo → resultado interpretado en borrador. | PR-20 a PR-26, PR-30 a PR-32 |
 | **H3 · Compartir estudio** | Publico el estudio como página o PDF, con mi logo y mis textos. | PR-50 a PR-57 |
 | **H4 · Entorno constructivo** | El agente lee el plano y propone dónde va la malla. | PR-40 a PR-44 |
 
@@ -145,7 +145,7 @@ H1 va primero porque H2 sin una sola verdad reproduce las incoherencias actuales
 |---|---|---|---|
 | PR-50 | ✅ **Implementada.** Modelo persistido de estudio fijado a artefacto/versión, configuración de secciones, marca, trazabilidad, acceso, expiración y migración Alembic. | Patrón de versiones del artefacto | PR-03 |
 | PR-51 | ✅ **Implementada.** Página de solo lectura con URL estable (`/e/{slug}`) que compone bloques del artefacto y conserva el aviso de versión más reciente. | Artefacto versionado y resultados | PR-50 |
-| PR-52 | ✅ **Implementada.** Editor de secciones activas, textos, logo, marca Terra y acceso desde «Compartir estudio»; configuración guardada y vista pública actualizada. | Configuración persistida y carga presignada | PR-51 |
+| PR-52 | ✅ **Implementada.** Editor de secciones activas, textos, logo, marca Allectricity y acceso desde «Compartir estudio»; configuración guardada y vista pública actualizada. | Configuración persistida y carga presignada | PR-51 |
 | PR-53 | ✅ **Implementada.** La vista pública lista referencias automáticas por ruta desde `origin.provenance`, incluyendo referencia, nota y tipo de origen. | `origin.provenance`, afirmaciones y localizadores del grafo | PR-04, PR-50 |
 | PR-54 | ✅ **Implementada.** Público, solo con enlace, contraseña, revocación y expiración, con gestión desde el editor y validación en el endpoint público. | Capa de seguridad actual | PR-51 |
 | PR-55 | ✅ **Implementada.** La vista conserva impresión local y el backend encola render Chromium/Playwright, almacena el PDF en MinIO y expone una URL firmada. | Celery, MinIO, Playwright | PR-51 |

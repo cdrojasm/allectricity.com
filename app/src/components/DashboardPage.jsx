@@ -48,7 +48,13 @@ function DashboardPage({ token, user, lastVisit, onOpen, onShowProjects }) {
         if (live) setTokensUsed(budgets.reduce((sum, budget) => sum + Number(budget.used_tokens || 0), 0));
       } catch { if (live) setTokensUsed(undefined); }
       try {
-        const recent = JSON.parse(localStorage.getItem(`terra_recent_features:${user.id}`) || "[]");
+        const legacyKey = `terra_recent_features:${user.id}`;
+        const key = `allectricity_recent_features:${user.id}`;
+        const recent = JSON.parse(localStorage.getItem(key) || localStorage.getItem(legacyKey) || "[]");
+        if (Array.isArray(recent)) {
+          localStorage.setItem(key, JSON.stringify(recent));
+          localStorage.removeItem(legacyKey);
+        }
         if (live && Array.isArray(recent)) setFeatures(recent.slice(0, 6));
       } catch { if (live) setFeatures([]); }
     }
@@ -59,7 +65,7 @@ function DashboardPage({ token, user, lastVisit, onOpen, onShowProjects }) {
   // Activity of projects that no longer exist is not shown.
   const visibleFeatures = features.filter((item) => projects.some((project) => project.name === item.projectName));
   return <main className="dashboard-page">
-    <header className="dashboard-heading"><div><div className="eyebrow">TERRA WORKSPACE / INICIO</div><h1>Hola, {user.first_name || ""}</h1><p>Resumen de tus proyectos y actividad reciente.</p></div><button className="button primary" onClick={onShowProjects}><Layers size={15}/> Ver proyectos <ArrowRight size={14}/></button></header>
+    <header className="dashboard-heading"><div><div className="eyebrow">ALLECTRICITY WORKSPACE / INICIO</div><h1>Hola, {user.first_name || ""}</h1><p>Resumen de tus proyectos y actividad reciente.</p></div><button className="button primary" onClick={onShowProjects}><Layers size={15}/> Ver proyectos <ArrowRight size={14}/></button></header>
     {error && <div className="project-error" role="alert">{error}</div>}
     <section className="dashboard-metrics" aria-label="Resumen de cuenta">
       <article className="dashboard-metric"><span><Layers size={17}/> Proyectos</span><strong>{projects.length}</strong><small>Proyectos de tu cuenta</small></article>

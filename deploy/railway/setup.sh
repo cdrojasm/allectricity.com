@@ -4,7 +4,7 @@
 # Usage (from the repository root, after `railway login`):  sh deploy/railway/setup.sh [project-name] [workspace]
 set -eu
 cd "$(dirname "$0")/../.."
-NAME=${1:-terra-piloto}
+NAME=${1:-allectricity-piloto}
 WORKSPACE=${2:-}
 
 if [ -n "$WORKSPACE" ]; then railway init -n "$NAME" -w "$WORKSPACE"; else railway init -n "$NAME"; fi

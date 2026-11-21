@@ -23,7 +23,7 @@ def main() -> None:
     ids = []
     for name, amount in zip(names, amounts):
         result = sdk.plan().create({
-            "reason": f"Terra {name.capitalize()}",
+            "reason": f"Allectricity {name.capitalize()}",
             "external_reference": name,
             "auto_recurring": {"frequency": 1, "frequency_type": "months", "transaction_amount": amount,
                                "currency_id": "COP"},

@@ -60,11 +60,14 @@ export function download(name, text, type = "application/json") {
 
 export function recordFeatureUse(userId, feature, projectName) {
   if (!userId) return;
-  const key = `terra_recent_features:${userId}`;
+  const key = `allectricity_recent_features:${userId}`;
   try {
-    const existing = JSON.parse(localStorage.getItem(key) || "[]");
+    const legacyKey = `terra_recent_features:${userId}`;
+    const legacy = localStorage.getItem(legacyKey);
+    const existing = JSON.parse(localStorage.getItem(key) || legacy || "[]");
     const next = [{ feature, projectName, usedAt: Date.now() }, ...existing].slice(0, 20);
     localStorage.setItem(key, JSON.stringify(next));
+    if (legacy) localStorage.removeItem(legacyKey);
   } catch { /* Keep feature navigation available if local storage is unavailable. */ }
 }
 
