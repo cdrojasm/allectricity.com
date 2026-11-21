@@ -91,8 +91,12 @@ migrate:
 create-admin:
 	$(COMPOSE) exec api python -m src.infrastructure.entrypoint.bootstrap_admin
 
+# PHOENIX_SEED_TAG=production publishes straight to what the app reads (default: staging, for review).
+PHOENIX_SEED_TAG ?= staging
 sync-prompts:
-	$(COMPOSE) run --rm --no-deps agent-worker python scripts/sync_phoenix_prompts.py
+	$(COMPOSE) run --rm --no-deps -e PHOENIX_SEED_TAG=$(PHOENIX_SEED_TAG) \
+	  -v $(CURDIR)/scripts/sync_phoenix_prompts.py:/app/scripts/sync_phoenix_prompts.py:ro \
+	  -v $(CURDIR)/prompts:/app/prompts:ro agent-worker python scripts/sync_phoenix_prompts.py
 
 eval-extraction:
 	$(COMPOSE) run --rm --no-deps -v "$(CURDIR):/workspace" -w /workspace --entrypoint python document-worker scripts/evaluate_extraction.py $(ARGS)
