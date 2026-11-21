@@ -487,7 +487,63 @@ def test_mail_delivery_retry_and_dedup(env):
         assert db.one("mail_outbox", id=row["id"])["payload"] == ""
 
 
-def test_google_adapter_boundary_and_no_automatic_linking(env):
+class FakeGoogle:
+    def __init__(self, email, subject="google-sub-1"):
+        self.email, self.subject = email, subject
+
+    def verify(self, token):
+        return {"email": self.email, "subject": self.subject, "issuer": "https://accounts.google.com", "name": "G"}
+
+
+def reset_link_token(svc, email):
+    svc.identity.forgot_password(email)
+    with svc.store.transaction() as db:
+        user = db.one("users", email=email)
+        reset = db.one("password_resets", user_id=user["id"], consumed_at=None)
+        payload = json.loads(svc.identity.cipher.decrypt(db.one("mail_outbox", reset_id=reset["id"])["payload"]))
+    return payload["url"].split("#token=")[1]
+
+
+def test_google_joins_a_password_account_whose_email_was_proven_and_keeps_the_password(env):
+    _, svc, _, admin, _, _ = env
+    user, _, _ = human(svc, admin, email="ana@example.com")
+    svc.identity.reset_password(reset_link_token(svc, "ana@example.com"), PASSWORD)  # proves the mailbox
+    svc.identity.external = FakeGoogle("ana@example.com")
+    by_google = svc.identity.authenticate(svc.identity.google("verified-by-adapter")["access_token"])
+    assert by_google.user_id == user["id"]
+    by_password = svc.identity.authenticate(svc.identity.login("ana@example.com", PASSWORD)["access_token"])
+    assert by_password.user_id == user["id"]
+    again = svc.identity.authenticate(svc.identity.google("verified-by-adapter")["access_token"])
+    assert again.user_id == user["id"]
+
+
+def test_google_drops_the_password_of_an_email_nobody_proved(env):
+    _, svc, _, admin, _, _ = env
+    squatter, squatter_tokens, _ = human(svc, admin, email="victim@example.com")
+    svc.identity.external = FakeGoogle("victim@example.com")
+    owner = svc.identity.authenticate(svc.identity.google("verified-by-adapter")["access_token"])
+    assert owner.user_id == squatter["id"]
+    with pytest.raises(ServiceError) as exc:
+        svc.identity.login("victim@example.com", PASSWORD)
+    assert exc.value.status == 401
+    with pytest.raises(ServiceError):
+        svc.identity.authenticate(squatter_tokens["access_token"])
+    # The owner can add a password back through the mailbox.
+    svc.identity.reset_password(reset_link_token(svc, "victim@example.com"), PASSWORD)
+    assert svc.identity.login("victim@example.com", PASSWORD)["access_token"]
+
+
+def test_google_never_joins_staff_accounts(env):
+    _, svc, _, admin, _, _ = env
+    human(svc, admin, email="ops@example.com", role="user_admin")
+    for email in ("admin@example.com", "ops@example.com"):
+        svc.identity.external = FakeGoogle(email, subject="sub-" + email)
+        with pytest.raises(ServiceError) as exc:
+            svc.identity.google("verified-by-adapter")
+        assert exc.value.status == 409
+
+
+def test_google_signup_creates_a_designer_and_staff_emails_conflict(env):
     _, svc, _, _, _, _ = env
 
     class Google:

@@ -185,7 +185,7 @@ class IdentityService:
                 or not valid
                 or not user["active"]
                 or user["kind"] != "human"
-                or user["idp_provider"] != "local"
+                or not user["password_hash"]
             ):
                 raise ServiceError(401, "Invalid credentials")
             audit(db, user["id"], "auth.login", user["id"])
@@ -209,12 +209,10 @@ class IdentityService:
             user = db.one(
                 "users", idp_provider="google", idp_subject=identity["subject"]
             )
-            if user is None:
-                if db.one("users", email=identity["email"]):
-                    raise ServiceError(
-                        409,
-                        "Ya existe una cuenta con ese correo. Inicia sesión con tu correo y contraseña.",
-                    )
+            existing = None if user else db.one("users", email=identity["email"])
+            if existing:
+                user = self._link_google(db, existing, identity)
+            elif user is None:
                 user = new_user(
                     db,
                     email=identity["email"],
@@ -234,6 +232,39 @@ class IdentityService:
                 raise ServiceError(401, "Account unavailable")
             audit(db, user["id"], "auth.google", user["id"])
             return self._session(db, user)
+
+    def _link_google(self, db, user, identity):
+        """Google proved the mailbox, so its identity is attached to the account with that email.
+
+        Pre-hijacking guard: a password set on an email nobody ever proved (someone may have
+        registered it first) is dropped, with every session and pending reset. A proven email keeps
+        its password, so both sign-in methods work. Staff and machine accounts are never linked.
+        """
+        staff = any(
+            a["role_id"] in {"super_admin", "m2m", "user_admin"}
+            for a in db.many("user_roles", user_id=user["id"])
+        )
+        if user["kind"] != "human" or staff or user["idp_provider"] != "local":
+            raise ServiceError(
+                409,
+                "Ya existe una cuenta con ese correo. Inicia sesión con tu correo y contraseña.",
+            )
+        changes = dict(
+            idp_provider="google",
+            idp_subject=identity["subject"],
+            idp_issuer=identity["issuer"],
+            idp_metadata={**(user["idp_metadata"] or {}), "email_verified": True, "linked_at": now()},
+            email_verified=True,
+            avatar_url=user["avatar_url"] or identity.get("picture"),
+            updated_at=now(),
+        )
+        if not user["email_verified"]:
+            changes["password_hash"] = None
+            invalidate_resets(db, user["id"])
+            revoke_sessions(db, user["id"])
+        db.change("users", user["id"], **changes)
+        audit(db, user["id"], "auth.google_linked" if user["email_verified"] else "auth.google_linked_password_dropped", user["id"])
+        return db.one("users", id=user["id"])
 
     def authenticate(self, token):
         claims = self.tokens.verify(token)
@@ -303,8 +334,8 @@ class IdentityService:
                 user
                 and user["active"]
                 and user["kind"] == "human"
-                and user["idp_provider"] == "local"
             ):
+                # Google accounts too: the link reaches the same mailbox, so it can add a password.
                 invalidate_resets(db, user["id"])
                 token = secrets.token_urlsafe(48)
                 reset = db.add(
@@ -348,16 +379,14 @@ class IdentityService:
             ):
                 raise ServiceError(400, "Invalid or expired reset token")
             user = db.one("users", id=reset["user_id"])
-            if (
-                not user["active"]
-                or user["idp_provider"] != "local"
-                or user["kind"] != "human"
-            ):
+            if not user["active"] or user["kind"] != "human":
                 raise ServiceError(400, "Invalid or expired reset token")
+            # Using the emailed link proves the mailbox.
             db.change(
                 "users",
                 user["id"],
                 password_hash=self.passwords.hash(password),
+                email_verified=True,
                 updated_at=now(),
             )
             invalidate_resets(db, user["id"])
@@ -369,7 +398,7 @@ class IdentityService:
             user = db.one("users", id=principal.user_id)
             if (
                 user["kind"] != "human"
-                or user["idp_provider"] != "local"
+                or not user["password_hash"]
                 or not self.passwords.verify(
                     user["password_hash"] or self.dummy_hash, current
                 )

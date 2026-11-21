@@ -138,10 +138,14 @@ privilegiadas. Bootstrap solo por CLI interactiva, una vez y sin endpoint públi
 Google valida firma, emisor, expiración, audiencia/authorized party y correo
 verificado con `google-auth`. Identidad estable: provider + `sub`, nunca email.
 Una nueva cuenta Google (autorregistro) recibe designer: puede crear proyectos, y el agente
-queda detrás de un plan pagado (`AGENT_REQUIRE_BUDGET=true`); una coincidencia de email con otra cuenta
-produce conflicto y requiere un flujo explícito de vinculación futuro.
-No se guardan access/refresh tokens de Google. Las contraseñas de cuentas Google
-se administran en Google, no mediante el reset local.
+queda detrás de un plan pagado (`AGENT_REQUIRE_BUDGET=true`). Si el correo ya tiene una cuenta
+con contraseña, Google se vincula a ella (Google prueba el buzón): si ese correo ya se había
+probado (se usó un enlace de restablecimiento, que marca `email_verified`) la contraseña se
+conserva y sirven ambos métodos; si nunca se probó, la contraseña se borra y se revocan sesiones
+y enlaces pendientes (defensa contra pre-secuestro). Cuentas de staff (`super_admin`,
+`user_admin`, `m2m`) nunca se vinculan: 409.
+No se guardan access/refresh tokens de Google. Cualquier cuenta humana puede fijar o recuperar
+su contraseña con el enlace del correo; el login con contraseña exige que exista una.
 
 ### Presupuesto y uso
 
@@ -174,7 +178,7 @@ extensión pendiente si se necesita garantizar presupuesto antes del gasto exter
 
 La solicitud genera un reset de 30 minutos, invalida resets previos y guarda en
 la misma transacción un mensaje cifrado con una llave Fernet independiente del
-secreto JWT. API responde 202 aun si la cuenta no existe o es de Google.
+secreto JWT. API responde 202 aun si la cuenta no existe (las cuentas Google también reciben el enlace y así pueden añadir contraseña).
 Un Celery Beat encola IDs pendientes cada 15 segundos; el worker descifra y envía
 por SMTP. Redis no recibe el enlace ni la contraseña, solo el ID del mensaje.
 
