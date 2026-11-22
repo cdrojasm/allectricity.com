@@ -1081,9 +1081,19 @@ h2 {
 .ground-plan-header { min-height: 70px; padding: 12px 18px; display: flex; justify-content: space-between; align-items: center; gap: 12px; background: white; border-bottom: 1px solid #e1e8e4; }
 .ground-plan-header h2 { margin: 3px 0 0; color: #30483e; font: 700 18px Manrope,sans-serif; }
 .ground-plan-header-actions { display: flex; align-items: center; gap: 7px; }
-.ground-plan-body { min-height: 0; flex: 1; display: grid; grid-template-columns: 225px minmax(0,1fr) 245px; }
+.ground-plan-body { min-height: 0; flex: 1; display: grid; grid-template-columns: var(--ground-plan-sidebar-width,225px) 5px minmax(0,1fr) 5px var(--ground-plan-inspector-width,245px); }
 .ground-plan-sidebar, .ground-plan-inspector { min-height: 0; padding: 16px; overflow: auto; background: white; }
 .ground-plan-sidebar { border-right: 1px solid #e1e8e4; }
+.ground-plan-sidebar.collapsed { padding: 8px 4px; overflow: hidden; }
+.ground-plan-sidebar-heading { min-height: 24px; display:flex; align-items:center; justify-content:space-between; gap:6px; margin-bottom:10px; }
+.ground-plan-sidebar-heading h3 { margin:0; }
+.ground-plan-pane-toggle { flex:0 0 26px; width:26px; height:26px; display:grid; place-items:center; padding:0; border:1px solid #e1e8e4; border-radius:5px; background:white; color:#65786f; cursor:pointer; }
+.ground-plan-pane-toggle:hover { color:#247c6c; background:#eff7f3; }
+.ground-plan-sidebar.collapsed .ground-plan-sidebar-heading { justify-content:center; margin:0; }
+.ground-plan-resize-handle { position:relative; z-index:1; cursor:col-resize; touch-action:none; }
+.ground-plan-resize-handle::after { position:absolute; inset:0 1px; content:""; border-radius:4px; background:transparent; }
+.ground-plan-resize-handle:hover::after,.ground-plan-body.resizing .ground-plan-resize-handle::after { background:#2b8677; opacity:.65; }
+.ground-plan-body.resizing { cursor:col-resize; user-select:none; }
 .ground-plan-inspector { border-left: 1px solid #e1e8e4; }
 .optimizer-context-panel { margin-top: 16px; padding-top: 12px; border-top: 1px solid #edf0ee; color: #52665d; font-size: 10px; }
 .optimizer-context-panel summary { display: flex; align-items: center; gap: 6px; color: #395247; font-weight: 700; cursor: pointer; }
@@ -1219,7 +1229,7 @@ h2 {
 .ground-plan-items button { padding: 3px; color: #89958f; }
 .ground-plan-footer { min-height: 39px; padding: 0 16px; display: flex; justify-content: space-between; align-items: center; gap: 10px; background: white; border-top: 1px solid #e1e8e4; color: #77857e; font-size: 9px; }
 .ground-plan-footer span { color: #32806e; font-weight: 600; }
-@media(max-width:850px) { .ground-plan-backdrop { padding: 0; } .ground-plan-drawer { width: 100%; height: 100%; border: 0; border-radius: 0; } .ground-plan-body { grid-template-columns: 175px minmax(0,1fr); grid-template-rows: minmax(200px,1fr) auto; } .ground-plan-inspector { grid-column: 1/-1; max-height: 170px; border-top: 1px solid #e1e8e4; border-left: 0; } .ground-plan-sidebar { grid-column: 1; grid-row: 1; padding: 11px; } .ground-plan-board { grid-column: 2; grid-row: 1; padding: 8px; } .ground-plan-header-actions .button { font-size: 0; padding: 8px; } .ground-plan-header-actions .button svg { width: 16px; height: 16px; } }
+@media(max-width:850px) { .ground-plan-backdrop { padding: 0; } .ground-plan-drawer { width: 100%; height: 100%; border: 0; border-radius: 0; } .ground-plan-body { grid-template-columns: 175px 0 minmax(0,1fr) 0 0; grid-template-rows: minmax(200px,1fr) auto; } .ground-plan-resize-handle { display:none; } .ground-plan-inspector { grid-column: 1/-1; grid-row: 2; max-height: 170px; border-top: 1px solid #e1e8e4; border-left: 0; } .ground-plan-sidebar { grid-column: 1; grid-row: 1; padding: 11px; } .ground-plan-board { grid-column: 3; grid-row: 1; padding: 8px; } .ground-plan-header-actions .button { font-size: 0; padding: 8px; } .ground-plan-header-actions .button svg { width: 16px; height: 16px; } }
 @media(max-width:540px) { .ground-plan-body { display: flex; flex-direction: column; overflow: auto; } .ground-plan-sidebar { border-right: 0; border-bottom: 1px solid #e1e8e4; } .ground-plan-tools { grid-template-columns: repeat(2,minmax(0,1fr)); } .ground-plan-tools button { padding: 7px 5px; font-size: 9px; } .ground-plan-fields { grid-template-columns: repeat(3,minmax(0,1fr)); } .ground-plan-fields label { min-width: 0; font-size: 9px; } .ground-plan-section-title { margin-top: 12px !important; padding-top: 9px; } .ground-plan-board { flex: 0 0 330px; } .ground-plan-inspector { max-height: none; } .ground-plan-footer { padding: 7px 10px; font-size: 8px; } }
 .rod {
   cursor: pointer;
@@ -1634,11 +1644,12 @@ h2 {
 .calc-subtabs { display:flex; gap:4px; padding:5px; border:1px solid #e7ece9; border-radius:8px; background:white; }
 .calc-subtabs button { display:flex; align-items:center; gap:7px; padding:8px 10px; border-radius:6px; color:#71817a; font-size:10px; }
 .calc-subtabs button.active { color:#247c6c; background:#eaf4f0; font-weight:700; }
-.soil-material-list { display:grid; gap:10px; margin-top:12px; }
-.soil-material-row { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1.1fr) minmax(110px,.8fr) auto; align-items:end; column-gap:14px; row-gap:7px; padding:0 2px; }
+.soil-material-list { display:grid; gap:10px; margin:12px 18px 0; }
+.soil-material-row { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1.1fr) minmax(110px,.8fr) auto; align-items:end; column-gap:14px; row-gap:7px; }
 .soil-material-row label { min-width:0; color:#788680; font-size:9px; }
 .soil-material-row select,.soil-material-row input { display:block; width:100%; min-width:0; margin-top:5px; padding:8px 9px; border:1px solid #e3e9e8; border-radius:6px; color:#354740; background:white; font:inherit; font-size:10px; }
 .soil-material-row small { align-self:center; margin-top:10px; color:#85918e; font-size:9px; }
+.soil-add-layer { display:flex; justify-content:center; width:calc(100% - 36px); margin:12px 18px 0; }
 .layer-count-control { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:10px 18px 0; color:#788680; font-size:10px; }
 .layer-count-control select { padding:7px 9px; border:1px solid #e3e9e8; border-radius:6px; color:#354740; background:#fff; font:inherit; }
 .soil-fit-chart { margin:12px 18px 0; padding:12px; border:1px solid #e5ece8; border-radius:8px; background:#fff; }
@@ -2378,12 +2389,12 @@ h2 {
 
 /* Measurement templates (Mediciones) */
 .measurement-templates { margin-top:14px; padding-bottom:0; }
-.measurement-templates summary { cursor:pointer; list-style:none; }
-.measurement-templates summary::-webkit-details-marker { display:none; }
-.measurement-templates details:not([open]) summary { border-bottom:0; }
-.measurement-templates details[open] { padding-bottom:18px; }
+.measurement-templates .template-toggle { width:100%; border:0; text-align:left; background:#fff; color:inherit; cursor:pointer; }
+.measurement-templates .templates-chevron.expanded { transform:rotate(180deg); }
+.measurement-templates > .calc-help { margin:0; }
+.measurement-templates.expanded { padding-bottom:18px; }
 .measurement-templates .templates-chevron { transition:transform .15s ease; }
-.measurement-templates details[open] .templates-chevron { transform:rotate(180deg); }
+
 .template-list { margin:0; padding:4px 18px 0; list-style:none; display:grid; gap:8px; }
 .template-list li { display:flex; align-items:flex-start; gap:10px; padding:10px; border:1px solid #edf0f2; border-radius:8px; }
 .template-list li.current { border-color:#9fcbbd; background:#f6fbf9; }

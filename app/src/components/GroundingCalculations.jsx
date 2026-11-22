@@ -1395,7 +1395,7 @@ function GroundingCalculations({
                 ))}
               </div>
               <button
-                className="button"
+                className="button soil-add-layer"
                 disabled={manualLayers.length >= 8}
                 onClick={() =>
                   setManualLayers((layers) => {
@@ -1770,9 +1770,6 @@ function GroundingCalculations({
                   Conductor: {w}
                 </small>
               ))}
-              <SurfacePotentialMap
-                field={calculation.result.surface_potential}
-              />
             </div>
           )}
         </section>
