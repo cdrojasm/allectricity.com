@@ -50,6 +50,7 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, onShowResu
   const [trenchSource, setTrenchSource] = useState("");
   const [budget, setBudget] = useState("150");
   const [orthogonal, setOrthogonal] = useState(true);
+  const [redundant, setRedundant] = useState(true);
   const [profiles, setProfiles] = useState([]);
   const [pinned, setPinned] = useState([]);
   const [profileBusy, setProfileBusy] = useState(false);
@@ -123,6 +124,7 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, onShowResu
     if (request.trench_width_source) setTrenchSource(request.trench_width_source);
     if (BUDGETS.some(([value]) => value === String(request.max_solver_calls))) setBudget(String(request.max_solver_calls));
     if (typeof request.orthogonal_only === "boolean") setOrthogonal(request.orthogonal_only);
+    if (typeof request.redundant_only === "boolean") setRedundant(request.redundant_only);
   }
 
   async function follow(runId) {
@@ -169,7 +171,7 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, onShowResu
       artifact_id: artifact.artifact_id, artifact_version: artifact.version, injection_a: Number(form.injection),
       exposure: { clearing_time_s: Number(form.clearingTime), body_weight_kg: Number(form.bodyWeight), surface_resistivity_ohm_m: Number(form.surfaceRho), surface_thickness_m: Number(form.surfaceThickness), exposure_class: form.exposureClass, surface_layer_present: form.surfaceLayerPresent === "true" },
       standards: form.standards, cost_currency: currency, rates: rateBody,
-      trench_width_m: Number(trenchWidth), trench_width_source: trenchSource.trim(), seed: 0, max_solver_calls: Number(budget), orthogonal_only: orthogonal,
+      trench_width_m: Number(trenchWidth), trench_width_source: trenchSource.trim(), seed: 0, max_solver_calls: Number(budget), orthogonal_only: orthogonal, redundant_only: redundant,
     };
   }
 
@@ -240,6 +242,7 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, onShowResu
     </fieldset>
 
     <label className="checkbox-row"><input type="checkbox" checked={orthogonal} onChange={(e) => setOrthogonal(e.target.checked)}/> Solo trazados ortogonales (sin diagonales nuevas)</label>
+    <label className="checkbox-row" title="Cada conductor nuevo queda en un lazo cerrado: un corte nunca deja cobre aislado. Solo se admite una cola recta de hasta 3 m que termina en una varilla."><input type="checkbox" checked={redundant} onChange={(e) => setRedundant(e.target.checked)}/> Sin cables sueltos (cada conductor nuevo en un lazo cerrado)</label>
     <label>Presupuesto de llamadas al solver<select value={budget} onChange={(e) => setBudget(e.target.value)}>{BUDGETS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
     <button className="button primary" type="submit" disabled={busy || active || Boolean(blocker)} aria-describedby={blocker ? "topology-start-blocker" : undefined}>{busy ? "Iniciando Matherra…" : "Iniciar búsqueda con Matherra"}</button>
     {blocker && !active && <small id="topology-start-blocker" className="topology-start-blocker">Para iniciar: {blocker}</small>}
