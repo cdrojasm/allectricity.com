@@ -42,7 +42,22 @@ async function openOptimizer(page, projectId) {
   await page.goto(`/project/${projectId}`);
   await page.getByRole("tablist", { name: "Secciones del artefacto" }).getByRole("tab", { name: "Plano" }).click();
   await page.getByRole("button", { name: "Abrir editor de plano" }).click();
-  await page.getByText("Restricciones de optimización").click();
+  await page.getByText("Matherra · optimización matemática").click();
+}
+const profilesOf = async (page, projectId) => (await api(page, `/api/v1/projects/${projectId}/constraint-profiles`)).body.profiles.length;
+async function fillRun(page) {
+  await page.getByLabel("Clase de exposición").selectOption("public");
+  await page.getByLabel("¿Existe capa superficial?").selectOption("true");
+  await page.getByLabel("IEEE 80-2013").check();
+  for (const [label, value] of Object.entries(RATES)) await page.getByLabel(label).fill(value);
+  await page.getByLabel("Fuente de las tarifas").fill("cotización de prueba");
+  await page.getByLabel("Ancho de zanja (m)", { exact: true }).fill("0.4");
+  await page.getByLabel("Fuente del ancho de zanja").fill("práctica de obra local");
+  await page.getByLabel("Presupuesto de llamadas al solver").selectOption("60");
+}
+async function openResults(page) {
+  await page.getByRole("tablist", { name: "Secciones del artefacto" }).getByRole("tab", { name: "Resultado" }).click();
+  return page.getByRole("region", { name: "Alternativas de Matherra" });
 }
 
 test.describe.serial("optimizador de topologías", () => {
@@ -92,20 +107,16 @@ test.describe.serial("optimizador de topologías", () => {
     await page?.context().close();
   });
 
-  test("bloquea resolver el contexto si no hay perfil fijado al proyecto", async () => {
+  test("sin perfil fijado al proyecto no deja iniciar y dice por qué", async () => {
     await openOptimizer(page, seed.projectId);
     const profile = page.getByRole("checkbox", { name: /Perfil de prueba smoke-ui/ });
     await expect(profile).toBeChecked();
-    await profile.uncheck();
-    await page.getByRole("button", { name: "Guardar perfiles del proyecto" }).click();
-    await expect.poll(async () => (await api(page, `/api/v1/projects/${seed.projectId}/constraint-profiles`)).body.profiles.length).toBe(0);
-    await page.getByRole("button", { name: "Resolver contexto" }).click();
-    await expect(page.locator(".optimizer-context-status")).toContainText("Optimización bloqueada");
-    await expect(page.locator(".optimizer-context-result")).toContainText("normative_profile_not_selected");
-    const unchecked = page.getByRole("checkbox", { name: /Perfil de prueba smoke-ui/ });
-    await unchecked.check();
-    await page.getByRole("button", { name: "Guardar perfiles del proyecto" }).click();
-    await expect.poll(async () => (await api(page, `/api/v1/projects/${seed.projectId}/constraint-profiles`)).body.profiles.length).toBe(1);
+    await profile.uncheck();                                         // se guarda al marcar, sin paso aparte
+    await expect.poll(() => profilesOf(page, seed.projectId)).toBe(0);
+    await expect(page.getByRole("button", { name: "Iniciar búsqueda con Matherra" })).toBeDisabled();
+    await expect(page.locator("#topology-start-blocker")).toContainText("perfil normativo revisado");
+    await profile.check();
+    await expect.poll(() => profilesOf(page, seed.projectId)).toBe(1);
   });
 
   test("oculta el perfil borrador y rechaza fijarlo al proyecto", async () => {
@@ -119,7 +130,7 @@ test.describe.serial("optimizador de topologías", () => {
     expect(selected.body.profiles.map((item) => [item.profile_id, item.profile_version])).toEqual([[seed.profileId, 1]]);
   });
 
-  test("rechaza resolver perfiles fijados para tipos de instalación distintos", async () => {
+  test("rechaza buscar con perfiles fijados para tipos de instalación distintos", async () => {
     const selected = await api(page, `/api/v1/projects/${seed.projectId}/constraint-profiles`, {
       method: "PUT", body: JSON.stringify({ profiles: [
         { profile_id: seed.profileId, version: 1 },
@@ -128,8 +139,9 @@ test.describe.serial("optimizador de topologías", () => {
     });
     expect(selected.status).toBe(200);
     await openOptimizer(page, seed.projectId);
-    await page.getByRole("button", { name: "Resolver contexto" }).click();
-    await expect(page.getByRole("alert")).toContainText("different installation types");
+    await fillRun(page);
+    await page.getByRole("button", { name: "Iniciar búsqueda con Matherra" }).click();
+    await expect(page.locator(".topology-optimizer").getByRole("alert")).toContainText("different installation types");
     await api(page, `/api/v1/projects/${seed.projectId}/constraint-profiles`, {
       method: "PUT", body: JSON.stringify({ profiles: [{ profile_id: seed.profileId, version: 1 }] }),
     });
@@ -138,57 +150,40 @@ test.describe.serial("optimizador de topologías", () => {
   test("precarga el suelo y la falla del artefacto, busca, previsualiza y aplica", async () => {
     test.setTimeout(240_000);
     await openOptimizer(page, seed.projectId);
-    // El perfil se sembró y fijó por API; comprobar que la interfaz lo carga, permite retirarlo y volver a fijarlo.
-    const profile = page.getByRole("checkbox", { name: /Perfil de prueba smoke-ui/ });
-    await expect(profile).toBeChecked();
-    await profile.uncheck();
-    await page.getByRole("button", { name: "Guardar perfiles del proyecto" }).click();
-    await expect.poll(async () => (await api(page, `/api/v1/projects/${seed.projectId}/constraint-profiles`)).body.profiles.length).toBe(0);
-    await profile.check();
-    await page.getByRole("button", { name: "Guardar perfiles del proyecto" }).click();
-    await expect.poll(async () => (await api(page, `/api/v1/projects/${seed.projectId}/constraint-profiles`)).body.profiles.length).toBe(1);
-
-    // Sin pulsar «Resolver contexto»: los datos del artefacto ya están en el formulario.
-    await expect(page.getByLabel("Resistividad de suelo (Ω·m)")).toHaveValue("100");
+    // La falla viene del plano; el suelo se muestra (no se edita aquí: lo define el plano).
+    await expect(page.getByText("Suelo del plano guardado: homogéneo, 100 Ω·m.")).toBeVisible();
     await expect(page.getByLabel("Corriente de falla inyectada (A)")).toHaveValue("1000");
     await expect(page.getByLabel("Tiempo de despeje (s)")).toHaveValue("0.5");
     await expect(page.getByLabel("Peso corporal (kg)")).toHaveValue("70");
-
-    await page.getByLabel("Clase de exposición").selectOption("public");
-    await page.getByLabel("¿Existe capa superficial?").selectOption("true");
-    await page.getByLabel("IEEE 80-2013").check();
-    for (const [label, value] of Object.entries(RATES)) await page.getByLabel(label).fill(value);
-    await page.getByLabel("Fuente de las tarifas").fill("cotización de prueba");
-    await page.getByLabel("Ancho de zanja (m)", { exact: true }).fill("0.4");
-    await page.getByLabel("Fuente del ancho de zanja").fill("práctica de obra local");
-    await page.getByLabel("Presupuesto de llamadas al solver").selectOption("60");
-    await page.getByRole("button", { name: "Buscar topologías" }).click();
+    await fillRun(page);
+    await page.getByRole("button", { name: "Iniciar búsqueda con Matherra" }).click();
 
     const result = page.locator(".topology-optimizer .optimizer-run-result");
     await expect(result).toContainText(/Completada|Falló|Rechazada/, { timeout: 200_000 });
     await expect(result).toContainText("Completada");
-    const card = page.locator(".topology-card:not(.base)").first();
-    await expect(page.locator(".topology-card.base")).toBeVisible();
-
+    // Las alternativas solo se revisan en Resultado, junto al veredicto.
+    await page.getByTestId("matherra-show-results").click();
+    const review = page.getByRole("region", { name: "Alternativas de Matherra" });
+    await expect(review).toContainText("Diseño de partida");
+    const card = review.getByTestId("matherra-candidate").first();
     await expect(card).toBeVisible(); // con el lote de prueba el solver siempre devuelve alternativas validadas
-    {
-
-      await card.getByRole("button", { name: /Vista previa/ }).click();
-      await expect(card.locator("svg[aria-label='Alternativa sobre el diseño base']")).toBeVisible();
-      await expect(card.locator("figcaption")).toContainText("Añadido");
-      await card.getByRole("button", { name: "Aplicar como versión nueva" }).click();
-      await expect(page.getByText(/Se creó la versión 2 del plano/)).toBeVisible();
-    }
+    await card.getByRole("button", { name: "Vista previa" }).click();
+    await expect(card.locator("svg[aria-label='Alternativa sobre el diseño base']")).toBeVisible();
+    await expect(card.locator("figcaption")).toContainText("Añadido");
+    await card.getByRole("button", { name: "Aplicar como nueva versión" }).click();
+    await expect(review.getByText(/Se creó la versión 2 con la alternativa/)).toBeVisible();
+    await expect(card.getByRole("button", { name: "Versión actual" })).toBeDisabled();   // no se aplica dos veces
   });
 
-  test("al recargar conserva el historial y las tarifas", async () => {
+  test("al recargar conserva las tarifas y la búsqueda sigue en Resultado", async () => {
     await openOptimizer(page, seed.projectId);
-    await expect(page.locator(".topology-history summary")).toContainText("Corridas anteriores (1)");
     await expect(page.getByLabel("Conductor (material)")).toHaveValue("18000");
-    await page.locator(".topology-history summary").click();
-    await page.locator(".topology-history button").first().click();
-    await expect(page.locator(".topology-optimizer .optimizer-run-result")).toContainText("Completada");
-    await expect(page.locator(".topology-card.base")).toBeVisible();
+    await expect(page.getByLabel("Clase de exposición")).toHaveValue("public");
+    await expect(page.getByLabel("IEEE 80-2013")).toBeChecked();
+    await page.keyboard.press("Escape");
+    const review = await openResults(page);
+    await expect(review).toContainText("Completada");
+    await expect(review.getByTestId("matherra-candidate").first()).toContainText("Es la versión 2 del plano");
   });
 
   test("ofrece las tarifas del catálogo aprobado y la corrida conserva su procedencia", async () => {
@@ -207,7 +202,7 @@ test.describe.serial("optimizador de topologías", () => {
     await expect(page.getByTestId("rate-catalog-material.conductor.unspecified")).toContainText("21.000 COP");
     await expect(page.getByLabel("Conductor (material)", { exact: true })).toHaveCount(0);   // ya no se escribe a mano
     await page.getByLabel("Presupuesto de llamadas al solver").selectOption("60");
-    await page.getByRole("button", { name: "Buscar topologías" }).click();
+    await page.getByRole("button", { name: "Iniciar búsqueda con Matherra" }).click();
     const result = page.locator(".topology-optimizer .optimizer-run-result");
     await expect(result).toContainText(/Completada|Falló|Rechazada/, { timeout: 200_000 });
     await expect(result).toContainText("Completada");

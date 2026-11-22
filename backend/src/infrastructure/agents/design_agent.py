@@ -1594,10 +1594,11 @@ class GroundingDesignAgent:
             version = candidate.get("artifact_version")
             calculation_id = candidate.get("calculation_id")
             margin = candidate.get("margin_percent")
-            margin_text = f", margen mínimo {margin:.1f}%" if isinstance(margin, (int, float)) else ""
+            # Written for the person reading the chat: Spanish decimal comma, no internal ids (Resultado links the calculation).
+            margin_text = f", margen mínimo {margin:.1f} %".replace(".", ",") if isinstance(margin, (int, float)) else ""
             origin_text = (f" (restaurada desde la versión {candidate['restored_from']})"
                            if candidate.get("restored_from") is not None else "")
-            best_text = (f"Mejor resultado: versión {version}{origin_text}, cálculo {calculation_id}{margin_text}. "
+            best_text = (f"Mejor resultado: versión {version}{origin_text}{margin_text}. "
                          if version is not None and calculation_id else "")
         else:
             best_text = "No quedó un cálculo evaluable como candidato. "

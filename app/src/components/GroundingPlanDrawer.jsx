@@ -39,10 +39,11 @@ function conflictText(conflict) {
   }
 }
 
-function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
+function GroundingPlanDrawer({ projectId, projectName, conversation, token, focusOptimizer = 0, onShowResults }) {
   const [plan, setPlan] = useState(emptyPlan);
   const [artifact, setArtifact] = useState(null);
   const [hydrated, setHydrated] = useState(false);
+  const [opened, setOpened] = useState(false);
   const [sourceFiles, setSourceFiles] = useState([]);
   const [backgroundScale, setBackgroundScale] = useState("0.05");
   const [backgroundUrl, setBackgroundUrl] = useState("");
@@ -57,21 +58,24 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
   const [visionBusy, setVisionBusy] = useState(false);
   const [saveState, setSaveState] = useState("saved");
   const [planCheck, setPlanCheck] = useState({ conflicts: [], warnings: [] });
-  const [optimizerVariables, setOptimizerVariables] = useState("translate_x_m, translate_y_m, rod_length_m, conductor_spacing_m");
-  const [optimizerFacts, setOptimizerFacts] = useState("{}");
-  const [optimizerContext, setOptimizerContext] = useState(null);
-  const [optimizerLoading, setOptimizerLoading] = useState(false);
-  const [optimizerError, setOptimizerError] = useState("");
-  const [optimizerVariablesSelected, setOptimizerVariablesSelected] = useState([]);
-  const [runForm, setRunForm] = useState({ soilModel: "", rho: "", upperRho: "", lowerRho: "", upperThickness: "", injection: "", clearingTime: "", bodyWeight: "", surfaceRho: "", surfaceThickness: "", exposureClass: "", surfaceLayerPresent: "", standards: [], currency: "", quantities: {} });
-  const [optimizerRun, setOptimizerRun] = useState(null);
-  const [optimizerRunBusy, setOptimizerRunBusy] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);   // bumped when a new version is created outside the editor
   const artifactRef = useRef(null);
+  const optimizerPanelRef = useRef(null);
   const dirtyRef = useRef(false);
   const planRef = useRef(plan);
   const snapshotRef = useRef(null);
   const saveTimerRef = useRef(null);
+  useEffect(() => {
+    if (focusOptimizer) setOpened(true);
+  }, [focusOptimizer]);
+  useEffect(() => {
+    if (!focusOptimizer || !opened || !optimizerPanelRef.current) return undefined;
+    optimizerPanelRef.current.open = true;
+    const frame = requestAnimationFrame(() => {
+      optimizerPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      optimizerPanelRef.current?.querySelector("summary")?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusOptimizer, opened]);
   useEffect(() => {
     if (!conversation) return;
     let live = true;
@@ -91,7 +95,6 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
         artifactRef.current = artifact || null;
         snapshotRef.current = artifact?.snapshot || null;
         setArtifact(artifact || null);
-        prefillRunForm(artifact?.snapshot);
         if (!geometry) { setHydrated(true); return; }
         const sx = geometry.conductor_spacing_x_m || geometry.conductor_spacing_m || 5;
         const sy = geometry.conductor_spacing_y_m || geometry.conductor_spacing_m || sx;
@@ -134,8 +137,7 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
       } catch { /* Keep the editable default if the artifact is unavailable. */ }
     })();
     return () => { live = false; };
-  }, [conversation?.id, projectId, token, reloadKey]);
-  const [opened, setOpened] = useState(false);
+  }, [conversation?.id, projectId, token]);
   const [tool, setTool] = useState("select");
   const [anchor, setAnchor] = useState(null);
   const [zoom, setZoom] = useState(1);
@@ -205,86 +207,6 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
       snap_m: value.snap || null,
       background: value.background || null
     };
-  }
-  async function resolveOptimizerContext() {
-    setOptimizerLoading(true); setOptimizerError("");
-    try {
-      if (!artifactRef.current || saveState !== "saved" || dirtyRef.current) throw new Error("Guarda primero el plano; el contexto debe usar una versión persistida.");
-      let facts;
-      try { facts = JSON.parse(optimizerFacts || "{}"); } catch { throw new Error("Los hechos de aplicabilidad deben ser un objeto JSON válido."); }
-      if (!facts || Array.isArray(facts) || typeof facts !== "object") throw new Error("Los hechos de aplicabilidad deben ser un objeto JSON.");
-      const requested_variables = [...new Set(optimizerVariables.split(/[\n,]+/).map((value) => value.trim()).filter(Boolean))];
-      const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/constraint-context`, {
-        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ requested_variables, site_geometry: artifactRef.current.snapshot.geometry, applicability_facts: facts })
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : "No se pudo resolver el contexto de restricciones.");
-      setOptimizerContext(body);
-      setOptimizerVariablesSelected([]); setOptimizerRun(null);
-    } catch (error) { setOptimizerError(error.message || "No se pudo resolver el contexto de restricciones."); }
-    finally { setOptimizerLoading(false); }
-  }
-  const optimizerCandidateDomains = (optimizerContext?.discrete_domains?.domains || []).filter((domain) => optimizerVariablesSelected.includes(domain.target) && domain.status === "ready");
-  const optimizerCurrencyChoices = optimizerCandidateDomains.length ? [...optimizerCandidateDomains.map((domain) => {
-    const currencies = new Set((domain.options || []).filter((option) => domain.candidate_option_ids?.includes(option.option_id)).map((option) => option.provenance?.quote?.currency).filter(Boolean));
-    return currencies.size === 1 ? currencies : new Set();
-  }).reduce((common, current) => new Set([...common].filter((currency) => current.has(currency))))].sort() : [];
-  // Soil and fault already live in the artifact: fill only the empty fields so a typed value is never overwritten.
-  function prefillRunForm(snapshot) {
-    if (!snapshot) return;
-    const layers = snapshot.soil_layers || [];
-    const fault = snapshot.fault || {};
-    const known = {};
-    if (layers.length === 1 && layers[0].resistivity_ohm_m != null) Object.assign(known, { soilModel: "homogeneous", rho: layers[0].resistivity_ohm_m });
-    else if (layers.length === 2 && layers.every((layer) => layer.resistivity_ohm_m != null) && layers[0].depth_m != null)
-      Object.assign(known, { soilModel: "two-layer", upperRho: layers[0].resistivity_ohm_m, lowerRho: layers[1].resistivity_ohm_m, upperThickness: layers[0].depth_m });
-    for (const [key, value] of Object.entries({ injection: fault.current_a, clearingTime: fault.clearing_time_s, bodyWeight: fault.body_weight_kg, surfaceRho: fault.surface_resistivity_ohm_m, surfaceThickness: fault.surface_thickness_m }))
-      if (value != null && Number.isFinite(Number(value))) known[key] = value;
-    setRunForm((current) => {
-      const next = { ...current };
-      for (const [key, value] of Object.entries(known)) if (current[key] === "" || current[key] == null) next[key] = String(value);
-      return next;
-    });
-  }
-  function updateRunForm(key, value) { setRunForm((current) => ({ ...current, [key]: value })); }
-  async function submitOptimizerRun(event) {
-    event.preventDefault(); setOptimizerRunBusy(true); setOptimizerError("");
-    try {
-      const artifactVersion = artifactRef.current;
-      if (!artifactVersion || saveState !== "saved" || dirtyRef.current) throw new Error("Guarda el plano antes de iniciar la corrida.");
-      if (optimizerContext?.status !== "ready") throw new Error("Resuelve primero un contexto OP-05 listo.");
-      if (!optimizerVariablesSelected.length || optimizerVariablesSelected.some((name) => !(optimizerContext.discrete_optimizable_variables || []).includes(name))) throw new Error("Selecciona variables discretas habilitadas por OP-05.");
-      if (!optimizerCurrencyChoices.includes(runForm.currency)) throw new Error("Elige una moneda disponible para todas las variables seleccionadas.");
-      if (!runForm.standards.length) throw new Error("Selecciona al menos un estándar.");
-      const quantities = optimizerCandidateDomains.flatMap((domain) => (domain.options || []).filter((option) => domain.candidate_option_ids?.includes(option.option_id)).map((option) => {
-        const quote = option.provenance?.quote || {};
-        const value = runForm.quantities[option.option_id];
-        if (value === undefined || value === "" || !Number.isFinite(Number(value)) || Number(value) < 0) throw new Error(`Indica una cantidad válida para ${option.provenance?.product_name || option.option_id}.`);
-        if (!quote.price_unit) throw new Error(`La opción ${option.option_id} no declara unidad de precio.`);
-        if (quote.currency !== runForm.currency) throw new Error(`La opción ${option.option_id} usa ${quote.currency || "una moneda no declarada"}; no se convierten monedas.`);
-        return { option_id: option.option_id, value: Number(value), unit: quote.price_unit };
-      }));
-      if (!quantities.length) throw new Error("Las variables seleccionadas no tienen opciones discretas cotizadas.");
-      let soil;
-      if (runForm.soilModel === "homogeneous") soil = { model: "homogeneous", resistivity_ohm_m: Number(runForm.rho) };
-      else if (runForm.soilModel === "two-layer") soil = { model: "two-layer", upper_resistivity_ohm_m: Number(runForm.upperRho), lower_resistivity_ohm_m: Number(runForm.lowerRho), upper_thickness_m: Number(runForm.upperThickness) };
-      else throw new Error("Selecciona un modelo de suelo y completa sus resistividades.");
-      const requiredNumbers = [["corriente de falla", runForm.injection], ["tiempo de despeje", runForm.clearingTime], ["peso corporal", runForm.bodyWeight], ["resistividad superficial", runForm.surfaceRho], ["espesor superficial", runForm.surfaceThickness]];
-      for (const [label, value] of requiredNumbers) if (value === "" || !Number.isFinite(Number(value))) throw new Error(`Ingresa ${label} explícito.`);
-      if (!runForm.exposureClass || runForm.surfaceLayerPresent === "") throw new Error("Indica clase de exposición y presencia de capa superficial.");
-      const exposure = { clearing_time_s: Number(runForm.clearingTime), body_weight_kg: Number(runForm.bodyWeight), surface_resistivity_ohm_m: Number(runForm.surfaceRho), surface_thickness_m: Number(runForm.surfaceThickness), exposure_class: runForm.exposureClass, surface_layer_present: runForm.surfaceLayerPresent === "true" };
-      const payload = { artifact_id: artifactVersion.artifact_id, artifact_version: artifactVersion.version, soil, injection_a: Number(runForm.injection), exposure, standards: runForm.standards, variables: optimizerVariablesSelected, applicability_facts: { values: JSON.parse(optimizerFacts || "{}") }, quantities, cost_policy: "single_currency_only", cost_currency: runForm.currency, seed: 0 };
-      const root = `/api/v1/projects/${encodeURIComponent(projectId)}/optimizer-runs`;
-      const response = await fetch(root, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : "No se pudo iniciar la corrida del optimizador.");
-      const getResponse = await fetch(`${root}/${encodeURIComponent(body.run?.id || "")}`, { headers: { Authorization: `Bearer ${token}` } });
-      const result = await getResponse.json().catch(() => ({}));
-      if (!getResponse.ok) throw new Error(typeof result.detail === "string" ? result.detail : "La corrida se creó, pero no se pudo recuperar su resultado.");
-      setOptimizerRun(result);
-    } catch (error) { setOptimizerError(error.message || "No se pudo iniciar la corrida."); }
-    finally { setOptimizerRunBusy(false); }
   }
   async function prepareBackground() {
     const file = sourceFiles.find((item) => item.upload_id === backgroundFile && item.status === "available");
@@ -713,51 +635,8 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token }) {
         <h3 className="ground-plan-section-title">Capas</h3>{LAYERS.map((layer)=><label key={layer.id} className="ground-plan-check"><input type="checkbox" checked={layers[layer.id]} onChange={()=>toggleLayer(layer.id)}/> {layer.label}</label>)}
       </aside><div className="ground-plan-board"><div className={`ground-plan-canvas${zoom>1?" zoomed":""}`}>{renderCanvas()}</div><div className="ground-plan-help"><span>{tool==="conductor"?"Marca dos puntos; los extremos cercanos a electrodos se conectan automáticamente.":tool==="electrode"?"Coloca un electrodo en una celda. Solo se permite uno por celda.":tool==="structure"?"Coloca un elemento constructivo no atravesable.":"Elige una herramienta para editar el plano."}{message&&<strong className="ground-plan-message">{message}</strong>}</span><div className="ground-plan-zoom" role="group" aria-label="Controles de zoom"><button aria-label="Alejar" title="Alejar" onClick={()=>setZoom((value)=>Math.max(0.5,value-0.2))} disabled={zoom<=0.5}><Minus size={15}/></button><span>{Math.round(zoom*100)}%</span><button aria-label="Acercar" title="Acercar" onClick={()=>setZoom((value)=>Math.min(3,value+0.2))} disabled={zoom>=3}><Plus size={15}/></button><button onClick={()=>setZoom(1)} disabled={zoom===1}>Restablecer</button></div></div></div>
       <aside className="ground-plan-inspector"><h3>Previsualización de la malla</h3><div className="ground-plan-preview">{renderPreview()}{legend}</div><h3 className="ground-plan-inspector-rules">Reglas del plano</h3>{issues.length?<ul className="ground-plan-issues">{issues.map((issue,i)=><li key={`${issue.id}-${i}`}><AlertTriangle size={14}/>{issue.text}</li>)}</ul>:<p className="ground-plan-ok">Sin conflictos geométricos detectados.</p>}{warnings.length>0&&<ul className="ground-plan-warnings">{warnings.map((warning,i)=><li key={`warning-${i}`}><AlertTriangle size={14}/>{warning}</li>)}</ul>}
-        <details className="optimizer-context-panel"><summary><SlidersHorizontal size={14}/> Restricciones de optimización</summary>
-          <p>Consulta límites del perfil fijado al proyecto y opciones comerciales aprobadas. El contexto y la corrida usan solo una versión persistida del plano.</p>
-          <label>Variables solicitadas<input value={optimizerVariables} onChange={(event)=>setOptimizerVariables(event.target.value)} placeholder="translate_x_m, rod_length_m"/></label>
-          <label>Hechos de aplicabilidad (JSON)<textarea rows="3" value={optimizerFacts} onChange={(event)=>setOptimizerFacts(event.target.value)} spellCheck="false"/></label>
-          <button className="button primary" disabled={optimizerLoading || saveState !== "saved" || dirtyRef.current} onClick={resolveOptimizerContext}>{optimizerLoading?"Consultando…":"Resolver contexto"}</button>
-          {optimizerError&&<p className="optimizer-context-error" role="alert">{optimizerError}</p>}
-          {optimizerContext&&<div className="optimizer-context-result">
-            <strong className={`optimizer-context-status ${optimizerContext.status}`}>{optimizerContext.status === "ready" ? "Contexto listo" : "Optimización bloqueada"}</strong>
-            {optimizerContext.status !== "ready"&&<p>Falta un perfil normativo revisado o hay criterios obligatorios pendientes. No se habilitan variables ni se puede iniciar una corrida.</p>}
-            {optimizerContext.profile&&optimizerContext.profile.version!=="none"&&<small>Perfil: {optimizerContext.profile.profile_id} · v{optimizerContext.profile.version}</small>}
-            {optimizerContext.missing_mandatory_criteria?.length>0&&<small>Criterios pendientes: {optimizerContext.missing_mandatory_criteria.join(", ")}</small>}
-            {Object.keys(optimizerContext.variable_bounds||{}).length>0&&<><h4>Límites continuos</h4>{Object.entries(optimizerContext.variable_bounds).map(([name,bounds])=><div className="optimizer-context-row" key={name}><span>{name}</span><strong>{bounds.min}–{bounds.max}</strong><small>{(optimizerContext.bound_provenance?.[name]||[]).map((source)=>source.source_type||source.rule_id||source.document||"Fuente").join(" · ")}</small></div>)}</>}
-            {Object.keys(optimizerContext.frozen_variables||{}).length>0&&<><h4>Variables congeladas</h4>{Object.entries(optimizerContext.frozen_variables).map(([name,reason])=><div className="optimizer-context-row frozen" key={name}><span>{name}</span><small>{reason}</small></div>)}</>}
-            {optimizerContext.discrete_domains?.domains?.length>0&&<><h4>Dominios comerciales</h4>{optimizerContext.discrete_domains.domains.map((domain)=><div className="optimizer-context-row" key={domain.domain_id}><span>{domain.target} · {domain.status}</span><small>{domain.candidate_values?.length?`Opciones: ${domain.candidate_values.join(", ")} ${domain.unit}`:"Sin opciones aplicables"} · {domain.provenance?.reference||domain.provenance?.document||domain.provenance?.item_id||domain.domain_id}</small></div>)}</>}
-            {optimizerContext.optimizable_variables?.length>0&&<small>Variables habilitadas: {optimizerContext.optimizable_variables.join(", ")}</small>}
-            {optimizerContext.discrete_optimizable_variables?.length>0&&<small>Variables discretas habilitadas: {optimizerContext.discrete_optimizable_variables.join(", ")}</small>}
-            {optimizerContext.site_geometry_sha256&&<small>Huella de geometría: {optimizerContext.site_geometry_sha256.slice(0,16)}…</small>}
-          </div>}
-          <fieldset className="optimizer-shared-inputs"><legend>Datos de la corrida (suelo, falla, exposición)</legend>
-            <small>Se precargan con el suelo y la falla del plano guardado; los dos optimizadores usan estos mismos valores.</small>
-              <label>Modelo de suelo<select value={runForm.soilModel} onChange={(event)=>updateRunForm("soilModel",event.target.value)}><option value="">Seleccionar…</option><option value="homogeneous">Homogéneo</option><option value="two-layer">Dos capas</option></select></label>
-              {runForm.soilModel==="homogeneous"&&<label>Resistividad de suelo (Ω·m)<input required type="number" min="0.001" step="any" value={runForm.rho} onChange={(event)=>updateRunForm("rho",event.target.value)}/></label>}
-              {runForm.soilModel==="two-layer"&&<><label>Resistividad capa superior (Ω·m)<input required type="number" min="0.001" step="any" value={runForm.upperRho} onChange={(event)=>updateRunForm("upperRho",event.target.value)}/></label><label>Resistividad capa inferior (Ω·m)<input required type="number" min="0.001" step="any" value={runForm.lowerRho} onChange={(event)=>updateRunForm("lowerRho",event.target.value)}/></label><label>Espesor superior (m)<input required type="number" min="0.01" step="any" value={runForm.upperThickness} onChange={(event)=>updateRunForm("upperThickness",event.target.value)}/></label></>}
-              <label>Corriente de falla inyectada (A)<input required type="number" min="0.001" step="any" value={runForm.injection} onChange={(event)=>updateRunForm("injection",event.target.value)}/></label>
-              <label>Tiempo de despeje (s)<input required type="number" min="0.001" step="any" value={runForm.clearingTime} onChange={(event)=>updateRunForm("clearingTime",event.target.value)}/></label>
-              <label>Peso corporal (kg)<select required value={runForm.bodyWeight} onChange={(event)=>updateRunForm("bodyWeight",event.target.value)}><option value="">Seleccionar…</option><option value="50">50</option><option value="70">70</option></select></label>
-              <label>Clase de exposición<select required value={runForm.exposureClass} onChange={(event)=>updateRunForm("exposureClass",event.target.value)}><option value="">Seleccionar…</option><option value="public">Público</option><option value="occupational">Ocupacional</option></select></label>
-              <label>¿Existe capa superficial?<select required value={runForm.surfaceLayerPresent} onChange={(event)=>updateRunForm("surfaceLayerPresent",event.target.value)}><option value="">Seleccionar…</option><option value="true">Sí</option><option value="false">No</option></select></label>
-              <label>Resistividad superficial (Ω·m)<input required type="number" min="0.001" step="any" value={runForm.surfaceRho} onChange={(event)=>updateRunForm("surfaceRho",event.target.value)}/></label>
-              <label>Espesor superficial (m)<input required type="number" min="0" step="any" value={runForm.surfaceThickness} onChange={(event)=>updateRunForm("surfaceThickness",event.target.value)}/></label>
-              <fieldset><legend>Estándares a evaluar</legend>{["IEEE 80-2013","RETIE 2026 (Resolución 40284)"].map((standard)=><label className="optimizer-run-check" key={standard}><input type="checkbox" checked={runForm.standards.includes(standard)} onChange={(event)=>updateRunForm("standards",event.target.checked?[...runForm.standards,standard]:runForm.standards.filter((item)=>item!==standard))}/>{standard}</label>)}</fieldset>
-          </fieldset>
-          <form className="optimizer-run-form" onSubmit={submitOptimizerRun}>
-            <h4>Iniciar corrida</h4>
-            {!artifactRef.current||saveState!=="saved"||dirtyRef.current?<small>Guarda primero una versión del plano.</small>:null}
-            {optimizerContext?.status!=="ready"?<small>La corrida se habilita cuando OP-05 resuelva un perfil revisado y dominios aplicables.</small>:<>
-              <fieldset><legend>Variables discretas de OP-05</legend>{(optimizerContext.discrete_optimizable_variables||[]).map((name)=><label className="optimizer-run-check" key={name}><input type="checkbox" checked={optimizerVariablesSelected.includes(name)} onChange={(event)=>setOptimizerVariablesSelected((current)=>event.target.checked?[...current,name]:current.filter((item)=>item!==name))}/>{name}</label>)}{!optimizerContext.discrete_optimizable_variables?.length&&<small>El catálogo no ofrece variables discretas aplicables.</small>}</fieldset>
-              {optimizerCandidateDomains.length>0&&<fieldset><legend>Cantidades explícitas por opción candidata</legend>{optimizerCandidateDomains.flatMap((domain)=>(domain.options||[]).filter((option)=>domain.candidate_option_ids?.includes(option.option_id)).map((option)=><label key={option.option_id}>{option.provenance?.product_name||option.option_id} · {option.value} {option.unit}<input required type="number" min="0" step="any" placeholder={`Cantidad (${option.provenance?.quote?.price_unit||"unidad de cotización"})`} value={runForm.quantities[option.option_id]||""} onChange={(event)=>setRunForm((current)=>({...current,quantities:{...current.quantities,[option.option_id]:event.target.value}}))}/><small>{option.provenance?.quote?.unit_price||"Precio pendiente"} {option.provenance?.quote?.currency||""} / {option.provenance?.quote?.price_unit||"unidad"}</small></label>))}</fieldset>}
-              <label>Moneda objetivo<select required value={runForm.currency} onChange={(event)=>updateRunForm("currency",event.target.value)}><option value="">Seleccionar moneda…</option>{optimizerCurrencyChoices.map((currency)=><option key={currency} value={currency}>{currency}</option>)}</select></label>
-              {!optimizerCurrencyChoices.length&&optimizerVariablesSelected.length>0&&<small>No hay una moneda común con cotización para todas las variables seleccionadas; no se permite conversión.</small>}
-              <button className="button primary" type="submit" disabled={optimizerRunBusy||!optimizerVariablesSelected.length||!artifactRef.current||saveState!=="saved"||dirtyRef.current}>{optimizerRunBusy?"Ejecutando…":"Ejecutar optimizador"}</button>
-            </>}
-          </form>
-          {optimizerRun&&<div className="optimizer-run-result" id={`optimizer-run-${optimizerRun.run?.id}`}><strong>Corrida {optimizerRun.run?.status||"recuperada"}</strong><a href={`#optimizer-run-${optimizerRun.run?.id}`}>run_id: {optimizerRun.run?.id}</a><button type="button" className="button" onClick={async()=>{try{const response=await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/optimizer-runs/${encodeURIComponent(optimizerRun.run.id)}`,{headers:{Authorization:`Bearer ${token}`}});const body=await response.json();if(!response.ok)throw new Error(body.detail||"No se pudo consultar la corrida.");setOptimizerRun(body);}catch(error){setOptimizerError(error.message);}}}>Actualizar resultado</button>{optimizerRun.run?.error&&<small className="optimizer-context-error">{optimizerRun.run.error}</small>}{optimizerRun.alternatives?.length?<>{optimizerRun.alternatives.map((alternative)=><div className="optimizer-context-row" key={alternative.id}><span>Alternativa {alternative.rank||"—"}{alternative.recommended?" · recomendada":""}</span><small>{(alternative.evaluation_snapshot?.cost_detail?.currency_totals||[]).map((total)=>`${total.currency} ${total.amount}`).join(" · ")||"Costo no disponible"}</small><small>{Object.entries(alternative.candidate_snapshot||{}).map(([key,value])=>`${key}: ${value}`).join(" · ")}</small></div>)}</>:<small>No se generaron alternativas factibles.</small>}</div>}
-          <TopologyOptimizerPanel projectId={projectId} token={token} artifact={artifact} canRun={Boolean(artifactRef.current)&&saveState==="saved"&&!dirtyRef.current} runForm={runForm} onApplied={()=>setReloadKey((key)=>key+1)}/>
+        <details ref={optimizerPanelRef} className="optimizer-context-panel"><summary><SlidersHorizontal size={14}/> Matherra · optimización matemática</summary>
+          <TopologyOptimizerPanel projectId={projectId} token={token} artifact={artifact} canRun={Boolean(artifactRef.current)&&saveState==="saved"&&!dirtyRef.current} onShowResults={onShowResults}/>
         </details>
         <p className="ground-plan-shortcuts">Ctrl/Cmd+Z deshacer · Ctrl/Cmd+Y rehacer</p></aside></div>
       {contextMenu&&<div className="ground-plan-context-menu" style={{left:contextMenu.x,top:contextMenu.y}} onClick={(event)=>event.stopPropagation()}><button disabled={!history.past.length} onClick={undo}><Undo2 size={14}/>Deshacer</button><button disabled={!history.future.length} onClick={redo}><Redo2 size={14}/>Rehacer</button><button onClick={()=>{activateTool("select");setContextMenu(null);}}><Maximize2 size={14}/>Seleccionar</button><details open={contextAddOpen} onMouseEnter={()=>setContextAddOpen(true)} onMouseLeave={()=>setContextAddOpen(false)}><summary onClick={(event)=>{event.preventDefault();setContextAddOpen(true);}}><Square size={14}/>Añadir</summary><div><button onClick={()=>{activateTool("conductor");setContextMenu(null);setContextAddOpen(false);}}><Cable size={14}/>Conductor</button><button disabled={selectedItem?.type === "electrode"} title={selectedItem?.type === "electrode" ? "Ya hay un electrodo seleccionado" : undefined} onClick={()=>{activateTool("electrode");setContextMenu(null);setContextAddOpen(false);}}><CircleDot size={14}/>Electrodo</button><button onClick={()=>{activateTool("structure");setContextMenu(null);setContextAddOpen(false);}}><Square size={14}/>Elemento constructivo</button></div></details></div>}

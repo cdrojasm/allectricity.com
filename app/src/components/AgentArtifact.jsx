@@ -1,7 +1,9 @@
 import React, { Suspense, lazy, useEffect, useState } from "react";
 import { Activity, Box, ChevronRight, ExternalLink, Eye, FileText, PencilRuler, RefreshCw, Rotate3d, Settings2, Sparkles, Undo2, X } from "lucide-react";
 import { SurfacePotentialMap } from "./GroundingCalculations.jsx";
-import { evaluateResult, formatNumber, verdictLabels } from "../resultInterpretation.js";
+import TopologyPreview from "./TopologyPreview.jsx";
+import { criterionLabel, evaluateResult, formatNumber, verdictLabels } from "../resultInterpretation.js";
+import { ACTIVE_RUN, RUN_STATUS_LABELS, apiRequest, formatMoney, formatPercent, formatShare, minimumMargin, restoreAndRecalculate } from "../optimization.js";
 import { fieldLabels, fieldValueLabel } from "../labels.js";
 
 const calculationFreshnessLabels = { al_dia: "Resultado al día", desactualizado: "Resultado desactualizado", calculando: "Cálculo en curso", sin_calculo: "Sin cálculo", error: "Cálculo con error" };
@@ -121,6 +123,235 @@ function ArtifactGrid({ geometry }) {
   </svg>;
 }
 
+function buildAgentIterationRows(events = []) {
+  const rows = new Map();
+  let current = null;
+  for (const event of [...events].sort((a, b) => a.seq - b.seq)) {
+    const iteration = event.payload?.iteration;
+    if (Number.isInteger(iteration)) {
+      current = iteration;
+      const row = rows.get(iteration) || { iteration, status: "Ajustando la malla" };
+      row.status = event.type === "subagent.started" ? "Proponiendo un ajuste" : event.title;
+      row.maxIterations = event.payload?.max_iterations;
+      rows.set(iteration, row);
+      continue;
+    }
+    if (current == null) continue;
+    const row = rows.get(current);
+    if (event.type === "artifact.version_created") row.artifactVersion = event.payload?.version;
+    if (event.type === "calculation.queued") {
+      row.calculationId = event.payload?.calculation_id;
+      row.status = "Cálculo de seguridad en curso";
+    }
+    if (event.type === "calculation.completed") {
+      row.calculationId = event.payload?.calculation_id || row.calculationId;
+      row.status = "Cálculo de seguridad terminado";
+    }
+    if (event.type === "calculation.failed") {
+      row.calculationId = event.payload?.calculation_id || row.calculationId;
+      row.status = "Falló el cálculo de seguridad";
+    }
+    if (event.type === "subagent.completed" && !String(event.title || "").includes("encolada")) row.status = event.title;
+    rows.set(current, row);
+  }
+  return [...rows.values()].sort((a, b) => a.iteration - b.iteration);
+}
+
+const designLoopReasons = {
+  goal_met: "Se alcanzó cumplimiento.",
+  no_improvement: "La última iteración no mejoró el mejor margen.",
+  iteration_limit: "Se agotó el límite de iteraciones sin cumplir.",
+  no_valid_candidate: "El diseñador no produjo una geometría válida; no se guardó una versión.",
+  save_failed: "La propuesta no pasó la validación al guardar; no se creó una versión.",
+  calculation_failed: "La geometría se guardó, pero no se pudo iniciar su cálculo.",
+  not_evaluable: "El cálculo no permitió evaluar el cumplimiento; revisa los datos de entrada.",
+};
+
+// One section for the agent's run: its live status, every iteration it versioned, and how it ended.
+function AgentImprovements({ project, token, artifact, events, autonomousRun, progress, result, onRestored }) {
+  const [details, setDetails] = useState({});
+  const [restoring, setRestoring] = useState(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const artifactId = artifact?.artifact_id;
+  const rows = buildAgentIterationRows(events);
+  const signature = rows.map((row) => `${row.iteration}-${row.artifactVersion || ""}-${row.calculationId || ""}-${row.status}`).join("|");
+  useEffect(() => {
+    if (!artifactId || !rows.some((row) => row.artifactVersion)) { setDetails({}); return undefined; }
+    let live = true;
+    const root = `/api/v1/projects/${project.id}/artefactos-diseno-tierras/${artifactId}`;
+    (async () => {
+      try {
+        const versions = await apiRequest(token, `${root}/versions`);
+        const lookup = new Map((versions || []).map((version) => [version.version, version]));
+        const loaded = await Promise.all(rows.filter((row) => row.artifactVersion).map(async (row) => {
+          const calculation = row.calculationId ? await apiRequest(token, `${root}/calculos-potencial/${row.calculationId}`).catch(() => null) : null;
+          return [row.iteration, { version: lookup.get(row.artifactVersion), calculation }];
+        }));
+        if (live) setDetails(Object.fromEntries(loaded));
+      } catch (_) { /* El historial de versiones puede cargar en el siguiente ciclo de eventos. */ }
+    })();
+    return () => { live = false; };
+  }, [artifactId, project.id, token, signature]);
+  async function restore(key, version, calculationId) {
+    if (!calculationId || restoring != null) return;
+    setRestoring(key); setError(""); setNotice("");
+    try {
+      const restored = await restoreAndRecalculate({ token, projectId: project.id, artifactId, version, calculationId });
+      setNotice(`Se recuperó la versión ${version} como versión ${restored.restored.version} y se inició un nuevo cálculo.`);
+      onRestored?.(restored);
+    } catch (failure) { setError(failure.message); }
+    finally { setRestoring(null); }
+  }
+  if (!rows.length && !result && !autonomousRun && !progress) return null;
+  const best = result?.best_candidate;
+  // The best design can be recovered only if something versioned the plan after it and the run did not end compliant.
+  const canRestoreBest = best?.artifact_version && best?.calculation_id && artifact && artifact.version > best.artifact_version && result.reason !== "goal_met";
+  const bestIsIteration = rows.some((row) => row.artifactVersion === best?.artifact_version);
+  const restoreButton = (key, version, calculationId, isBest) => <button className="button" type="button"
+    data-testid={isBest && canRestoreBest ? "restore-best-design-candidate" : undefined}
+    disabled={!calculationId || restoring != null || version === artifact?.version} onClick={() => restore(key, version, calculationId)}>
+    {restoring === key ? "Recuperando y recalculando…" : version === artifact?.version ? "Versión actual" : calculationId ? "Recuperar y recalcular esta versión" : "Sin cálculo para recuperar"}
+  </button>;
+  return <section className="agent-iteration-timeline" aria-label="Mejoras del agente">
+    <div className="optimization-review-heading"><strong>Mejoras del agente</strong><span>{result ? `${result.iterations_used}/${result.max_iterations} iteraciones` : "En curso"}</span></div>
+    {!result && <p className="design-loop-progress" role="status" aria-live="polite">{progress?.title
+      || (autonomousRun?.status === "waiting_calculation" ? "Esperando el cálculo de seguridad para decidir el siguiente ajuste." : "El agente está revisando el diseño.")}
+      {Number.isInteger(progress?.payload?.iteration) && ` Iteración ${progress.payload.iteration}/${progress.payload.max_iterations}; cada cambio se guarda como versión y se vuelve a calcular.`}</p>}
+    {result && <div className="design-loop-summary" data-testid="design-loop-result">
+      <span>{designLoopReasons[result.reason] || `Terminó con resultado «${result.reason}».`} Iteraciones: {result.iterations_used}/{result.max_iterations}.</span>
+      {best && <span>Mejor candidato: versión {best.artifact_version}{Number.isFinite(best.margin_percent) ? ` · margen mínimo ${formatPercent(best.margin_percent)}` : ""}.</span>}
+      {canRestoreBest && !bestIsIteration && restoreButton("best", best.artifact_version, best.calculation_id, true)}
+    </div>}
+    {rows.map((row) => {
+      const { version, calculation } = details[row.iteration] || {};
+      const verdict = calculation?.status === "completed" ? evaluateResult(calculation.result).verdict : null;
+      const margin = minimumMargin(calculation?.result);
+      const isBest = best?.artifact_version != null && row.artifactVersion === best.artifact_version;
+      return <article className={`agent-iteration-card${isBest ? " best" : ""}`} key={row.iteration}>
+        <div className="agent-iteration-card-heading"><strong>Iteración {row.iteration}{row.maxIterations ? ` de ${row.maxIterations}` : ""}{row.artifactVersion ? ` · versión ${row.artifactVersion}` : ""}</strong><span>{isBest ? "Mejor resultado" : row.status}</span></div>
+        {version?.snapshot?.geometry && <ArtifactGrid geometry={version.snapshot.geometry}/>}
+        {verdict && <div className="agent-iteration-metrics"><strong className={`agent-iteration-verdict ${verdict}`}>{verdictLabels[verdict]}</strong>{margin != null && <span>Margen mínimo: {formatPercent(margin)}</span>}{Number.isFinite(calculation.result?.grid_resistance_ohm) && <span>R = {formatNumber(calculation.result.grid_resistance_ohm, 3)} Ω</span>}</div>}
+        {verdict && <div className="agent-iteration-criteria">{(calculation.result?.safety || []).flatMap((standard) => (standard.criteria || []).map((criterion, index) => <span key={`${standard.standard}-${criterion.criterion}-${index}`}>{criterionLabel(criterion.criterion)}: {formatNumber(criterion.actual_v)} / {formatNumber(criterion.tolerable_v)} V tolerables{Number.isFinite(criterion.margin_rel) ? ` · margen ${formatPercent(criterion.margin_rel * 100)}` : ""}</span>))}</div>}
+        {calculation?.status === "failed" && <small className="optimizer-context-error">{calculation.error || "El cálculo no se completó."}</small>}
+        {row.artifactVersion && restoreButton(row.iteration, row.artifactVersion, calculation?.id, isBest)}
+      </article>;
+    })}
+    {result && !rows.length && <p className="no-information">El agente terminó sin crear iteraciones de geometría.</p>}
+    {error && <p className="artifact-update-warning" role="alert">{error}</p>}{notice && <p className="matherra-apply-notice" role="status">{notice}</p>}
+  </section>;
+}
+
+function baseVerdict(electrical) {
+  if (electrical?.status === "VIOLATED") return `no cumple en el nivel más fino${Number.isFinite(electrical.ratio) ? ` (utilización ${formatShare(electrical.ratio)})` : ""}`;
+  if (electrical?.feasible === true) return `sin violaciones en el nivel más fino${Number.isFinite(electrical.ratio) ? ` (utilización ${formatShare(electrical.ratio)})` : ""}`;
+  return "cumplimiento sin evaluar";
+}
+
+// The only place where Matherra's alternatives are compared, previewed and applied (the editor sets up and launches).
+function MatherraRunReview({ project, token, artifact, refreshKey, onApplied }) {
+  const [runs, setRuns] = useState([]);
+  const [runId, setRunId] = useState("");
+  const [detail, setDetail] = useState(null);
+  const [comparison, setComparison] = useState(null);
+  const [error, setError] = useState("");
+  const [previewId, setPreviewId] = useState(null);
+  const [applyingId, setApplyingId] = useState(null);
+  const [notice, setNotice] = useState("");
+  const [reload, setReload] = useState(0);
+  const root = `/api/v1/projects/${encodeURIComponent(project.id)}/optimizer-runs`;
+  useEffect(() => {
+    let live = true;
+    apiRequest(token, `${root}?limit=50`, { fallback: "No se pudo cargar el historial de Matherra." }).then((body) => {
+      if (!live) return;
+      const rows = (body.runs || []).filter((row) => row.request_snapshot?.algorithm === "topology_alns");
+      setRuns(rows);
+      setRunId((current) => rows.some((row) => row.id === current) ? current : rows[0]?.id || "");
+    }).catch((failure) => { if (live) setError(failure.message); });
+    return () => { live = false; };
+  }, [root, token, refreshKey]);
+  useEffect(() => {
+    if (!runId) { setDetail(null); setComparison(null); return undefined; }
+    let live = true;
+    let timer;
+    const load = async () => {
+      try {
+        const body = await apiRequest(token, `${root}/${encodeURIComponent(runId)}`, { fallback: "No se pudo consultar la búsqueda de Matherra." });
+        if (!live) return;
+        setDetail(body);
+        setRuns((rows) => rows.map((row) => (row.id === body.run.id ? { ...row, status: body.run.status } : row)));
+        const compared = body.run.status === "completed" ? await apiRequest(token, `${root}/${encodeURIComponent(runId)}/comparison`, { fallback: "No se pudo comparar las alternativas." }) : null;
+        if (live) setComparison(compared);
+        if (ACTIVE_RUN.has(body.run.status)) timer = setTimeout(load, 1800);
+      } catch (failure) { if (live) setError(failure.message); }
+    };
+    load();
+    return () => { live = false; clearTimeout(timer); };
+  }, [runId, root, token, reload]);
+  async function apply(id) {
+    if (!detail?.run?.id || applyingId) return;
+    setApplyingId(id); setError(""); setNotice("");
+    try {
+      const body = await apiRequest(token, `${root}/${encodeURIComponent(detail.run.id)}/alternatives/${encodeURIComponent(id)}/apply`, { method: "POST", fallback: "No se pudo aplicar la alternativa." });
+      const revalidation = body.revalidation?.status;
+      setNotice(`Se creó la versión ${body.version} con la alternativa. ${revalidation === "pending" ? "Su cálculo completo con malla fina ya está en curso; el veredicto será el de ese cálculo, no el de la búsqueda."
+        : revalidation === "blocked" ? `No se pudo calcular aún: ${body.revalidation.detail?.message || "faltan datos del diseño"}.` : "Calcula la versión para verificarla."}`);
+      onApplied?.(body);
+      setReload((key) => key + 1);
+    } catch (failure) { setError(failure.message); }
+    finally { setApplyingId(null); }
+  }
+  if (!runs.length && !error) return null;
+  const run = detail?.run;
+  const progress = run?.result_summary?.progress;
+  const base = run?.request_snapshot?.initial_geometry || (run?.artifact_id === artifact?.artifact_id ? artifact?.snapshot?.geometry : null);
+  const geometries = new Map((detail?.alternatives || []).map((alt) => [alt.id, alt.evaluation_snapshot?.geometry || alt.candidate_snapshot?.geometry]));
+  const saving = comparison?.saving_vs_base;
+  return <section className="matherra-run-review" aria-label="Alternativas de Matherra">
+    <div className="optimization-review-heading"><strong>Matherra</strong>{runs.length > 1
+      ? <select aria-label="Historial de Matherra" value={runId} onChange={(event) => { setRunId(event.target.value); setDetail(null); setComparison(null); setPreviewId(null); setError(""); setNotice(""); }}>
+          {runs.map((row) => <option key={row.id} value={row.id}>{new Date(row.created_at * 1000).toLocaleString("es-CO")} · v{row.artifact_version} · {RUN_STATUS_LABELS[row.status] || row.status}</option>)}
+        </select>
+      : run && <span>{new Date(run.created_at * 1000).toLocaleString("es-CO")}</span>}</div>
+    {error && <p className="artifact-update-warning" role="alert">{error}</p>}
+    {!run && !error && <p className="no-information">Cargando la búsqueda de Matherra…</p>}
+    {run && <div className="matherra-run-status" role="status" aria-live="polite">
+      <strong>{RUN_STATUS_LABELS[run.status] || run.status} · desde la versión {run.artifact_version}</strong>
+      {ACTIVE_RUN.has(run.status) && <><span>{progress?.verdicts ?? 0} de {progress?.budget || run.request_snapshot?.request?.max_solver_calls || "—"} evaluaciones eléctricas.</span><progress max={progress?.budget || run.request_snapshot?.request?.max_solver_calls || 1} value={progress?.verdicts || 0}/></>}
+      {run.error && <span className="optimizer-context-error">{run.error}</span>}
+      {comparison && <span>{run.result_summary?.solver_calls_total ?? run.result_summary?.solver_calls ?? "—"} evaluaciones · {comparison.alternatives.length === 1 ? "1 alternativa verificada" : `${comparison.alternatives.length} alternativas verificadas`} en el nivel más fino.</span>}
+    </div>}
+    {comparison?.base && <p className="matherra-base-summary">Diseño de partida: {formatMoney(comparison.base.cost, comparison.currency)}, {baseVerdict(comparison.base.electrical)}.
+      {saving && (saving.kind === "saving" ? ` La recomendada ahorra ${formatMoney(saving.amount, comparison.currency)} (${formatShare(saving.fraction, 1)}).`
+        : ` La recomendada cuesta ${formatMoney(-saving.amount, comparison.currency)} más${saving.base_status === "violates" ? ": es lo que cuesta cumplir" : ""}.`)}</p>}
+    {notice && <p className="matherra-apply-notice" role="status">{notice}</p>}
+    {comparison && <div className="matherra-candidate-list">
+      {comparison.alternatives.length ? comparison.alternatives.map((candidate) => {
+        const geometry = geometries.get(candidate.alternative_id);
+        return <article className={`matherra-candidate${candidate.recommended ? " recommended" : ""}`} data-testid="matherra-candidate" key={candidate.alternative_id}>
+          <div className="matherra-candidate-heading"><strong>{candidate.recommended ? "Recomendada · " : ""}Alternativa {candidate.rank}</strong>{candidate.pareto && <span>Equilibrio costo–seguridad</span>}</div>
+          <div className="matherra-candidate-metrics">
+            <span><small>Costo</small><strong>{formatMoney(candidate.cost, comparison.currency)}</strong></span>
+            <span><small>Utilización</small><strong>{formatShare(candidate.utilization_ratio, 1)}</strong></span>
+            <span><small>Margen mínimo</small><strong>{formatShare(candidate.margin, 1)}</strong></span>
+            <span><small>Contacto / paso</small><strong>{Number.isFinite(candidate.Vt_v) && Number.isFinite(candidate.Vs_v) ? `${formatNumber(candidate.Vt_v, 0)} / ${formatNumber(candidate.Vs_v, 0)} V` : "—"}</strong></span>
+            <span><small>Rg</small><strong>{Number.isFinite(candidate.Rg_ohm) ? `${formatNumber(candidate.Rg_ohm, 2)} Ω` : "—"}</strong></span>
+            <span><small>Conductor · varillas · conexiones</small><strong>{Number.isFinite(candidate.complexity?.conductor_length_m) ? `${formatNumber(candidate.complexity.conductor_length_m, 0)} m · ${candidate.complexity.rods} · ${candidate.complexity.connections ?? "—"}` : "—"}</strong></span>
+          </div>
+          <small className="matherra-candidate-validation">Verificada en {candidate.validated_at_level || "nivel no informado"} · búsqueda muestreada, no certificada.{candidate.applied_version != null && (candidate.applied_is_latest ? ` Es la versión ${candidate.applied_version} del plano.` : ` Ya se aplicó como versión ${candidate.applied_version}.`)}</small>
+          <div className="matherra-candidate-actions">
+            <button className="button" type="button" aria-expanded={previewId === candidate.alternative_id} disabled={!geometry || !base} onClick={() => setPreviewId(previewId === candidate.alternative_id ? null : candidate.alternative_id)}>{previewId === candidate.alternative_id ? "Ocultar vista previa" : "Vista previa"}</button>
+            <button className="button primary" type="button" disabled={!geometry || applyingId != null || candidate.applied_is_latest} onClick={() => apply(candidate.alternative_id)}>{applyingId === candidate.alternative_id ? "Aplicando…" : candidate.applied_is_latest ? "Versión actual" : "Aplicar como nueva versión"}</button>
+          </div>
+          {previewId === candidate.alternative_id && geometry && base && <TopologyPreview base={base} alternative={geometry}/>}
+        </article>;
+      }) : <p className="no-information">Matherra terminó, pero ninguna alternativa pasó la verificación más fina con este presupuesto. Prueba con un presupuesto mayor o revisa las áreas intervenibles.</p>}
+      {comparison.alternatives.some((row) => row.pareto) && <small className="matherra-candidate-validation">«Equilibrio costo–seguridad»: ninguna otra alternativa es a la vez más barata y más segura.</small>}
+      <details className="matherra-review-notes"><summary>Cómo interpretar este resultado</summary><ul>{comparison.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details>
+    </div>}
+  </section>;
+}
+
 function AgentArtifactPanel({ project, conversation, token, refreshKey, onOpenGraph }) {
   const [artifact, setArtifact] = useState(null);
   const [planWarnings, setPlanWarnings] = useState([]);
@@ -219,7 +450,7 @@ function ArtifactUpdateCard({ message, token, project, onView, onUndone }) {
 const Surface3D = lazy(() => import("./Surface3D.jsx"));
 
 
-function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggestion }) {
+function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggestion, onOpenMatherra, onCandidateApplied }) {
   const [artifact, setArtifact] = useState(null);
   const [calculation, setCalculation] = useState(null);
   const [geometry, setGeometry] = useState(null);
@@ -230,7 +461,9 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
   const [actionError, setActionError] = useState("");
   const [optimizing, setOptimizing] = useState(false);
   const [designLoopResult, setDesignLoopResult] = useState(null);
-  const [restoringBest, setRestoringBest] = useState(false);
+  const [designLoopProgress, setDesignLoopProgress] = useState(null);
+  const [designLoopEvents, setDesignLoopEvents] = useState([]);
+  const [autonomousRun, setAutonomousRun] = useState(null);
   const [solverConfig, setSolverConfig] = useState({ discretization_m: 1, segmentation: "graded", surface_spacing_m: 0.5, touch_reach_m: 0, estimate_uncertainty: false, justification: "Discretización validada para la geometría actual y segmentación graduada en nodos críticos." });
   useEffect(() => {
     if (!conversation) return undefined;
@@ -268,6 +501,10 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
   }, [project.id, conversation?.id, token, refreshKey]);
   useEffect(() => {
     if (!conversation) return undefined;
+    setDesignLoopResult(null);
+    setDesignLoopProgress(null);
+    setDesignLoopEvents([]);
+    setAutonomousRun(null);
     let live = true;
     let timer;
     const poll = async () => {
@@ -278,12 +515,25 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
         if (!response.ok) return;
         const data = await response.json();
         if (!live) return;
-        if (data.active_run) setDesignLoopResult(null);
+        if (data.active_run) {
+          setAutonomousRun(data.active_run.mode === "autonomo" ? data.active_run : null);
+          setDesignLoopResult(null);
+          const runEvents = (data.events || []).filter((item) => item.run_id === data.active_run.id);
+          const hasIteration = runEvents.some((item) => Number.isInteger(item.payload?.iteration));
+          setDesignLoopEvents(hasIteration ? runEvents : []);
+          const relevant = [...runEvents].reverse().find((item) =>
+            item.run_id === data.active_run.id && (Number.isInteger(item.payload?.iteration)
+              || item.title?.includes("Iteración automática")));
+          if (relevant) setDesignLoopProgress(relevant);
+        }
         const event = [...(data.events || [])].reverse().find((item) => item.payload?.design_loop_result);
         if (event?.payload?.design_loop_result && !data.active_run) {
           setDesignLoopResult(event.payload.design_loop_result);
+          setDesignLoopEvents((data.events || []).filter((item) => item.run_id === event.run_id));
+          setDesignLoopProgress(null);
           return;
         }
+        if (!data.active_run) { setAutonomousRun(null); setDesignLoopProgress(null); setDesignLoopEvents([]); }
         if (data.active_run && live) timer = setTimeout(poll, data.poll_after_ms || 1500);
       } catch (_) { /* A later refresh can recover the terminal run event. */ }
     };
@@ -332,60 +582,49 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
     } catch (error) { setActionError(error.message); }
     finally { setRecalculating(false); }
   }
-  async function restoreBestCandidate() {
-    const candidate = designLoopResult?.best_candidate;
-    if (!candidate?.artifact_version || !candidate?.calculation_id || !artifact || restoringBest) return;
-    setRestoringBest(true);
-    setActionError("");
-    const root = `/api/v1/projects/${project.id}/artefactos-diseno-tierras/${artifact.artifact_id}`;
-    const auth = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-    const request = async (url, options = {}) => {
-      const response = await fetch(url, { ...options, headers: auth });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.detail?.message || body.detail || "No se pudo recuperar el mejor resultado.");
-      return body;
-    };
-    try {
-      const originalCalculation = await request(`${root}/calculos-potencial/${candidate.calculation_id}`);
-      const restored = await request(`${root}/versions/${candidate.artifact_version}/restaurar`, { method: "POST" });
-      const parameterKeys = ["justification", "conductor_radius_m", "discretization_m", "segmentation",
-        "estimate_uncertainty", "surface_spacing_m", "touch_reach_m", "safety_standards", "fault_split",
-        "x_over_r", "system_frequency_hz", "scenarios", "transfer_assessment_complete",
-        "transfer_assessment_evidence", "transfer_exposures"];
-      const parameters = Object.fromEntries(parameterKeys.filter((key) => originalCalculation.parameters?.[key] !== undefined)
-        .map((key) => [key, originalCalculation.parameters[key]]));
-      const queued = await request(`${root}/versions/${restored.version}/calculos-potencial`, {
-        method: "POST", body: JSON.stringify(parameters),
-      });
-      setArtifact(restored);
-      setCalculation(queued);
-      setFreshness("calculando");
-      setState("ready");
-    } catch (error) { setActionError(error.message); }
-    finally { setRestoringBest(false); }
-  }
   const result = calculation?.result;
   const { verdict, interpretation, safety } = evaluateResult(result);
   const value = formatNumber;
   const freshnessLabel = freshness === "desactualizado" ? "El resultado quedó desactualizado · recalcula para esta versión" : freshness === "calculando" ? "Calculando la versión vigente…" : null;
   const recalculateButton = <button className="button primary" disabled={!artifact || recalculating || ["pending", "running"].includes(calculation?.status)} onClick={recalculate}><RefreshCw size={14}/> {recalculating || ["pending", "running"].includes(calculation?.status) ? "Calculando…" : "Recalcular"}</button>;
-  const bestCandidate = designLoopResult?.best_candidate;
-  const canRestoreBest = bestCandidate?.artifact_version && bestCandidate?.calculation_id
-    && artifact && artifact.version > bestCandidate.artifact_version
-    && designLoopResult?.reason !== "goal_met";
+  // What the two improvement paths produced, right under the options that launch them. It keeps one place in the
+  // tree whatever the calculation's state, so a recalculation does not remount it and drop its notices.
+  const improvements = <>
+  <AgentImprovements project={project} token={token} artifact={artifact} events={designLoopEvents} autonomousRun={autonomousRun} progress={designLoopProgress} result={designLoopResult} onRestored={({ restored, calculation }) => { setArtifact(restored); setCalculation(calculation); setFreshness("calculando"); setState("ready"); onCandidateApplied?.(); }}/>
+  {artifact && <MatherraRunReview project={project} token={token} artifact={artifact} refreshKey={refreshKey} onApplied={onCandidateApplied}/>}
+  </>;
   return <aside className="panel artifact-side-panel agent-results-panel"><div className="panel-heading"><div><Activity size={17}/><h2>Resultados</h2></div><div className="artifact-results-heading-actions">{calculation && <span className="muted-label">Versión {calculation.artifact_version}</span>}{recalculateButton}</div></div>
     {actionError && <p className="artifact-update-warning">{actionError}</p>}
-    {designLoopResult && <div className="artifact-status" data-testid="design-loop-result"><strong>Optimización automática</strong><span>{designLoopResult.reason === "goal_met" ? "Se alcanzó cumplimiento." : designLoopResult.reason === "no_improvement" ? "La última iteración no mejoró el mejor margen." : designLoopResult.reason === "iteration_limit" ? "Se alcanzó el límite de iteraciones." : "El bucle terminó sin completar otra iteración."} Iteraciones: {designLoopResult.iterations_used}/{designLoopResult.max_iterations}.</span>{bestCandidate && <span>Mejor candidato: versión {bestCandidate.artifact_version}, cálculo {bestCandidate.calculation_id}{Number.isFinite(bestCandidate.margin_percent) ? ` · margen mínimo ${bestCandidate.margin_percent.toLocaleString("es-CO", { maximumFractionDigits: 1 })}%` : ""}.</span>}{canRestoreBest && <button className="button primary" data-testid="restore-best-design-candidate" disabled={restoringBest || recalculating} onClick={restoreBestCandidate}><Undo2 size={14}/>{restoringBest ? "Restaurando y recalculando…" : "Recuperar mejor versión y recalcular"}</button>}</div>}
     {!calculation ? <div className="artifact-results-empty"><p className="no-information">{state === "error" ? "No se pudieron cargar los resultados." : "Sin cálculo para esta versión del diseño."}</p>{artifact && <p className="no-information">Completa y confirma los parámetros eléctricos antes de recalcular.</p>}</div>
       : calculation.status !== "completed" ? <div className="artifact-status"><strong>Cálculo {calculation.status === "pending" || calculation.status === "running" ? "en curso…" : calculation.status}</strong>{calculation.error && <span className="no-information">{calculation.error}</span>}</div>
       : <>
         {freshnessLabel && <div className="artifact-update-warning">{freshnessLabel} {recalculateButton}</div>}
         <details className="solver-config-panel"><summary><Settings2 size={14}/> Configuración del solver</summary><div className="solver-config-grid"><label>Discretización (m)<select value={solverConfig.discretization_m} onChange={(event) => setSolverConfig((current) => ({ ...current, discretization_m: event.target.value }))}>{[0.25, 0.5, 1, 2, 5].map((value) => <option value={value} key={value}>{value}</option>)}</select></label><label>Segmentación<select value={solverConfig.segmentation} onChange={(event) => setSolverConfig((current) => ({ ...current, segmentation: event.target.value }))}><option value="graded">Graduada en nodos críticos</option><option value="uniform">Uniforme</option></select></label><label>Raster de superficie<select value={solverConfig.surface_spacing_m} onChange={(event) => setSolverConfig((current) => ({ ...current, surface_spacing_m: event.target.value }))}>{[0.25, 0.5, 1].map((value) => <option value={value} key={value}>{value} m</option>)}</select></label><label title="Margen alrededor de la malla donde se busca la tensión de contacto; 0 = dentro del perímetro (IEEE 80)">Alcance de contacto<select value={solverConfig.touch_reach_m} onChange={(event) => setSolverConfig((current) => ({ ...current, touch_reach_m: event.target.value }))}>{[0, 0.5, 1, 2].map((value) => <option value={value} key={value}>{value === 0 ? "Perímetro de la malla" : `${value} m fuera de la malla`}</option>)}</select></label><label className="solver-config-check"><input type="checkbox" checked={solverConfig.estimate_uncertainty} onChange={(event) => setSolverConfig((current) => ({ ...current, estimate_uncertainty: event.target.checked }))}/> Estimar incertidumbre numérica</label><label className="solver-config-justification">Justificación registrada<textarea value={solverConfig.justification} maxLength={500} onChange={(event) => setSolverConfig((current) => ({ ...current, justification: event.target.value }))}/></label><small>Capas del modelo: {artifact?.snapshot?.soil_layers?.length || "pendientes en Entradas"}. La cantidad de capas se define en el modelador de suelo y se valida antes de calcular.</small></div></details>
         <div className={`agent-verdict ${verdict}`}>{verdictLabels[verdict]}</div>
-        <div className="result-interpretation"><div className="result-interpretation-title"><strong>Interpretación</strong><span>{interpretation.title}</span></div><div><small>Restricción dominante</small><strong>{interpretation.constraint}</strong></div><div><small>Por qué</small><span>{interpretation.explanation}</span></div><div className="result-interpretation-actions"><small>Siguiente acción</small>{verdict === "no_cumple" && conversation && calculation.artifact_version === artifact?.version && freshness !== "desactualizado" && <button className="button primary" data-testid="optimize-until-compliant" disabled={optimizing || recalculating} onClick={optimizeUntilCompliant}><Sparkles size={14}/> {optimizing ? "Iniciando optimización…" : "Optimizar hasta cumplir"}</button>}{interpretation.actions.map((action) => <button className="button" key={action} onClick={() => onSuggestion?.(action)}>{action}</button>)}</div></div>
+        <div className="result-interpretation"><div className="result-interpretation-title"><strong>Interpretación</strong></div><div><small>Restricción dominante</small><strong>{interpretation.constraint}</strong></div><div><small>Por qué</small><span>{interpretation.explanation}</span></div><div className="result-interpretation-actions"><small>Siguiente acción</small>{interpretation.actions.map((action) => <button className="button" key={action} onClick={() => onSuggestion?.(action)}>{action}</button>)}</div></div>
         <div className="artifact-status"><strong>Malla</strong><span>R = {Number(result.grid_resistance_ohm).toLocaleString("es-CO", { maximumFractionDigits: 3 })} Ω · GPR = {value(result.gpr_v)} V · I = {value(result.injected_current_a)} A</span></div>
         {safety.map((standard) => <div className="artifact-status" key={standard.standard}><strong>{standard.standard}</strong>{(standard.criteria || []).map((c) => <span key={c.criterion} className={c.status === "cumple" ? "" : "agent-fails"}>{c.criterion === "touch" ? "Contacto" : "Paso"}: {value(c.actual_v)} V / {value(c.tolerable_v)} V tolerable ({(100 * c.margin_rel).toLocaleString("es-CO", { maximumFractionDigits: 1 })} %)</span>)}{standard.reason && <span className="no-information">{standard.reason}</span>}</div>)}
         {result.conductor_thermal && <div className="artifact-status"><strong>Conductor (térmico)</strong><span className={result.conductor_thermal.status === "cumple" ? "" : "agent-fails"}>Sección {value(result.conductor_thermal.selected_section_mm2)} mm² · mínima {value(result.conductor_thermal.minimum_section_mm2)} mm²</span></div>}
+        <section className="design-optimization-options" aria-labelledby="design-optimization-title">
+          <div className="design-optimization-heading"><strong id="design-optimization-title">¿Cómo quieres mejorar este diseño?</strong></div>
+          <div className="design-optimization-grid">
+            <article className="design-optimization-card">
+              <div className="design-optimization-card-title"><Sparkles size={16}/><h3>Mejorar con el agente</h3><span>Asistido</span></div>
+              <p>Propone ajustes a la malla, guarda cada uno como versión y lo vuelve a calcular hasta cumplir o agotar las iteraciones.</p>
+              {verdict === "no_cumple" && conversation && calculation.artifact_version === artifact?.version && freshness !== "desactualizado"
+                ? <button className="button primary" data-testid="optimize-until-compliant" disabled={optimizing || recalculating || Boolean(autonomousRun)} onClick={optimizeUntilCompliant}><Sparkles size={14}/>{optimizing ? "Iniciando…" : autonomousRun ? "El agente está trabajando…" : "Mejorar con el agente"}</button>
+                : <small className="design-optimization-requirement">Disponible cuando el cálculo de la versión actual no cumple.</small>}
+            </article>
+            <article className="design-optimization-card matherra">
+              <div className="design-optimization-card-title"><Activity size={16}/><h3>Optimizar con Matherra</h3><span>Matemático</span></div>
+              <p>Busca y compara trazados por costo y seguridad dentro de las áreas intervenibles, con las tarifas que definas.</p>
+              <button className="button" data-testid="open-matherra-optimizer" onClick={onOpenMatherra}>Configurar Matherra <ChevronRight size={14}/></button>
+            </article>
+          </div>
+        </section>
+      </>}
+    {improvements}
+    {calculation?.status === "completed" && <>
         {result.surface_potential && <div className="agent-grid-preview"><SurfacePotentialMap field={result.surface_potential}/></div>}
         {result.surface_potential && <p className="no-information">Contacto evaluado sobre la malla ({value(result.surface_potential.grid_width_m)} × {value(result.surface_potential.grid_height_m)} m{Number(calculation.parameters?.touch_reach_m) > 0 ? `, ${calculation.parameters.touch_reach_m} m fuera del perímetro` : ", dentro del perímetro"}); paso en todo el terreno, salvo dentro de construcciones.</p>}
         {result.surface_potential && geometry && <button className="button primary agent-3d-button" onClick={() => setShow3d(true)}><Rotate3d size={15}/> Ver en 3D</button>}

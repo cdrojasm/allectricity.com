@@ -182,6 +182,36 @@ def test_applying_an_alternative_survives_a_blocked_revalidation(site, monkeypat
     assert client.get(f"{artifacts}/versions/{row['version']}/calculos-potencial", headers=h).json() == []
 
 
+def test_the_same_alternative_is_not_applied_twice_in_a_row_and_the_comparison_says_where_it_went(site, monkeypatch):
+    services, client, h, project, artifact, root, _ = site
+    monkeypatch.setattr(optimizer_routes.calculate_artifact_potential, "apply_async", lambda *a, **k: None)
+    run = client.post(f"{root}/topology", json=request_body(artifact), headers=h).json()["run"]
+    assert job.execute_topology_run(deps(services, lambda *a, **k: fake_result([(5000.0, 0.8)])), run["id"]) == "completed"
+    [alternative] = client.get(f"{root}/{run['id']}", headers=h).json()["alternatives"]
+    apply = f"{root}/{run['id']}/alternatives/{alternative['id']}/apply"
+    [row] = client.get(f"{root}/{run['id']}/comparison", headers=h).json()["alternatives"]
+    assert row["applied_version"] is None and row["applied_is_latest"] is False
+
+    first = client.post(apply, headers=h)
+    assert first.status_code == 201, first.text
+    again = client.post(apply, headers=h)
+    assert again.status_code == 409 and "ya es la versión actual" in again.json()["detail"]
+    comparison = client.get(f"{root}/{run['id']}/comparison", headers=h).json()
+    assert comparison["latest_artifact_version"] == first.json()["version"]
+    assert comparison["alternatives"][0]["applied_version"] == first.json()["version"]
+    assert comparison["alternatives"][0]["applied_is_latest"] is True
+
+    # After someone else versions the plan, going back to the alternative is a legitimate new version.
+    artifacts = f"/api/v1/projects/{project['id']}/artefactos-diseno-tierras/{artifact['artifact_id']}"
+    with services.store.transaction(write=True) as db:
+        latest = db.designs.latest(project["id"], artifact["artifact_id"])
+        db.designs.append_version(project["id"], artifact["artifact_id"], latest["name"], latest["snapshot"], latest["created_by"], {"kind": "user"})
+    assert client.get(f"{artifacts}/versions", headers=h).json()[0]["version"] == first.json()["version"] + 1
+    [row] = client.get(f"{root}/{run['id']}/comparison", headers=h).json()["alternatives"]
+    assert row["applied_version"] == first.json()["version"] and row["applied_is_latest"] is False
+    assert client.post(apply, headers=h).status_code == 201
+
+
 def test_rates_must_cover_every_line_and_carry_their_source(site):
     _, client, h, _, artifact, root, queued = site
     missing = {k: v for k, v in RATES.items() if k != "installation.connection"}

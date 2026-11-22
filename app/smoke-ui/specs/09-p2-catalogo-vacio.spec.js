@@ -1,5 +1,5 @@
 // P2-01 (catálogo global vacío): sin ninguna versión revisada en el catálogo de perfiles normativos, el
-// optimizador no ofrece ni sugiere un perfil por defecto y bloquea la resolución del contexto.
+// optimizador no ofrece ni sugiere un perfil por defecto y no deja iniciar la búsqueda.
 // No vacía el catálogo: si existe algún perfil revisado, la prueba se omite (no toca datos compartidos).
 // Solo local: crea un proyecto zz-smoke-* y lo barre al terminar.
 import { test, expect } from "@playwright/test";
@@ -18,7 +18,7 @@ async function api(page, url, options = {}) {
 }
 const post = (page, url, body) => api(page, url, { method: "POST", body: JSON.stringify(body) });
 
-test("P2-01: con el catálogo sin perfiles revisados, el optimizador no sugiere ninguno y bloquea el contexto", async ({ browser }, testInfo) => {
+test("P2-01: con el catálogo sin perfiles revisados, el optimizador no sugiere ninguno y no deja buscar", async ({ browser }, testInfo) => {
   test.skip(!LOCAL, "Crea objetos; solo se ejecuta contra localhost.");
   test.skip(!creds("designer"), "Falta el perfil designer; créalo con make smoke-ui-seed.");
   test.setTimeout(120_000);
@@ -41,18 +41,13 @@ test("P2-01: con el catálogo sin perfiles revisados, el optimizador no sugiere 
     await page.goto(`/project/${projectId}`);
     await page.getByRole("tablist", { name: "Secciones del artefacto" }).getByRole("tab", { name: "Plano" }).click();
     await page.getByRole("button", { name: "Abrir editor de plano" }).click();
-    await page.getByText("Restricciones de optimización").click();
+    await page.getByText("Matherra · optimización matemática").click();
 
-    // Ningún perfil ofrecido ni marcado por defecto; guardar no tiene nada que fijar.
-    await expect(page.getByText("No hay perfiles normativos revisados disponibles para seleccionar.")).toBeVisible();
-    await expect(page.locator(".topology-optimizer, .optimizer-panel, body").getByRole("checkbox", { name: /perfil/i })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Guardar perfiles del proyecto" })).toBeDisabled();
-    expect((await api(page, `/api/v1/projects/${projectId}/constraint-profiles`)).body.profiles).toEqual([]);
-
-    await page.getByRole("button", { name: "Resolver contexto" }).click();
-    await expect(page.locator(".optimizer-context-status")).toContainText("Optimización bloqueada");
-    await expect(page.locator(".optimizer-context-result")).toContainText("normative_profile_not_selected");
-    await expect(page.locator(".optimizer-context-result")).not.toContainText("vnone");
+    // Ningún perfil ofrecido ni marcado por defecto, y la búsqueda dice por qué no puede empezar.
+    await expect(page.getByText("No hay perfiles normativos revisados disponibles.")).toBeVisible();
+    await expect(page.locator(".topology-optimizer").getByRole("checkbox", { name: /perfil/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Iniciar búsqueda con Matherra" })).toBeDisabled();
+    await expect(page.locator("#topology-start-blocker")).toContainText("perfil normativo revisado");
     // El bloqueo no fija nada a escondidas.
     expect((await api(page, `/api/v1/projects/${projectId}/constraint-profiles`)).body.profiles).toEqual([]);
     await page.screenshot({ path: testInfo.outputPath("catalogo-vacio.png") });

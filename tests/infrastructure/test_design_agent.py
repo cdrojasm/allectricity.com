@@ -738,7 +738,7 @@ def test_autonomous_loop_restores_the_best_version_when_an_iteration_is_worse(ch
     assert result["best_candidate"]["artifact_version"] == 3 and result["best_candidate"]["restored_from"] == 1
     assert result["best_candidate"]["calculation_id"] == dispatched[2]
     final = [m for m in messages(client, tokens, conversation) if m["source"] == "agent"][-1]["text"]
-    assert "versión 3 (restaurada desde la versión 1)" in final and "margen mínimo -18.1%" in final
+    assert "versión 3 (restaurada desde la versión 1)" in final and "margen mínimo -18,1 %" in final and dispatched[2] not in final
     assert artifacts(client, tokens, project)[0]["calculation_verdict"] == "no_cumple"  # v3 has its own result
 
 

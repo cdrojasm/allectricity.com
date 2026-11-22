@@ -591,7 +591,24 @@ def compare_optimizer_run(project_id: str, run_id: str, request: Request, actor=
         if not run:
             raise HTTPException(404, "Optimizer run not found")
         alternatives = repo.list_alternatives(project_id, run_id)
-    return topology_job.compare_alternatives(run, alternatives)
+        applied, latest = _applied_versions(db, project_id, run)
+    comparison = topology_job.compare_alternatives(run, alternatives)
+    for row in comparison["alternatives"]:
+        version = applied.get(row["alternative_id"])
+        row["applied_version"] = version
+        row["applied_is_latest"] = version is not None and version == latest
+    return {**comparison, "latest_artifact_version": latest}
+
+
+def _applied_versions(db, project_id: str, run: dict[str, Any]) -> tuple[dict[str, int], int | None]:
+    """Newest artifact version that applied each alternative of this run, and the artifact's latest version."""
+    rows = db.designs.versions(project_id, run["artifact_id"])          # newest first
+    applied: dict[str, int] = {}
+    for row in rows:
+        optimizer = (row.get("origin") or {}).get("optimizer") or {}
+        if optimizer.get("run_id") == run["id"] and optimizer.get("alternative_id"):
+            applied.setdefault(optimizer["alternative_id"], row["version"])
+    return applied, (rows[0]["version"] if rows else None)
 
 
 @router.post("/{run_id}/alternatives/{alternative_id}/apply", status_code=201)
@@ -622,15 +639,23 @@ def apply_optimizer_alternative(project_id: str, run_id: str, alternative_id: st
         except ValueError as exc:
             raise HTTPException(422, f"The alternative does not form a valid artifact: {exc}") from exc
         previous = db.designs.latest(project_id, run["artifact_id"])
+        current = ((previous or {}).get("origin") or {}).get("optimizer") or {}
+        if current.get("run_id") == run_id and current.get("alternative_id") == alternative_id:
+            # A second click (or the same alternative from another panel) would only duplicate the current version.
+            raise HTTPException(409, f"Esta alternativa ya es la versión actual del plano (versión {previous['version']}).")
         origin = {"kind": "user", "optimizer": {
             "run_id": run_id, "alternative_id": alternative_id, "candidate_sha256": alternative["candidate_sha256"],
             "algorithm": (run["request_snapshot"] or {}).get("algorithm", "discrete_local_search"),
             "based_on_version": run["artifact_version"], "certified": False}}
         row = db.designs.append_version(project_id, run["artifact_id"], source["name"], new_snapshot, actor.user_id, origin)
         cost = alternative["evaluation_snapshot"].get("cost")
+        currency = ((run.get("result_summary") or {}).get("cost_currency") or "").strip()
+        # Read by a person in the chat: thousands with dots, no decimals, and the run's currency.
+        cost_text = (f" (costo {currency} {cost:,.0f})".replace(",", ".").replace("  ", " ")
+                     if isinstance(cost, (int, float)) else "")
         announce_user_artifact_update(
             db, project_id, row, previous,
-            f"Se aplicó la alternativa {alternative.get('rank') or ''} del optimizador (costo {cost}); "
+            f"Se aplicó la alternativa {alternative.get('rank') or ''} de Matherra{cost_text}; "
             "es un borrador sin certificar que requiere aprobación profesional")
         revalidation = _queue_revalidation(db, project_id, run, alternative, row, actor.user_id)
     if revalidation["status"] == "pending":
