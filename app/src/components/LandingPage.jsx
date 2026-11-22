@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ArrowRight, ArrowUpRight, Check, FileText, Layers, Network, ShieldCheck, Waves, Zap } from "lucide-react";
+import { BrandMark } from "./BrandMark.jsx";
+import { ArrowRight, ArrowUpRight, BookOpen, Check, FileText, Layers, Mail, Network, ShieldCheck, Waves, Zap } from "lucide-react";
 import { createSwarm } from "../landingSwarm.js";
 import { LandingVideo, VideoThumbnail } from "./LandingVideo.jsx";
 import "../landing.css";
@@ -49,7 +50,81 @@ const STEPS = [
 
 // The landing lives on the root domain and the app on app.<domain>; locally the landing is
 // landing.localhost:<port> and the app localhost:<port>.
-function appOrigin() {
+export const CONTACT_EMAIL = "admin@allectricity.com";
+
+// What each tier is for, in plain words. Prices and monthly usage come from the API (MP_PLAN_* env), never from here.
+const TIER_COPY = {
+  essentials: { label: "Essentials", fit: "Para probar con tus primeros proyectos." },
+  standard: { label: "Standard", fit: "Para quien diseña puestas a tierra cada mes." },
+  ultimate: { label: "Ultimate", fit: "Para equipos con muchos proyectos a la vez." },
+};
+const tierLabel = (name) => TIER_COPY[name]?.label || name.charAt(0).toUpperCase() + name.slice(1);
+const millions = (value) => (value / 1e6).toLocaleString("es-CO", { maximumFractionDigits: 1 });
+const usd = (value) => `US$${Number(value).toLocaleString("es-CO", { maximumFractionDigits: 2 })}`;
+
+function usePlans() {
+  const [plans, setPlans] = useState(null); // null loading · [] unavailable
+  useEffect(() => {
+    let live = true;
+    fetch("/api/v1/billing/catalog")
+      .then((r) => (r.ok ? r.json() : { plans: [] }))
+      .then((body) => { if (live) setPlans([...(body.plans || [])].sort((a, b) => a.rank - b.rank)); })
+      .catch(() => { if (live) setPlans([]); });
+    return () => { live = false; };
+  }, []);
+  return plans;
+}
+
+function Pricing({ signupHref }) {
+  const plans = usePlans();
+  const featured = plans && plans.length > 1 ? plans[Math.floor(plans.length / 2)].name : null;
+  return (
+    <section className="landing-pricing" id="precios" data-formation="0" aria-label="Precios">
+      <div className="landing-section-head reveal">
+        <p className="landing-eyebrow">Precios</p>
+        <h2>Crear tu cuenta es gratis. Pagas cuando usas el agente.</h2>
+        <p>Cada plan es mensual y trae una cantidad de uso del agente (tokens). Lo cancelas cuando quieras.</p>
+      </div>
+      {plans === null && <p className="landing-pricing-note" role="status">Cargando planes…</p>}
+      {plans?.length === 0 && (
+        <p className="landing-pricing-note">Ahora no podemos mostrar los planes. Crea tu cuenta y míralos en <strong>Plan y facturación</strong>, o escríbenos a <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.</p>
+      )}
+      {plans?.length > 0 && (
+        <div className="landing-pricing-grid">
+          {plans.map((plan) => (
+            <article key={plan.name} className={plan.name === featured ? "is-featured" : undefined}>
+              {plan.name === featured && <span className="landing-pricing-badge">Recomendado</span>}
+              <h3>{tierLabel(plan.name)}</h3>
+              <p className="landing-pricing-price"><strong>{usd(plan.price_usd)}</strong><span>/ mes</span></p>
+              <p>{TIER_COPY[plan.name]?.fit || "Plan mensual."}</p>
+              <ul>
+                <li><Check size={14} />{millions(plan.monthly_tokens)} M tokens de uso del agente al mes</li>
+                <li><Check size={14} />Proyectos, versiones y estudios en PDF y web</li>
+                <li><Check size={14} />Cancelas cuando quieras</li>
+              </ul>
+              <a className={`landing-button ${plan.name === featured ? "primary" : "ghost"}`} href={signupHref}>Empezar</a>
+            </article>
+          ))}
+        </div>
+      )}
+      <p className="landing-pricing-note">Precios de referencia en dólares; el cobro se hace en pesos colombianos con Mercado Pago. ¿Tienes un código de licencia? Lo canjeas dentro de la app.</p>
+    </section>
+  );
+}
+
+// Footer links shared by the landing and the public text pages (/ayuda, /terminos, /privacidad).
+export function LegalLinks() {
+  return (
+    <nav className="landing-footer-links" aria-label="Enlaces">
+      <a href="/ayuda">Documentación</a>
+      <a href="/terminos">Términos</a>
+      <a href="/privacidad">Privacidad</a>
+      <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
+    </nav>
+  );
+}
+
+export function appOrigin() {
   const { protocol, hostname, port } = window.location;
   if (hostname === "localhost" || hostname.startsWith("app.")) return "";
   if (hostname.endsWith(".localhost")) return `${protocol}//localhost${port ? `:${port}` : ""}`;
@@ -123,6 +198,7 @@ export function LandingPage() {
   }, [reducedMotion]);
 
   const appHref = `${appOrigin()}/login`;
+  const signupHref = `${appOrigin()}/login?crear`;
   const stepIndex = Math.max(0, formation - 1);
 
   return (
@@ -132,15 +208,21 @@ export function LandingPage() {
 
       <header className={`landing-nav ${scrolled ? "is-scrolled" : ""}`}>
         <a className="landing-brand" href="/" aria-label="Allectricity">
-          <span className="landing-brand-mark"><Zap size={16} fill="currentColor" /></span>
+          <BrandMark size={32} tone="dark" className="landing-brand-mark" />
           Allectricity
         </a>
         <nav aria-label="Secciones">
           <a href="#como-funciona">Cómo funciona</a>
           <a href="#principios">Cómo trabajamos</a>
           <a href="#demo">Demo</a>
+          <a href="#precios">Precios</a>
+          <a href="/ayuda">Docs</a>
+          <a href="#contacto">Contacto</a>
         </nav>
-        <a className="landing-button ghost small" href={appHref}>Iniciar sesión</a>
+        <div className="landing-nav-actions">
+          <a className="landing-button ghost small" href={appHref}>Iniciar sesión</a>
+          <a className="landing-button primary small" href={signupHref}>Crear cuenta</a>
+        </div>
       </header>
 
       <main>
@@ -153,7 +235,7 @@ export function LandingPage() {
             Nos das tus documentos, los entendemos, te sugerimos una malla, revisamos que sea segura y te entregamos el estudio.
           </p>
           <div className="landing-actions reveal">
-            <a className="landing-button primary" href={appHref}>Empezar un proyecto <ArrowRight size={16} /></a>
+            <a className="landing-button primary" href={signupHref}>Empezar un proyecto <ArrowRight size={16} /></a>
             <a className="landing-button ghost" href="#demo">Ver la demo</a>
           </div>
           <dl className="landing-facts reveal">
@@ -216,14 +298,29 @@ export function LandingPage() {
           </div>
         </section>
 
+        <Pricing signupHref={signupHref} />
+
+        <section className="landing-contact" id="contacto" aria-label="Contacto">
+          <div className="landing-section-head reveal">
+            <p className="landing-eyebrow">Contacto</p>
+            <h2>¿Tienes un proyecto o una duda? Escríbenos.</h2>
+            <p>Te respondemos por correo. Si quieres un plan para tu equipo o un código de licencia, cuéntanos cuántas personas lo van a usar.</p>
+          </div>
+          <div className="landing-contact-actions reveal">
+            <a className="landing-button ghost" href={`mailto:${CONTACT_EMAIL}`}><Mail size={16} />{CONTACT_EMAIL}</a>
+            <a className="landing-button ghost" href="/ayuda"><BookOpen size={16} />Leer la documentación</a>
+          </div>
+        </section>
+
         <section className="landing-cta" data-formation="0">
           <h2 className="reveal">Danos tus documentos del próximo proyecto.</h2>
-          <a className="landing-button primary reveal" href={appHref}>Empezar <ArrowUpRight size={16} /></a>
+          <a className="landing-button primary reveal" href={signupHref}>Crear cuenta gratis <ArrowUpRight size={16} /></a>
         </section>
       </main>
 
       <footer className="landing-footer">
         <span>© {new Date().getFullYear()} Allectricity</span>
+        <LegalLinks />
         <span>Allectricity te ayuda a diseñar; no reemplaza al ingeniero que firma el estudio.</span>
       </footer>
     </div>

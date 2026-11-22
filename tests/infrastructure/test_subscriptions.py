@@ -400,6 +400,9 @@ def test_routes(billing, monkeypatch):
     with TestClient(create_app(settings, services)) as client:
         engineer = {"Authorization": "Bearer " + services.identity.login("eng@example.com", PASSWORD)["access_token"]}
         admin = {"Authorization": "Bearer " + services.identity.login("admin@example.com", PASSWORD)["access_token"]}
+        public = client.get("/api/v1/billing/catalog")
+        assert public.status_code == 200 and public.json()["plans"][0] == {
+            "name": "essentials", "rank": 0, "price_usd": 19.0, "monthly_tokens": 3000000}
         catalog = client.get("/api/v1/billing/plans", headers=engineer).json()
         assert catalog["public_key"] == "TEST-public" and catalog["mode"] == "test"
         assert [plan["name"] for plan in catalog["plans"]] == ["essentials", "standard", "ultimate"]

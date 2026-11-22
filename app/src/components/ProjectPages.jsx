@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Activity, ArrowDownToLine, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, Check, ChevronDown, ChevronRight, CircleHelp, File, FileImage, FileSpreadsheet, FolderOpen, GitBranch, History, Layers, LayoutGrid, MapPin, MessageCircle, Minus, Maximize2, Mic, Network, Paperclip, Plus, Pencil, RotateCcw, Search, Settings2, ShieldCheck, Sparkles, Square, X, Trash2, Zap } from "lucide-react";
+import { BrandMark } from "./BrandMark.jsx";
+import { Activity, ArrowDownToLine, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, Check, ChevronDown, ChevronRight, CircleHelp, File, FileImage, FileSpreadsheet, FolderOpen, GitBranch, History, Layers, LayoutGrid, MapPin, MessageCircle, Minus, Maximize2, Mic, Network, Paperclip, Plus, Pencil, RotateCcw, Search, Settings2, ShieldCheck, Sparkles, Square, X, Trash2 } from "lucide-react";
 import { DesignStatusBadge, mimeByExtension, uploadableMimeTypes, uploadStatusLabels } from "../shared.jsx";
 function ForgotPasswordForm({ initialEmail, onBack }) {
   const [email, setEmail] = useState(initialEmail || "");
@@ -14,7 +15,7 @@ function ForgotPasswordForm({ initialEmail, onBack }) {
   }
   return (
     <form className="login-card" onSubmit={submit} data-testid="forgot-password-form">
-      <div className="login-brand"><Zap size={22} fill="currentColor" /></div>
+      <div className="login-brand"><BrandMark size={44} /></div>
       <div className="eyebrow">ALLECTRICITY WORKSPACE</div>
       <h1>Restablecer contraseña</h1>
       <p>Escribe el correo de tu cuenta y te enviaremos un enlace para elegir una contraseña nueva.</p>
@@ -52,7 +53,7 @@ export function ResetPasswordPage() {
   return (
     <main className="login-page">
       <form className="login-card" onSubmit={submit} data-testid="reset-password-form">
-        <div className="login-brand"><Zap size={22} fill="currentColor" /></div>
+        <div className="login-brand"><BrandMark size={44} /></div>
         <div className="eyebrow">ALLECTRICITY WORKSPACE</div>
         <h1>Elige una contraseña nueva</h1>
         {state === "done" ? <>
@@ -75,7 +76,7 @@ export function ResetPasswordPage() {
 
 // Google Identity Services: the button returns an ID token that the API verifies (/auth/google).
 // First sign-in creates the account. Hidden when the API has no GOOGLE_CLIENT_ID.
-function GoogleSignIn({ onLogin, onError }) {
+function GoogleSignIn({ onLogin, onError, signup = false }) {
   const slot = useRef(null);
   const [clientId, setClientId] = useState(null);
   useEffect(() => {
@@ -104,7 +105,7 @@ function GoogleSignIn({ onLogin, onError }) {
     function render() {
       if (!live || !slot.current || !window.google?.accounts?.id) return;
       window.google.accounts.id.initialize({ client_id: clientId, callback: credential, ux_mode: "popup" });
-      window.google.accounts.id.renderButton(slot.current, { theme: "outline", size: "large", text: "continue_with", shape: "pill", width: slot.current.offsetWidth || 320, locale: "es" });
+      window.google.accounts.id.renderButton(slot.current, { theme: "outline", size: "large", text: signup ? "signup_with" : "continue_with", shape: "pill", width: slot.current.offsetWidth || 320, locale: "es" });
     }
     const src = "https://accounts.google.com/gsi/client";
     let script = document.querySelector(`script[src="${src}"]`);
@@ -114,9 +115,9 @@ function GoogleSignIn({ onLogin, onError }) {
       script.addEventListener("load", render);
     }
     return () => { live = false; script?.removeEventListener("load", render); };
-  }, [clientId]);
+  }, [clientId, signup]);
   if (!clientId) return null;
-  return <><div className="login-google" ref={slot} /><div className="login-divider"><span>o con tu correo</span></div></>;
+  return <><div className="login-google" ref={slot} />{!signup && <div className="login-divider"><span>o con tu correo</span></div>}</>;
 }
 
 function Login({ onLogin }) {
@@ -125,6 +126,13 @@ function Login({ onLogin }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [forgot, setForgot] = useState(false);
+  // allectricity.com's "Crear cuenta" opens /login?crear: new accounts are created with Google (self sign-up).
+  const [signup, setSignup] = useState(() => new URLSearchParams(window.location.search).has("crear"));
+  function switchMode(next) {
+    setSignup(next);
+    setError("");
+    window.history.replaceState({}, "", next ? "/login?crear" : "/login");
+  }
   async function submit(event) {
     event.preventDefault();
     setBusy(true);
@@ -148,8 +156,16 @@ function Login({ onLogin }) {
   return (
     <main className="login-page">
       <form className="login-card" onSubmit={submit}>
-        <div className="login-brand"><Zap size={22} fill="currentColor" /></div>
+        <div className="login-brand"><BrandMark size={44} /></div>
         <div className="eyebrow">ALLECTRICITY WORKSPACE</div>
+        {signup ? <>
+          <h1>Crea tu cuenta</h1>
+          <p>Entra con tu cuenta de Google y listo: creamos tu cuenta en un clic. Crearla es gratis; para usar el agente eliges un plan.</p>
+          <GoogleSignIn onLogin={onLogin} onError={setError} signup />
+          <p className="login-legal">Al crear tu cuenta aceptas los <a href="/terminos" target="_blank" rel="noopener">Términos</a> y la <a href="/privacidad" target="_blank" rel="noopener">Política de privacidad</a>.</p>
+          {error && <div className="login-error" role="alert">{error}</div>}
+          <button className="login-link" type="button" onClick={() => switchMode(false)}>¿Ya tienes cuenta? Inicia sesión</button>
+        </> : <>
         <h1>Bienvenido</h1>
         <p>Entra con Google o con tu correo y contraseña. Si es tu primera vez, Google te crea la cuenta.</p>
         <GoogleSignIn onLogin={onLogin} onError={setError} />
@@ -158,6 +174,8 @@ function Login({ onLogin }) {
         {error && <div className="login-error" role="alert">{error}</div>}
         <button className="button primary login-submit" type="submit" disabled={busy}>{busy ? "Entrando…" : "Iniciar sesión"}</button>
         <button className="login-link" type="button" onClick={() => setForgot(true)}>¿Olvidaste tu contraseña?</button>
+        <button className="login-link" type="button" onClick={() => switchMode(true)}>¿No tienes cuenta? Créala</button>
+        </>}
       </form>
     </main>
   );

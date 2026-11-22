@@ -10,6 +10,7 @@ PUBLIC = {
     ("POST", "/api/v1/auth/login"),
     ("POST", "/api/v1/auth/google"),
     ("GET", "/api/v1/auth/config"),
+    ("GET", "/api/v1/billing/catalog"),
     ("POST", "/api/v1/auth/token"),
     ("POST", "/api/v1/auth/refresh"),
     ("POST", "/api/v1/auth/forgot-password"),

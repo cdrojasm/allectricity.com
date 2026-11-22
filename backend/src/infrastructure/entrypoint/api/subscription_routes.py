@@ -1,5 +1,6 @@
 """Plans, checkout, the user's subscription and license codes.
 
+- GET  /api/v1/billing/catalog        public (landing): tier names, USD reference price and monthly tokens
 - GET  /api/v1/billing/plans          tiers with the price charged by Mercado Pago and the public key for the Brick
 - GET  /api/v1/billing/subscription   the user's plan, its token balance and the latest checkout
 - POST /api/v1/billing/checkout       starts an asynchronous checkout (202); the billing worker charges the card
@@ -74,6 +75,18 @@ def _checkout_block(actor, mode: str) -> str | None:
     except (LookupError, mercadopago.ResourceUnavailable, mercadopago.GatewayRejected):
         return "Los pagos no están disponibles en este momento. Inténtalo más tarde."
     return None
+
+
+@router.get("/catalog")
+def public_catalog():
+    """Public, for the landing's pricing section: only what MP_PLAN_* already declares; no Mercado Pago call."""
+    try:
+        tiers = plans.configured()
+    except plans.PlanConfigError as exc:
+        log.error("Invalid MP_PLAN_* configuration: %s", exc)
+        tiers = []
+    return {"plans": [{"name": plan.name, "rank": plan.rank, "price_usd": plan.price_usd,
+                       "monthly_tokens": plan.monthly_tokens} for plan in tiers]}
 
 
 @router.get("/plans")

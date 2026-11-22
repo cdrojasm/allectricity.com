@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
+import { BrandMark } from "./components/BrandMark.jsx";
 import { createRoot } from "react-dom/client";
-import { CircleAlert, CircleHelp, CreditCard, Layers, LayoutGrid, LogOut, PackageSearch, UserCog, X, Zap } from "lucide-react";
+import { CircleAlert, CircleHelp, CreditCard, Layers, LayoutGrid, LogOut, PackageSearch, UserCog, X } from "lucide-react";
 import { IconButton } from "./shared.jsx";
 import { Login, ProjectsPage, ResetPasswordPage } from "./components/ProjectPages.jsx";
 import { DashboardPage } from "./components/DashboardPage.jsx";
@@ -206,7 +207,7 @@ function App() {
     <div className="app-shell">
       <nav className="rail" aria-label="Main navigation">
         <a className="brand" href="/" aria-label="Allectricity home" onClick={(event) => { event.preventDefault(); showDashboard(); }}>
-          <Zap size={23} fill="currentColor" />
+          <BrandMark size={34} title="Allectricity" />
         </a>
         <div className="rail-top">
           <IconButton title="Dashboard" className={`rail-button ${tab === "dashboard" ? "active" : ""}`} onClick={showDashboard}><LayoutGrid size={21} /></IconButton>
