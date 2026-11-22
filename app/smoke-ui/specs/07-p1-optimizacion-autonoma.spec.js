@@ -90,7 +90,7 @@ test("P1: optimiza desde el cálculo vigente, versiona y recalcula hasta cerrar"
     expect(loopResult?.best_candidate?.calculation_id).toBeTruthy();
     const iterations = [...new Set(events.body.events.map((event) => event.payload?.iteration).filter(Number.isInteger))];
     expect(iterations.length).toBeGreaterThan(0);
-    expect(Math.max(...iterations)).toBeLessThanOrEqual(3);
+    expect(Math.max(...iterations)).toBeLessThanOrEqual(loopResult.max_iterations);
     await page.getByRole("tablist", { name: "Secciones del artefacto" }).getByRole("tab", { name: "Resultado" }).click();
     await expect(page.getByTestId("design-loop-result")).toContainText("Mejor candidato");
     // Al cerrar, el mejor diseño es la versión vigente: si una iteración empeoró, el agente lo restauró y recalculó.

@@ -76,7 +76,7 @@ MAX_TABLE_BYTES = 5 * 1024 * 1024
 TABLE_MIMES = {"text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
 DESIGNER_ROUNDS = 6
 DESIGNER_PATHS = ("name", "geometry.", "conductor.")
-DEFAULT_DESIGN_ITERATIONS = 3
+DEFAULT_DESIGN_ITERATIONS = 6
 logger = logging.getLogger(__name__)
 
 
