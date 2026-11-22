@@ -1,0 +1,200 @@
+import React from "react";
+
+// Help cards for the design forms. Equations follow IEEE 80-2013; each card says what the value means,
+// how it enters the calculation and where the number usually comes from.
+
+const S = ({ children }) => <sub>{children}</sub>;
+const P = ({ children }) => <sup>{children}</sup>;
+
+// ── Small figures ──────────────────────────────────────────────────────────────────────────────────────
+const fig = (children, label) => <svg viewBox="0 0 300 120" role="img" aria-label={label}>{children}</svg>;
+const ground = <><rect x="0" y="78" width="300" height="42" fill="#efe7da"/><path d="M0 78h300" stroke="#b8a687" strokeWidth="1.5"/></>;
+const person = (x, y = 78, arm = null) => <g stroke="#33433d" strokeWidth="2.2" fill="none" strokeLinecap="round"><circle cx={x} cy={y - 50} r="6" fill="#fff"/><path d={`M${x} ${y - 44}v22M${x} ${y - 22}l-7 22M${x} ${y - 22}l7 22`}/>{arm || <path d={`M${x} ${y - 38}l-9 10M${x} ${y - 38}l9 10`}/>}</g>;
+
+const FIG_TOUCH_STEP = fig(<>{ground}
+  <rect x="40" y="22" width="10" height="56" fill="#c9d6d0" stroke="#7d8e86"/><path d="M45 78v22H150" stroke="#287f70" strokeWidth="2" strokeDasharray="4 3" fill="none"/>
+  {person(78, 78, <path d="M78 40 51 34M78 40l9 10" />)}
+  <text x="62" y="16" fontSize="10" fill="#a8443c" fontWeight="700">contacto</text><path d="M52 34c10-18 20-18 26 40" stroke="#a8443c" strokeWidth="1.5" fill="none" strokeDasharray="3 3"/>
+  {person(220)}<path d="M213 100h14" stroke="#6c3483" strokeWidth="2"/><text x="200" y="114" fontSize="10" fill="#6c3483" fontWeight="700">paso · 1 m</text>
+  <text x="120" y="112" fontSize="9" fill="#287f70">malla enterrada</text></>, "Tensión de contacto: mano en la estructura y pies en el suelo. Tensión de paso: entre los dos pies.");
+
+const FIG_SURFACE = fig(<><rect x="0" y="70" width="300" height="50" fill="#efe7da"/><rect x="0" y="62" width="300" height="12" fill="#d9dcd6"/>
+  {Array.from({ length: 30 }, (_, i) => <circle key={i} cx={5 + i * 10} cy={66 + (i % 3) * 2} r="2" fill="#9ea39a"/>)}
+  {person(150, 62)}<path d="M240 62v12" stroke="#33433d"/><path d="M236 62h8M236 74h8" stroke="#33433d"/><text x="250" y="71" fontSize="10" fill="#33433d">h<tspan fontSize="7" dy="2">s</tspan></text>
+  <text x="12" y="58" fontSize="10" fill="#5f6d66">grava · ρ<tspan fontSize="7" dy="2">s</tspan></text><text x="12" y="100" fontSize="10" fill="#8a7450">suelo natural · ρ</text></>, "Capa superficial de grava de espesor hs sobre el suelo natural.");
+
+const FIG_SPLIT = fig(<>{ground}
+  <path d="M30 20h240" stroke="#7d8e86" strokeWidth="2"/><text x="200" y="14" fontSize="10" fill="#5f6d66">cable de guarda / neutro</text>
+  <path d="M150 20v40" stroke="#a8443c" strokeWidth="3"/><path d="M150 60 150 78" stroke="#a8443c" strokeWidth="3"/><text x="156" y="48" fontSize="10" fill="#a8443c">3I<tspan fontSize="7" dy="2">0</tspan></text>
+  <path d="M150 30H60" stroke="#a8443c" strokeWidth="2" strokeDasharray="4 3"/><text x="62" y="42" fontSize="10" fill="#7d8e86">(1 − S<tspan fontSize="7" dy="2">f</tspan>) vuelve por los cables</text>
+  <path d="M110 92h80" stroke="#287f70" strokeWidth="3"/><path d="M150 78v14" stroke="#a8443c" strokeWidth="3"/><text x="196" y="96" fontSize="10" fill="#287f70">S<tspan fontSize="7" dy="2">f</tspan>·3I<tspan fontSize="7" dy="2">0</tspan> a la malla</text></>, "Solo una fracción Sf de la corriente de falla entra al suelo por la malla.");
+
+const FIG_WENNER = fig(<>{ground}
+  {[60, 120, 180, 240].map((x, i) => <g key={x}><path d={`M${x} 60v32`} stroke="#33433d" strokeWidth="3"/><text x={x - 4} y="54" fontSize="11" fill="#33433d" fontWeight="700">{"AMNB"[i]}</text></g>)}
+  <path d="M60 30h180" stroke="#287f70" strokeWidth="1.5"/><path d="M60 30v26M240 30v26" stroke="#287f70" strokeWidth="1.5"/><text x="130" y="24" fontSize="10" fill="#287f70">corriente I entre A y B</text>
+  {[[60, 120], [120, 180], [180, 240]].map(([a, b]) => <g key={a}><path d={`M${a} 104h${b - a}`} stroke="#8a7450" strokeWidth="1.2"/><text x={(a + b) / 2 - 3} y="116" fontSize="10" fill="#8a7450">a</text></g>)}
+  <text x="122" y="74" fontSize="10" fill="#33433d">V medido entre M y N</text></>, "Arreglo Wenner: cuatro electrodos en línea separados una distancia a.");
+
+// ── Cards ──────────────────────────────────────────────────────────────────────────────────────────────
+export const HELP = {
+  standards: {
+    title: "Norma de seguridad",
+    text: ["Define cómo se calculan las tensiones que una persona tolera y contra qué se compara el diseño.", "IEEE 80-2013 es la guía de referencia internacional para mallas de subestaciones de corriente alterna: limita las tensiones de contacto y de paso según el tiempo de despeje, el peso corporal y la capa superficial."],
+    figure: FIG_TOUCH_STEP,
+  },
+  evaluated_standards: {
+    title: "Estándares a evaluar",
+    text: ["Cada alternativa de Matherra debe cumplir todos los estándares marcados; si marcas varios, manda el más exigente en cada criterio.", "IEEE 80-2013: límites de contacto y paso por el método del cuerpo humano. RETIE (Colombia): el reglamento técnico de instalaciones eléctricas; sus límites concretos los fija el perfil normativo fijado al proyecto."],
+  },
+  normative_profile: {
+    title: "Perfil normativo del proyecto",
+    text: ["Un conjunto revisado de criterios para una jurisdicción: qué límites aplican, a qué clases de exposición y con qué márgenes. Matherra lo usa para decidir si una alternativa es factible.", "Solo aparecen perfiles revisados por un administrador. Fijarlo queda guardado en el proyecto y lo usan todas las búsquedas siguientes."],
+  },
+  exposure_class: {
+    title: "Clase de exposición",
+    text: ["Quién puede quedar expuesto a las tensiones de la malla durante una falla.", "Público: personas sin entrenamiento que pueden acercarse (cercas perimetrales, vías, zonas accesibles). Ocupacional: personal entrenado y autorizado dentro de la subestación.", "El perfil normativo decide qué límites y qué peso corporal aplica a cada clase; para público suelen ser más estrictos."],
+    figure: FIG_TOUCH_STEP,
+  },
+  fault_current: {
+    title: "Corriente de falla",
+    text: "Corriente simétrica de falla a tierra (3I₀) en la subestación. La malla solo disipa la parte que entra al suelo por ella; el resto vuelve por cables de guarda y neutros.",
+    formula: [<>I<S>G</S> = D<S>f</S> · S<S>f</S> · 3I<S>0</S></>, <>GPR = I<S>G</S> · R<S>g</S></>],
+    where: "D_f: factor de decremento (asimetría) · S_f: factor de reparto · R_g: resistencia de malla",
+    source: "Estudio de cortocircuito del operador de red o del proyecto, para la falla monofásica a tierra.",
+    figure: FIG_SPLIT,
+  },
+  injection_current: {
+    title: "Corriente de falla inyectada",
+    text: "La parte de la corriente de falla que entra al suelo por la malla (I_G). Si en Parámetros definiste un factor de reparto S_f, ya viene aplicado.",
+    formula: <>I<S>G</S> = D<S>f</S> · S<S>f</S> · 3I<S>0</S></>,
+    figure: FIG_SPLIT,
+  },
+  clearing_time: {
+    title: "Tiempo de despeje tₛ",
+    text: "Cuánto dura la falla hasta que la protección la despeja. Es el tiempo de exposición de la persona: cuanto más corto, mayor tensión tolera el cuerpo.",
+    formula: [<>E<S>contacto,50</S> = (1000 + 1,5·C<S>s</S>·ρ<S>s</S>) · 0,116 / √t<S>s</S></>, <>E<S>paso,50</S> = (1000 + 6·C<S>s</S>·ρ<S>s</S>) · 0,116 / √t<S>s</S></>],
+    where: "Para 70 kg se usa 0,157 en lugar de 0,116.",
+    typical: "0,1 a 0,5 s con protección primaria; hasta 1 s si se considera la de respaldo.",
+    source: "Coordinación de protecciones del proyecto.",
+  },
+  body_weight: {
+    title: "Peso corporal",
+    text: "IEEE 80 da la tensión tolerable para personas de 50 kg o de 70 kg. 50 kg es el criterio conservador y el habitual cuando puede haber público.",
+    formula: <>k = 0,116 (50 kg) · k = 0,157 (70 kg)</>,
+    where: "k multiplica el término de la tensión tolerable: E = (1000 + …·C_s·ρ_s) · k / √t_s",
+  },
+  surface_resistivity: {
+    title: "Resistividad superficial ρₛ",
+    text: "La capa de grava o asfalto sobre el terreno aumenta la resistencia entre los pies y el suelo, y con ello la tensión que una persona tolera.",
+    formula: <>C<S>s</S> = 1 − 0,09 · (1 − ρ/ρ<S>s</S>) / (2h<S>s</S> + 0,09)</>,
+    where: "C_s: factor de reducción · ρ: resistividad del suelo · h_s: espesor de la capa",
+    typical: "Grava triturada húmeda: 3.000 a 5.000 Ω·m. Asfalto: 10.000 Ω·m o más. Sin capa: igual a la del suelo.",
+    figure: FIG_SURFACE,
+  },
+  surface_thickness: {
+    title: "Espesor superficial hₛ",
+    text: "Espesor de la capa de grava o asfalto. Entra en el factor C_s: más espesor, más protección, con rendimientos decrecientes.",
+    formula: <>C<S>s</S> = 1 − 0,09 · (1 − ρ/ρ<S>s</S>) / (2h<S>s</S> + 0,09)</>,
+    typical: "0,08 a 0,15 m de grava.",
+    figure: FIG_SURFACE,
+  },
+  surface_layer_present: {
+    title: "¿Existe capa superficial?",
+    text: "Indica si sobre el terreno hay una capa de grava o asfalto. Si no la hay, la resistividad superficial es la del suelo natural y C_s = 1.",
+    figure: FIG_SURFACE,
+  },
+  split_factor: {
+    title: "Factor de reparto Sƒ",
+    text: "Fracción de la corriente de falla que entra al suelo por la malla. El resto regresa a la fuente por cables de guarda, neutros y pantallas.",
+    formula: <>I<S>g</S> = S<S>f</S> · 3I<S>0</S></>,
+    typical: "Déjalo vacío para usar 1: toda la corriente entra por la malla, el caso más conservador.",
+    source: "Estudio de distribución de corrientes o el método gráfico del anexo C de IEEE 80.",
+    figure: FIG_SPLIT,
+  },
+  x_over_r: {
+    title: "Relación X/R",
+    text: "Relación entre reactancia y resistencia de la red en el punto de falla. Determina la componente de corriente continua de la falla y con ella el factor de decremento D_f.",
+    formula: [<>D<S>f</S> = √(1 + (T<S>a</S>/t<S>f</S>) · (1 − e<P>−2t<S>f</S>/T<S>a</S></P>))</>, <>T<S>a</S> = X / (ω · R)</>],
+    typical: "Sin dato se toma D_f = 1.",
+    source: "Estudio de cortocircuito.",
+  },
+  thermal_standard: {
+    title: "Norma de dimensionamiento",
+    text: "Con qué expresión se calcula la sección mínima del conductor para soportar la falla sin dañarse. Cada norma define sus materiales y temperaturas.",
+  },
+  conductor_material: {
+    title: "Material del conductor",
+    text: "Define las constantes térmicas (capacidad calorífica, resistividad y coeficiente de temperatura) con las que se calcula la sección mínima.",
+    formula: <>A<S>mm²</S> = I / √( (TCAP · 10<P>−4</P>) / (t<S>c</S> · α<S>r</S> · ρ<S>r</S>) · ln((K<S>0</S> + T<S>m</S>) / (K<S>0</S> + T<S>a</S>)) )</>,
+    where: "IEEE 80-2013, ecuación de Onderdonk generalizada",
+  },
+  joint_type: {
+    title: "Tipo de unión",
+    text: "Las uniones son el punto débil térmico de la malla: la temperatura máxima admisible la fija la unión, no el conductor.",
+    typical: "Soldadura exotérmica: hasta la fusión del cobre (≈ 1.083 °C). Brasada: ≈ 450 °C. Apernada o a presión: ≈ 250 °C.",
+  },
+  conductor_section: {
+    title: "Sección elegida",
+    text: "La sección del conductor que vas a instalar. Se compara con la mínima térmica; también conviene revisar la resistencia mecánica (en la práctica, no menos de 2/0 AWG ≈ 67 mm² de cobre).",
+  },
+  max_temperature: {
+    title: "Temperatura máxima Tₘ",
+    text: "La temperatura que puede alcanzar el conductor durante la falla sin dañar las uniones. Depende del tipo de unión y del fabricante (IEEE 837).",
+    typical: "250 °C para uniones apernadas; 450 °C brasadas; hasta 1.083 °C con soldadura exotérmica.",
+  },
+  thermal_duration: {
+    title: "Duración térmica tᴄ",
+    text: "El tiempo durante el que el conductor debe soportar la corriente. Suele tomarse el de la protección de respaldo, por eso es igual o mayor que el tiempo de despeje.",
+    typical: "0,5 a 3 s.",
+  },
+  ambient_temperature: {
+    title: "Temperatura ambiente Tₐ",
+    text: "Temperatura del conductor antes de la falla (la del suelo o del ambiente). Es el punto de partida del calentamiento.",
+    typical: "40 °C es un valor conservador habitual.",
+  },
+  voltage_level: {
+    title: "Nivel de tensión",
+    text: "RETIE fija distintas reglas de dimensionamiento según el nivel de tensión de la instalación.",
+  },
+  soil_layers_fit: {
+    title: "Capas del modelo de suelo",
+    text: ["El ajuste busca las resistividades y espesores que mejor reproducen tus lecturas de campo. Dos capas describen la mayoría de los suelos; más capas solo si las lecturas lo justifican.", "Cada capa necesita al menos dos lecturas: con pocas mediciones el ajuste se sobreajusta."],
+  },
+  soil_resistivity: {
+    title: "Resistividad del suelo",
+    text: "Qué tanto se opone el terreno al paso de la corriente. Es el dato que más pesa en la resistencia de malla y en las tensiones.",
+    typical: "Arcilla húmeda 10–100 Ω·m · arena 100–2.500 Ω·m · grava 1.000–10.000 Ω·m · roca más de 1.000 Ω·m.",
+  },
+  wenner: {
+    title: "Método Wenner",
+    text: "Cuatro electrodos en línea, separados una misma distancia a. Se inyecta corriente por los extremos y se mide la tensión entre los internos. Aumentar a mide capas más profundas.",
+    formula: <>ρ<S>a</S> = 2π · a · R</>,
+    where: "R = V / I medido por el telurómetro",
+    figure: FIG_WENNER,
+  },
+  matherra_budget: {
+    title: "Presupuesto de evaluaciones",
+    text: "Cuántas veces Matherra puede llamar al motor eléctrico para evaluar trazados. Más evaluaciones exploran más alternativas, pero la búsqueda tarda más.",
+    typical: "150 es un buen equilibrio; 60 para una prueba rápida.",
+  },
+  matherra_orthogonal: {
+    title: "Solo trazados ortogonales",
+    text: "Limita los conductores nuevos a direcciones horizontales y verticales, como se construyen habitualmente. Desmárcalo para permitir diagonales.",
+  },
+  matherra_redundant: {
+    title: "Sin cables sueltos",
+    text: "Cada conductor nuevo debe quedar en un lazo cerrado, así un corte nunca deja cobre aislado. Solo se permite una cola recta corta que termina en una varilla. Lo que tu diseño ya tenía se respeta. Desmárcalo para explorar formas libres.",
+    typical: "Cola máxima hacia una varilla: 3 m.",
+  },
+  matherra_rates: {
+    title: "Tarifas",
+    text: "Precio unitario de cada partida con el que Matherra compara alternativas. Puedes tomarlas del catálogo aprobado o escribirlas con su fuente, que queda en el estudio para trazabilidad.",
+    formula: <>Costo = Σ cantidad<S>i</S> · tarifa<S>i</S></>,
+  },
+  trench_width: {
+    title: "Ancho de zanja",
+    text: "Con el largo y la profundidad de la malla da el volumen de excavación que se cotiza.",
+    formula: <>V<S>excavación</S> = largo de zanja · ancho · profundidad</>,
+    typical: "0,3 a 0,5 m.",
+  },
+};

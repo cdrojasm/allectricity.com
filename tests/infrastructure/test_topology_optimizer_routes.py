@@ -377,6 +377,7 @@ def test_the_public_study_shows_the_applied_alternative_against_the_base_with_ra
     assert bom["conductor"] == [{"material": "unspecified", "length_m": 80.0, "cross_section_mm2": 86.590147, "material_id": "copper_hard_drawn"}]
     assert bom["rods"] == [{"material": "unspecified", "length_m": 2.4, "count": 1}] and bom["rods_total"] == {"count": 1, "length_m": 2.4}
     assert bom["connections"] == 3                                                  # two T junctions at x = 18 and one rod
+    assert bom["connections_by_type"] == {"conductor_conductor": 2, "conductor_rod": 1}
     assert bom["trench"] == {"length_m": 80.0, "width_m": 0.4, "depth_m": 0.6, "excavation_m3": 19.2}   # width from the run
     assert bom["cost"]["total"] == 800000.0 and bom["cost"]["currency"] == "COP" and bom["cost"]["by_group"] is None
     assert all("excavación" not in note for note in bom["notes"])
@@ -388,6 +389,12 @@ def test_the_public_study_shows_the_applied_alternative_against_the_base_with_ra
     base_bom = base_study["bill_of_materials"]
     assert base_bom["rods_total"] == {"count": 2, "length_m": 4.8} and base_bom["cost"] is None
     assert base_bom["trench"]["excavation_m3"] is None and any("ancho de zanja" in note for note in base_bom["notes"])
+
+    # The workspace's «Materiales» tab reads the same take-off for any version, published or not.
+    artifacts = f"/api/v1/projects/{project['id']}/artefactos-diseno-tierras/{artifact['artifact_id']}"
+    workspace = client.get(f"{artifacts}/versions/{applied.json()['version']}/materiales", headers=h)
+    assert workspace.status_code == 200 and workspace.json()["bill_of_materials"] == bom
+    assert client.get(f"{artifacts}/versions/999/materiales", headers=h).status_code == 404
 
 
 def test_rate_options_offer_only_what_the_run_would_accept(site):

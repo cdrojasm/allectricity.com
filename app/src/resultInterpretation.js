@@ -21,7 +21,7 @@ export function evaluateResult(result) {
     constraint: thermalFailed && !dominant ? "Sección térmica del conductor" : dominant ? `${dominant.criterion === "touch" ? "Tensión de contacto" : "Tensión de paso"} · ${dominant.standard}` : "Criterio de seguridad",
     explanation: thermalFailed && !dominant
       ? `La sección seleccionada (${formatNumber(result.conductor_thermal.selected_section_mm2)} mm²) está por debajo de la mínima (${formatNumber(result.conductor_thermal.minimum_section_mm2)} mm²).`
-      : dominant ? `${formatNumber(dominant.actual_v)} V frente a ${formatNumber(dominant.tolerable_v)} V tolerables; margen ${formatNumber(100 * dominant.margin_rel)}%.`
+      : dominant ? `Calculada ${formatNumber(dominant.actual_v)} V frente a ${formatNumber(dominant.tolerable_v)} V tolerables: ${dominant.actual_v / dominant.tolerable_v >= 1.05 ? `la supera ${formatNumber(dominant.actual_v / dominant.tolerable_v)} veces` : `la supera en ${formatNumber(-100 * dominant.margin_rel)} %`}.`
         : "Existe al menos una restricción de seguridad que no se satisface.",
     actions: thermalFailed && !dominant ? ["Aumenta la sección del conductor y recalcula"]
       : dominant?.criterion === "touch" ? ["Agrega varillas en el perímetro y recalcula", "Reduce la retícula perimetral y recalcula"]

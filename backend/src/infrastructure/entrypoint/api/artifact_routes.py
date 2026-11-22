@@ -374,6 +374,20 @@ def get_version(project_id: str, artifact_id: str, version: int, request: Reques
     return enriched
 
 
+@router.get("/{artifact_id}/versions/{version}/materiales")
+def version_bill_of_materials(project_id: str, artifact_id: str, version: int, request: Request,
+                              actor=Depends(require("designs:read"))):
+    """Bill of materials taken off this version's geometry: the same quantities the published study shows."""
+    from src.infrastructure.services.bill_of_materials import bill_of_materials
+    with request.app.state.services.store.transaction() as db:
+        owned_project(db, project_id, actor)
+        row = db.designs.get_version(project_id, artifact_id, version)
+        if not row:
+            raise HTTPException(404, "Artifact version not found")
+        bom = bill_of_materials(row["snapshot"], row.get("origin"), db, project_id)
+    return {"artifact_id": artifact_id, "version": version, "bill_of_materials": bom}
+
+
 @router.get("/{artifact_id}/versions/{version}/coherencia")
 def check_version_coherence(project_id: str, artifact_id: str, version: int, request: Request,
                             actor=Depends(require("designs:read"))):

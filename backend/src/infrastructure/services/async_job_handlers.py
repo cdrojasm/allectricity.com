@@ -104,7 +104,7 @@ def study_section(job: dict) -> dict:
     try:
         work.require_capacity()
         response = work.complete([
-            {"role": "user", "content": f"Sección: {section_id}. Proyecto: {(project or {}).get('name') or study['title']}. Título del estudio: {study['title']}. Artefacto: {artifact['snapshot']}. Resultado del cálculo fijado: {outcome if outcome else 'sin cálculo para esta versión'}. Instrucción: {request.get('instruction') or 'Resume esta sección para un revisor técnico.'}"},
+            {"role": "user", "content": f"Sección: {'bloque de texto libre del informe' if section_id.startswith('bloque-') else section_id}. Proyecto: {(project or {}).get('name') or study['title']}. Título del estudio: {study['title']}. Artefacto: {artifact['snapshot']}. Resultado del cálculo fijado: {outcome if outcome else 'sin cálculo para esta versión'}. Instrucción: {request.get('instruction') or 'Resume esta sección para un revisor técnico.'}"},
         ], temperature=0.2, max_tokens=500)
         text = plain_codes((response.choices[0].message.content or "").strip())
     except uow.BudgetUnavailable as exc:

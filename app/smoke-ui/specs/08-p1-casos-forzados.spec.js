@@ -59,6 +59,7 @@ async function runLoop(page, record) {
 
   await page.reload();
   await page.getByRole("tablist", { name: "Secciones del artefacto" }).getByRole("tab", { name: "Resultado" }).click();
+  await page.getByRole("button", { name: "Cómo hacer que cumpla" }).click(); // the ways to improve sit behind one button
   const optimize = page.getByTestId("optimize-until-compliant");
   await expect(optimize).toBeVisible();
   await optimize.click();

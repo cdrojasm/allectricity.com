@@ -40,8 +40,8 @@ const post = (page, url, body) => api(page, url, { method: "POST", body: JSON.st
 
 async function openOptimizer(page, projectId) {
   await page.goto(`/project/${projectId}`);
-  await page.getByRole("tablist", { name: "Secciones del artefacto" }).getByRole("tab", { name: "Plano" }).click();
-  await page.getByRole("button", { name: "Abrir editor de plano" }).click();
+  await page.getByRole("tablist", { name: "Secciones del artefacto" }).getByRole("tab", { name: "Resumen" }).click();
+  await page.getByRole("button", { name: /^(Editar|Dibujar) plano$/ }).click();
   await page.getByText("Matherra · optimización matemática").click();
 }
 const profilesOf = async (page, projectId) => (await api(page, `/api/v1/projects/${projectId}/constraint-profiles`)).body.profiles.length;
@@ -51,9 +51,9 @@ async function fillRun(page) {
   await page.getByLabel("IEEE 80-2013").check();
   for (const [label, value] of Object.entries(RATES)) await page.getByLabel(label).fill(value);
   await page.getByLabel("Fuente de las tarifas").fill("cotización de prueba");
-  await page.getByLabel("Ancho de zanja (m)", { exact: true }).fill("0.4");
+  await page.getByLabel("Ancho de zanja (m)").fill("0.4");
   await page.getByLabel("Fuente del ancho de zanja").fill("práctica de obra local");
-  await page.getByLabel("Presupuesto de llamadas al solver").selectOption("60");
+  await page.getByLabel("Presupuesto de evaluaciones eléctricas").selectOption("60");
 }
 async function openResults(page) {
   await page.getByRole("tablist", { name: "Secciones del artefacto" }).getByRole("tab", { name: "Resultado" }).click();
@@ -180,7 +180,7 @@ test.describe.serial("optimizador de topologías", () => {
     await expect(page.getByLabel("Conductor (material)")).toHaveValue("18000");
     await expect(page.getByLabel("Clase de exposición")).toHaveValue("public");
     await expect(page.getByLabel("IEEE 80-2013")).toBeChecked();
-    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Cerrar editor de plano" }).click(); // the editor is a view: leave it to see the tabs
     const review = await openResults(page);
     await expect(review).toContainText("Completada");
     await expect(review.getByTestId("matherra-candidate").first()).toContainText("Es la versión 2 del plano");
@@ -201,7 +201,7 @@ test.describe.serial("optimizador de topologías", () => {
     await page.getByLabel("Conductor (material): origen").selectOption(item.body.id);
     await expect(page.getByTestId("rate-catalog-material.conductor.unspecified")).toContainText("21.000 COP");
     await expect(page.getByLabel("Conductor (material)", { exact: true })).toHaveCount(0);   // ya no se escribe a mano
-    await page.getByLabel("Presupuesto de llamadas al solver").selectOption("60");
+    await page.getByLabel("Presupuesto de evaluaciones eléctricas").selectOption("60");
     await page.getByRole("button", { name: "Iniciar búsqueda con Matherra" }).click();
     const result = page.locator(".topology-optimizer .optimizer-run-result");
     await expect(result).toContainText(/Completada|Falló|Rechazada/, { timeout: 200_000 });

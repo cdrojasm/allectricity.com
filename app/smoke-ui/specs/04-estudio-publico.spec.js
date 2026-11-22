@@ -63,11 +63,12 @@ test.describe.serial("estudio publicado", () => {
     await page.goto(`/project/${seed.projectId}`);
     await page.getByRole("tablist", { name: "Secciones del artefacto" }).getByRole("tab", { name: "Resultado" }).click();
     const panel = page.locator(".agent-results-panel");
-    await expect(panel.locator(".agent-verdict")).toBeVisible();
+    const callout = panel.getByTestId("verdict-callout");
+    await expect(callout).toBeVisible();
     const workspace = {
-      verdict: (await panel.locator(".agent-verdict").innerText()).trim(),
-      interpretation: await panel.locator(".result-interpretation").innerText(),
-      standard: await panel.locator(".artifact-status", { hasText: "IEEE 80-2013" }).innerText(),
+      title: (await callout.locator(".verdict-callout-head strong").innerText()).trim(),
+      interpretation: (await callout.locator(".verdict-callout-why").count()) ? await callout.locator(".verdict-callout-why").innerText() : "",
+      standard: await callout.locator(".verdict-callout-limits").innerText(),
     };
 
     // Sin sesión: así lo ve quien recibe el enlace.
@@ -76,7 +77,8 @@ test.describe.serial("estudio publicado", () => {
     await study.goto(`/e/${seed.slug}`);
     await expect(study.getByTestId("study-verdict")).toBeVisible();
 
-    expect((await study.getByTestId("study-verdict").innerText()).trim()).toBe(workspace.verdict);
+    // The workspace titles the verdict with the standard («No cumple IEEE 80-2013»); the study shows the verdict alone.
+    expect(workspace.title.startsWith((await study.getByTestId("study-verdict").innerText()).trim())).toBe(true);
     const interpretation = await study.getByTestId("study-interpretation").innerText();
     for (const line of workspace.interpretation.split("\n").map((s) => s.trim()).filter((s) => /Tensión|V frente a/.test(s))) {
       expect(interpretation, `la interpretación del estudio debe contener «${line}»`).toContain(line);

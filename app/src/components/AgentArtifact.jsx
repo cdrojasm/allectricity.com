@@ -5,6 +5,10 @@ import TopologyPreview from "./TopologyPreview.jsx";
 import { criterionLabel, evaluateResult, formatNumber, verdictLabels } from "../resultInterpretation.js";
 import { ACTIVE_RUN, RUN_STATUS_LABELS, apiRequest, formatMoney, formatPercent, formatShare, minimumMargin, restoreAndRecalculate } from "../optimization.js";
 import { fieldLabels, fieldValueLabel } from "../labels.js";
+import { EmptyState } from "./EmptyState.jsx";
+import { CalculationOptionsDialog, ImproveDesign, Metric, MissingInputs, ModelWarnings, VerdictCallout, unconfirmedInputs } from "./ResultBlocks.jsx";
+import { Icon3D, IconOptimizer, IconOptions, IconOverview, IconPlan, IconResult } from "../icons.jsx";
+import TopologyOptimizerPanel from "./TopologyOptimizerPanel.jsx";
 
 const calculationFreshnessLabels = { al_dia: "Resultado al día", desactualizado: "Resultado desactualizado", calculando: "Cálculo en curso", sin_calculo: "Sin cálculo", error: "Cálculo con error" };
 const chipLabels = { claim: "Extraído", document: "Documento", user: "Confirmado", tool: "Calculado", assumption: "Supuesto", schema_default: "Predeterminado" };
@@ -99,28 +103,67 @@ function gridDescription(geometry) {
   return sx === sy ? `retícula ${formatValue(sx)} m` : `retícula ${formatValue(sx)} m en X × ${formatValue(sy)} m en Y`;
 }
 
-function ArtifactGrid({ geometry }) {
-  const length = geometry.length_m;
-  const width = geometry.width_m;
+// The part of the plan to draw: the whole site, or only the grid and its rods with a margin ("detail").
+function planWindow(geometry, view) {
+  const site = { x0: 0, y0: 0, x1: geometry.length_m, y1: geometry.width_m };
+  if (view !== "detail") return site;
+  const { lines, rods } = gridPlan(geometry);
+  const xs = [...lines.flatMap(([a, b]) => [a[0], b[0]]), ...rods.map((rod) => rod[0])];
+  const ys = [...lines.flatMap(([a, b]) => [a[1], b[1]]), ...rods.map((rod) => rod[1])];
+  if (!xs.length) return site;
+  const [minX, maxX, minY, maxY] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const pad = Math.max(0.6, 0.12 * Math.max(maxX - minX, maxY - minY));
+  return { x0: Math.max(site.x0, minX - pad), x1: Math.min(site.x1, maxX + pad), y0: Math.max(site.y0, minY - pad), y1: Math.min(site.y1, maxY + pad), mesh: { x: maxX - minX, y: maxY - minY } };
+}
+
+// Plan drawing. A site taller than wide is turned 90° so it always reads in landscape; «detail» zooms to the grid.
+function ArtifactGrid({ geometry, view = "general" }) {
+  const win = planWindow(geometry, view);
+  const spanX = win.x1 - win.x0, spanY = win.y1 - win.y0;
+  const rotated = spanY > spanX * 1.1;
+  const across = rotated ? spanY : spanX, down = rotated ? spanX : spanY;
+  const W = 490, H = 330, scale = Math.min(400 / across, 250 / down);
+  const w = across * scale, h = down * scale, x0 = (W - w) / 2, y0 = (H - 10 - h) / 2 + 4;
+  // Plan y grows upward from the origin corner. Turned, plan y runs left to right and plan x top to bottom.
+  const px = (x, y) => rotated ? [x0 + (y - win.y0) * scale, y0 + (x - win.x0) * scale] : [x0 + (x - win.x0) * scale, y0 + h - (y - win.y0) * scale];
+  const box = (xa, ya, xb, yb) => { const [ax, ay] = px(xa, ya), [bx, by] = px(xb, yb); return { x: Math.min(ax, bx), y: Math.min(ay, by), w: Math.abs(bx - ax), h: Math.abs(by - ay) }; };
   const { lines, rods } = gridPlan(geometry);
   const structures = geometry.structures || [];
   const areas = geometry.areas || [];
-  const scale = Math.min(380 / length, 240 / width);
-  const w = length * scale, h = width * scale, x0 = (490 - w) / 2, y0 = (330 - h) / 2;
-  // Plan y grows upward from the origin corner: draw it bottom-up.
-  const px = (x, y) => [x0 + x * scale, y0 + h - y * scale];
+  const site = box(0, 0, geometry.length_m, geometry.width_m);
   const rodNote = geometry.rods?.length ? "posiciones del diseño" : "repartidas en el perímetro";
-  return <svg className="agent-grid-svg" viewBox="0 0 490 350" role="img" aria-label={`Terreno de ${length} por ${width} m, ${areas.length} zonas, ${gridDescription(geometry)}, ${rods.length} varillas y ${structures.length} elementos constructivos`}>
-    <defs><pattern id="artifact-grid-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#9aa0a3" strokeWidth="1.2"/></pattern></defs>
-    <rect x={x0} y={y0} width={w} height={h} fill="#fbfcfb" stroke="#b7c8c0" strokeDasharray="4 3"/>
-    {areas.map((area, i) => { const [ax, ay] = px(area.x_min, area.y_max), aw = (area.x_max - area.x_min) * scale, ah = (area.y_max - area.y_min) * scale, open = area.type === "intervenible"; return <g key={`area-${i}`}><rect x={ax} y={ay} width={aw} height={ah} fill={open ? "rgba(63,154,98,.16)" : "#e3e5e6"} stroke={open ? "#3f9a62" : "#7d8487"} strokeWidth="1"/>{!open && <rect x={ax} y={ay} width={aw} height={ah} fill="url(#artifact-grid-hatch)"/>}<text x={ax + aw / 2} y={ay + ah / 2 + 3} textAnchor="middle" fill={open ? "#2f5f43" : "#5f6d66"} fontSize="8.5" transform={aw < 50 && ah > aw ? `rotate(-90 ${ax + aw / 2} ${ay + ah / 2})` : undefined}>{area.label || (open ? "Área intervenible" : "No intervenible")}</text></g>; })}
-    {structures.map((item, i) => { const [cx, cy] = px(item.x, item.y), sx = cx - item.width * scale / 2, sy = cy - item.height * scale / 2; return <g key={`structure-${i}`}><rect x={sx} y={sy} width={item.width * scale} height={item.height * scale} rx="2" fill="#e3e5e6" stroke="#7d8487" strokeWidth="1.2"/><rect x={sx} y={sy} width={item.width * scale} height={item.height * scale} rx="2" fill="url(#artifact-grid-hatch)"/><text x={cx} y={cy - 2} textAnchor="middle" fill="#4f5a55" fontSize="9" fontWeight="600">{item.label || "Elemento constructivo"}</text><text x={cx} y={cy + 9} textAnchor="middle" fill="#5f6d66" fontSize="8">No intervenible</text></g>; })}
-    {lines.map(([a, b], i) => { const [ax, ay] = px(...a), [bx, by] = px(...b); return <line key={i} x1={ax} y1={ay} x2={bx} y2={by} stroke="#2563c9" strokeWidth="1.6" strokeLinecap="round"/>; })}
-    {rods.map(([x, y], i) => { const [cx, cy] = px(x, y); return <circle key={i} cx={cx} cy={cy} r="4.5" fill="#c98a2b" stroke="#fff" strokeWidth="1.5"/>; })}
-    <text x={x0 + w / 2} y={y0 + h + 22} textAnchor="middle" fill="#5f6f68" fontSize="11">{formatValue(length)} m (X)</text>
-    <text x={x0 - 12} y={y0 + h / 2} textAnchor="middle" fill="#5f6f68" fontSize="11" transform={`rotate(-90 ${x0 - 12} ${y0 + h / 2})`}>{formatValue(width)} m (Y)</text>
-    <text x="245" y="342" textAnchor="middle" fill="#93a09a" fontSize="9">{gridDescription(geometry)} · {rods.length} varillas ({rodNote})</text>
+  const clipId = `plan-clip-${view}-${Math.round(spanX * 100)}-${Math.round(spanY * 100)}`;
+  return <svg className="agent-grid-svg" viewBox={`0 0 ${W} 350`} role="img" aria-label={`${view === "detail" ? "Detalle de la malla" : "Plano general"}: terreno de ${geometry.length_m} por ${geometry.width_m} m, ${areas.length} zonas, ${gridDescription(geometry)}, ${rods.length} varillas y ${structures.length} elementos constructivos${rotated ? "; girado 90° para leerse en horizontal" : ""}`}>
+    <defs>
+      <pattern id="artifact-grid-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#9aa0a3" strokeWidth="1.2"/></pattern>
+      <clipPath id={clipId}><rect x={x0} y={y0} width={w} height={h}/></clipPath>
+    </defs>
+    <g clipPath={`url(#${clipId})`}>
+      <rect x={site.x} y={site.y} width={site.w} height={site.h} fill="#fbfcfb" stroke="#b7c8c0" strokeDasharray="4 3"/>
+      {areas.map((area, i) => { const b = box(area.x_min, area.y_min, area.x_max, area.y_max), open = area.type === "intervenible"; return <g key={`area-${i}`}><rect x={b.x} y={b.y} width={b.w} height={b.h} fill={open ? "rgba(63,154,98,.16)" : "#e3e5e6"} stroke={open ? "#3f9a62" : "#7d8487"} strokeWidth="1"/>{!open && <rect x={b.x} y={b.y} width={b.w} height={b.h} fill="url(#artifact-grid-hatch)"/>}<text x={b.x + b.w / 2} y={b.y + b.h / 2 + 3} textAnchor="middle" fill={open ? "#2f5f43" : "#5f6d66"} fontSize="8.5" transform={b.w < 50 && b.h > b.w ? `rotate(-90 ${b.x + b.w / 2} ${b.y + b.h / 2})` : undefined}>{area.label || (open ? "Área intervenible" : "No intervenible")}</text></g>; })}
+      {structures.map((item, i) => { const b = box(item.x - item.width / 2, item.y - item.height / 2, item.x + item.width / 2, item.y + item.height / 2); return <g key={`structure-${i}`}><rect x={b.x} y={b.y} width={b.w} height={b.h} rx="2" fill="#e3e5e6" stroke="#7d8487" strokeWidth="1.2"/><rect x={b.x} y={b.y} width={b.w} height={b.h} rx="2" fill="url(#artifact-grid-hatch)"/><text x={b.x + b.w / 2} y={b.y + b.h / 2 - 2} textAnchor="middle" fill="#4f5a55" fontSize="9" fontWeight="600">{item.label || "Elemento constructivo"}</text><text x={b.x + b.w / 2} y={b.y + b.h / 2 + 9} textAnchor="middle" fill="#5f6d66" fontSize="8">No intervenible</text></g>; })}
+      {lines.map(([a, b], i) => { const [ax, ay] = px(...a), [bx, by] = px(...b); return <line key={i} x1={ax} y1={ay} x2={bx} y2={by} stroke="#2563c9" strokeWidth={view === "detail" ? 2.2 : 1.6} strokeLinecap="round"/>; })}
+      {rods.map(([x, y], i) => { const [cx, cy] = px(x, y); return <circle key={i} cx={cx} cy={cy} r={view === "detail" ? 5.5 : 4.5} fill="#c98a2b" stroke="#fff" strokeWidth="1.5"/>; })}
+    </g>
+    <text x={x0 + w / 2} y={y0 + h + 18} textAnchor="middle" fill="#5f6f68" fontSize="11">{win.mesh ? `Malla: ${formatValue(Number((rotated ? win.mesh.y : win.mesh.x).toFixed(2)))} m` : `${formatValue(Number(across.toFixed(2)))} m`} ({rotated ? "Y" : "X"})</text>
+    <text x={x0 - 12} y={y0 + h / 2} textAnchor="middle" fill="#5f6f68" fontSize="11" transform={`rotate(-90 ${x0 - 12} ${y0 + h / 2})`}>{win.mesh ? `Malla: ${formatValue(Number((rotated ? win.mesh.x : win.mesh.y).toFixed(2)))} m` : `${formatValue(Number(down.toFixed(2)))} m`} ({rotated ? "X" : "Y"})</text>
+    <text x="245" y="344" textAnchor="middle" fill="#93a09a" fontSize="9">{gridDescription(geometry)} · {rods.length} varillas ({rodNote}){rotated ? " · girado 90°" : ""}</text>
   </svg>;
+}
+
+// General plan and grid detail, side by side when there is room, or as two tabs.
+function PlanViews({ geometry, initial = "general" }) {
+  const [view, setView] = useState(initial);
+  const general = planWindow(geometry, "general"), detail = planWindow(geometry, "detail");
+  // The detail only adds something when the grid covers a small part of the site.
+  const worthDetail = (detail.x1 - detail.x0) * (detail.y1 - detail.y0) < 0.7 * (general.x1 - general.x0) * (general.y1 - general.y0);
+  return <div className="plan-views">
+    {worthDetail && <div className="app-segmented plan-views-switch" role="group" aria-label="Vista del plano">
+      <button type="button" className={view === "general" ? "active" : ""} aria-pressed={view === "general"} onClick={() => setView("general")}>Plano general</button>
+      <button type="button" className={view === "detail" ? "active" : ""} aria-pressed={view === "detail"} onClick={() => setView("detail")}>Detalle de la malla</button>
+    </div>}
+    <ArtifactGrid geometry={geometry} view={worthDetail ? view : "general"}/>
+  </div>;
 }
 
 function buildAgentIterationRows(events = []) {
@@ -352,7 +395,7 @@ function MatherraRunReview({ project, token, artifact, refreshKey, onApplied }) 
   </section>;
 }
 
-function AgentArtifactPanel({ project, conversation, token, refreshKey, onOpenGraph }) {
+function AgentArtifactPanel({ project, conversation, token, refreshKey, onOpenGraph, onOpenPlan, onOpenResults }) {
   const [artifact, setArtifact] = useState(null);
   const [planWarnings, setPlanWarnings] = useState([]);
   const [error, setError] = useState("");
@@ -389,19 +432,21 @@ function AgentArtifactPanel({ project, conversation, token, refreshKey, onOpenGr
   const soilNote = snapshot?.soil_measurements ? `${formatValue(snapshot.soil_measurements)}${soilSource?.kind === "tool" && soilSource.note ? ` · ${soilSource.note}` : ""}` : "";
   const origin = artifact?.origin?.kind === "agent" ? "Creada por el agente" : "Creada por el usuario";
   const openEvidence = (source) => setEvidenceSource(source);
-  return <aside className="panel artifact-side-panel"><div className="panel-heading"><div><Box size={17}/><h2>Diseño de puesta a tierra</h2></div>{artifact && <span className="muted-label">Versión {artifact.version}</span>}</div>
+  const verdict = artifact?.calculation_verdict && artifact.calculation_verdict !== "no_evaluado" ? artifact.calculation_verdict : null;
+  const verdictText = { cumple: "Las tensiones de contacto y paso y la sección del conductor están dentro de los límites.", no_cumple: "Al menos una tensión supera lo que una persona tolera durante una falla.", no_evaluable: "Faltan datos para evaluar el cumplimiento." };
+  return <aside className="panel artifact-side-panel"><div className="panel-heading"><div><IconOverview size={17}/><h2>Diseño de puesta a tierra</h2></div><div className="artifact-results-heading-actions">{artifact && <span className="muted-label">Versión {artifact.version}</span>}{onOpenPlan && snapshot?.geometry && <button type="button" className="button primary" onClick={onOpenPlan}><IconPlan size={14}/> Editar plano</button>}</div></div>
     {snapshot ? <>
-      {snapshot.geometry ? <div className="agent-grid-preview"><ArtifactGrid geometry={snapshot.geometry}/>{planWarnings.map((warning, i) => <p key={i} className="artifact-update-warning">{warning.kind === "disconnected" ? `La malla tiene ${warning.parts} partes separadas: el cálculo las trata como un solo conductor, lo que solo es cierto si un conductor de unión las conecta.` : warning.message}</p>)}</div> : <div className="artifact-preview-empty"><Box size={22}/><strong>Sin malla todavía</strong><span>Pídele al agente la geometría, por ejemplo: «malla de 40 × 30 m con retícula de 5 m».</span></div>}
+      {verdict && <div className={`summary-verdict ${verdict}`} data-testid="artifact-verdict"><span className="summary-verdict-dot"/><div><strong>{verdictLabels[verdict] || verdict}{artifact.calculation_status === "desactualizado" ? " · del cálculo anterior" : ""}</strong><span>{verdictText[verdict]}</span></div>{onOpenResults && <button type="button" className="button" onClick={onOpenResults}>Ver resultado <ChevronRight size={13}/></button>}</div>}
+      {snapshot.geometry ? <div className="agent-grid-preview"><PlanViews geometry={snapshot.geometry}/>{planWarnings.map((warning, i) => <p key={i} className="artifact-update-warning">{warning.kind === "disconnected" ? `La malla tiene ${warning.parts} partes separadas: el cálculo las trata como un solo conductor, lo que solo es cierto si un conductor de unión las conecta.` : warning.message}</p>)}</div> : <EmptyState compact art="mesh" title="Este diseño aún no tiene malla" description="Dibújala en el editor de plano o pídesela al agente, por ejemplo «malla de 40 × 30 m con retícula de 5 m»." action={onOpenPlan && <button type="button" className="button primary" onClick={onOpenPlan}><IconPlan size={14}/> Dibujar plano</button>}/>}
       <div className="artifact-status"><strong>{artifact.name}</strong><span>{origin} · {new Date(artifact.created_at * 1000).toLocaleString("es-CO")}</span></div>
       {artifact.draft_watermark && <div className="artifact-status agent-fails"><strong>{artifact.draft_watermark}</strong><span>Confirma los supuestos antes de presentar el estudio como final.</span></div>}
-      {artifact.calculation_verdict && artifact.calculation_verdict !== "no_evaluado" && <div className={`agent-verdict ${artifact.calculation_verdict}`} data-testid="artifact-verdict">{verdictLabels[artifact.calculation_verdict] || artifact.calculation_verdict}{artifact.calculation_status === "desactualizado" ? " · del cálculo anterior" : ""}</div>}
       {artifact.calculation_status && <div className={`artifact-status${artifact.calculation_status === "desactualizado" ? " agent-fails" : ""}`}><strong>Vigencia</strong><span>{calculationFreshnessLabels[artifact.calculation_status] || artifact.calculation_status}{artifact.calculation_version && artifact.calculation_status === "desactualizado" ? ` · cálculo de versión ${artifact.calculation_version}` : ""}</span></div>}
       {snapshot.geometry && <div className="artifact-status"><strong>Malla <ProvenanceChip provenance={provenance} path="geometry" onOpen={openEvidence}/></strong><span>{formatValue(snapshot.geometry.length_m)} × {formatValue(snapshot.geometry.width_m)} m · {gridDescription(snapshot.geometry)} · profundidad {formatValue(snapshot.geometry.burial_depth_m)} m · {snapshot.geometry.rods_count} varillas de {formatValue(snapshot.geometry.rod_length_m)} m</span></div>}
       <div className="artifact-status"><strong>Suelo <ProvenanceChip provenance={provenance} path="soil_layers" onOpen={openEvidence}/></strong>{snapshot.soil_layers?.length ? <div className="artifact-soil-layers">{snapshot.soil_layers.map((layer, index) => <span key={index}>C{index + 1}: {formatValue(layer.resistivity_ohm_m)} Ω·m · {layer.depth_m ? `${formatValue(layer.depth_m)} m` : "semiespacio"}{layer.material ? ` · ${layer.material}` : ""}</span>)}{soilNote && <small>{soilNote}</small>}</div> : <span className="no-information">Pendiente: resistividad del suelo. Puedes pegar un sondeo Wenner o Schlumberger en el chat o subir un CSV/XLSX.</span>}</div>
       <div className="artifact-status"><strong>Falla <ProvenanceChip provenance={provenance} path="fault" onOpen={openEvidence}/></strong>{snapshot.fault?.current_a && snapshot.fault?.clearing_time_s ? <span>{formatValue(snapshot.fault.current_a)} A · {formatValue(snapshot.fault.clearing_time_s)} s · capa superficial {formatValue(snapshot.fault.surface_resistivity_ohm_m)} Ω·m, {formatValue(snapshot.fault.surface_thickness_m)} m</span> : <span className="no-information">Pendiente: {[!snapshot.fault?.current_a && "corriente de falla", !snapshot.fault?.clearing_time_s && "tiempo de despeje"].filter(Boolean).join(", ")}. Se necesitan para el cálculo de seguridad.</span>}</div>
       {snapshot.conductor && <div className="artifact-status"><strong>Conductor <ProvenanceChip provenance={provenance} path="conductor" onOpen={openEvidence}/></strong><span>{fieldValueLabel("conductor.material_id", snapshot.conductor.material_name || snapshot.conductor.material_id)} · {formatValue(snapshot.conductor.cross_section_mm2)} mm² · unión {fieldValueLabel("conductor.joint_type", snapshot.conductor.joint_type)}</span></div>}
       {evidenceSource && <ArtifactEvidencePanel project={project} token={token} source={evidenceSource} onClose={() => setEvidenceSource(null)} onOpenGraph={onOpenGraph}/>}
-    </> : <div className="artifact-preview-empty"><Box size={25}/><strong>Aún no hay un diseño de malla</strong><span>{error || "Pídele al agente en el chat que diseñe la malla, por ejemplo: «créame una malla de 40 × 30 m con retícula de 5 m»."}</span></div>}
+    </> : <EmptyState art="agent" title={error ? "No se pudo cargar el diseño" : "Aún no hay un diseño de puesta a tierra"} description={error || "Cuéntale al agente qué subestación quieres diseñar, sube planos y estudios en Fuentes o dibuja la malla tú mismo."} action={onOpenPlan && <button type="button" className="button primary" onClick={onOpenPlan}><IconPlan size={14}/> Dibujar plano</button>} testId="summary-empty"/>}
   </aside>;
 }
 
@@ -446,16 +491,36 @@ function ArtifactUpdateCard({ message, token, project, onView, onUndone }) {
   </article>;
 }
 
+// Matherra from Resultado: the same configurator as the plan editor, without leaving the result.
+function MatherraDialog({ project, token, artifact, onClose, onShowResults, onOpenPlan }) {
+  useEffect(() => {
+    const onKey = (event) => { if (event.key === "Escape" && !document.querySelector(".help-card")) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return <div className="app-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="app-dialog matherra-dialog" role="dialog" aria-modal="true" aria-labelledby="matherra-dialog-title">
+      <header className="app-dialog-header"><div><span className="app-dialog-icon matherra"><IconOptimizer size={18}/></span><div><h2 id="matherra-dialog-title">Optimizar con Matherra</h2><p>Busca trazados más baratos que cumplan, dentro de las áreas intervenibles del plano (versión {artifact.version}). Lo que ya está en el diseño se hereda.</p></div></div><button type="button" className="icon-button" aria-label="Cerrar Matherra" onClick={onClose}><X size={17}/></button></header>
+      <div className="app-dialog-body"><TopologyOptimizerPanel projectId={project.id} token={token} artifact={artifact} canRun onShowResults={onShowResults}/></div>
+      {onOpenPlan && <footer className="app-dialog-footer"><span className="matherra-dialog-note">Las áreas intervenibles se dibujan en el plano.</span><button type="button" className="button" onClick={onOpenPlan}><IconPlan size={14}/> Abrir en el editor de plano</button></footer>}
+    </section>
+  </div>;
+}
+
 // three.js loads only when the 3D view opens.
 const Surface3D = lazy(() => import("./Surface3D.jsx"));
 
 
-function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggestion, onOpenMatherra, onCandidateApplied }) {
+function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggestion, onOpenMatherra, onCandidateApplied, onNavigate, onOpenPlan }) {
   const [artifact, setArtifact] = useState(null);
   const [calculation, setCalculation] = useState(null);
   const [geometry, setGeometry] = useState(null);
   const [freshness, setFreshness] = useState(null);
   const [show3d, setShow3d] = useState(false);
+  const [showOptions, setShowOptions] = useState(false);
+  const [showMatherra, setShowMatherra] = useState(false);
+  const [readiness, setReadiness] = useState({ missing: [], coherence: [] });
+  const [blocked, setBlocked] = useState(null);
   const [state, setState] = useState("loading");
   const [recalculating, setRecalculating] = useState(false);
   const [actionError, setActionError] = useState("");
@@ -557,6 +622,15 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
     }, 1500);
     return () => clearInterval(timer);
   }, [artifact, calculation?.id, calculation?.status, project.id, token]);
+  // What the backend would reject, known before pressing «Recalcular».
+  useEffect(() => {
+    if (!artifact) { setReadiness({ missing: [], coherence: [] }); return undefined; }
+    let live = true;
+    setBlocked(null);
+    fetch(`/api/v1/projects/${project.id}/artefactos-diseno-tierras/${artifact.artifact_id}/versions/${artifact.version}/coherencia`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null)).then((body) => { if (live && body) setReadiness({ missing: body.missing || [], coherence: body.errors || [] }); }).catch(() => {});
+    return () => { live = false; };
+  }, [project.id, token, artifact?.artifact_id, artifact?.version, refreshKey]);
   async function optimizeUntilCompliant() {
     // Attach the failing calculation and artifact to the autonomous run so its iteration loop has a deterministic starting point.
     if (!conversation || !artifact || !calculation || calculation.artifact_version !== artifact.version || freshness === "desactualizado" || recalculating || optimizing) return;
@@ -570,71 +644,78 @@ function AgentResultsPanel({ project, conversation, token, refreshKey, onSuggest
     } catch (error) { setActionError(error.message); }
     finally { setOptimizing(false); }
   }
-  async function recalculate() {
+  async function recalculate(config = solverConfig) {
     if (!artifact || recalculating) return;
-    if (solverConfig.justification.trim().length < 10) { setActionError("Escribe una justificación de al menos 10 caracteres para registrar la configuración."); return; }
+    if (config.justification.trim().length < 10) { setActionError("Escribe una justificación de al menos 10 caracteres para registrar la configuración."); return; }
     setRecalculating(true); setActionError("");
     try {
-      const response = await fetch(`/api/v1/projects/${project.id}/artefactos-diseno-tierras/${artifact.artifact_id}/versions/${artifact.version}/calculos-potencial`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ ...solverConfig, discretization_m: Number(solverConfig.discretization_m), surface_spacing_m: Number(solverConfig.surface_spacing_m), touch_reach_m: Number(solverConfig.touch_reach_m), safety_standards: ["IEEE 80-2013"] }) });
+      const response = await fetch(`/api/v1/projects/${project.id}/artefactos-diseno-tierras/${artifact.artifact_id}/versions/${artifact.version}/calculos-potencial`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ ...config, discretization_m: Number(config.discretization_m), surface_spacing_m: Number(config.surface_spacing_m), touch_reach_m: Number(config.touch_reach_m), safety_standards: ["IEEE 80-2013"] }) });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.detail?.message || body.detail || "No se pudo iniciar el cálculo.");
+      if (!response.ok) {
+        const detail = body.detail;
+        if (detail && typeof detail === "object" && (detail.missing || detail.unconfirmed_critical || detail.coherence)) {
+          setBlocked({ missing: detail.missing || [], unconfirmed: detail.unconfirmed_critical || [], coherence: detail.coherence || [] });
+          return;
+        }
+        throw new Error(detail?.message || detail || "No se pudo iniciar el cálculo.");
+      }
+      setBlocked(null);
       setCalculation(body); setFreshness("calculando"); setState("ready");
     } catch (error) { setActionError(error.message); }
     finally { setRecalculating(false); }
   }
   const result = calculation?.result;
-  const { verdict, interpretation, safety } = evaluateResult(result);
+  const { verdict, interpretation } = evaluateResult(result);
   const value = formatNumber;
-  const freshnessLabel = freshness === "desactualizado" ? "El resultado quedó desactualizado · recalcula para esta versión" : freshness === "calculando" ? "Calculando la versión vigente…" : null;
-  const recalculateButton = <button className="button primary" disabled={!artifact || recalculating || ["pending", "running"].includes(calculation?.status)} onClick={recalculate}><RefreshCw size={14}/> {recalculating || ["pending", "running"].includes(calculation?.status) ? "Calculando…" : "Recalcular"}</button>;
-  // What the two improvement paths produced, right under the options that launch them. It keeps one place in the
-  // tree whatever the calculation's state, so a recalculation does not remount it and drop its notices.
+  const running = recalculating || ["pending", "running"].includes(calculation?.status);
+  const gaps = blocked || { missing: readiness.missing, unconfirmed: unconfirmedInputs(artifact), coherence: readiness.coherence };
+  const cannotCalculate = gaps.missing.length + gaps.unconfirmed.length + gaps.coherence.length > 0;
+  const missingPanel = <MissingInputs {...gaps} onNavigate={onNavigate} onOpenPlan={onOpenPlan}/>;
+  const freshnessLabel = freshness === "desactualizado" ? "El resultado es de una versión anterior del diseño. Recalcula para ver el de la versión actual." : freshness === "calculando" ? "Calculando la versión vigente…" : null;
+  const recalculateButton = <button className="button primary" disabled={!artifact || running || cannotCalculate} title={cannotCalculate ? "Completa los datos que faltan para calcular" : undefined} onClick={() => recalculate()}><RefreshCw size={14}/> {running ? "Calculando…" : "Recalcular"}</button>;
+  const agentReady = verdict === "no_cumple" && conversation && calculation?.artifact_version === artifact?.version && freshness !== "desactualizado";
+  // What the two improvement paths produced. It keeps one place in the tree whatever the calculation's state,
+  // so a recalculation does not remount it and drop its notices.
   const improvements = <>
   <AgentImprovements project={project} token={token} artifact={artifact} events={designLoopEvents} autonomousRun={autonomousRun} progress={designLoopProgress} result={designLoopResult} onRestored={({ restored, calculation }) => { setArtifact(restored); setCalculation(calculation); setFreshness("calculando"); setState("ready"); onCandidateApplied?.(); }}/>
   {artifact && <MatherraRunReview project={project} token={token} artifact={artifact} refreshKey={refreshKey} onApplied={onCandidateApplied}/>}
   </>;
-  return <aside className="panel artifact-side-panel agent-results-panel"><div className="panel-heading"><div><Activity size={17}/><h2>Resultados</h2></div><div className="artifact-results-heading-actions">{calculation && <span className="muted-label">Versión {calculation.artifact_version}</span>}{recalculateButton}</div></div>
+  const surface = result?.surface_potential;
+  const reachNote = surface ? `La tensión de contacto se evalúa sobre la malla (${value(surface.grid_width_m)} × ${value(surface.grid_height_m)} m${Number(calculation.parameters?.touch_reach_m) > 0 ? `, hasta ${calculation.parameters.touch_reach_m} m fuera del perímetro` : ", dentro del perímetro"}); la de paso en todo el terreno, salvo dentro de construcciones.` : null;
+  return <aside className="panel artifact-side-panel agent-results-panel"><div className="panel-heading"><div><IconResult size={17}/><h2>Resultado del cálculo</h2></div><div className="artifact-results-heading-actions">{calculation && <span className="muted-label">Versión {calculation.artifact_version}</span>}<button type="button" className="button" disabled={!artifact} onClick={() => setShowOptions(true)} title="Opciones del cálculo"><IconOptions size={14}/> Opciones</button>{recalculateButton}</div></div>
     {actionError && <p className="artifact-update-warning">{actionError}</p>}
-    {!calculation ? <div className="artifact-results-empty"><p className="no-information">{state === "error" ? "No se pudieron cargar los resultados." : "Sin cálculo para esta versión del diseño."}</p>{artifact && <p className="no-information">Completa y confirma los parámetros eléctricos antes de recalcular.</p>}</div>
+    {showMatherra && artifact && <MatherraDialog project={project} token={token} artifact={artifact} onOpenPlan={onOpenMatherra && (() => { setShowMatherra(false); onOpenMatherra(); })} onClose={() => setShowMatherra(false)} onShowResults={() => { setShowMatherra(false); onCandidateApplied?.(); }}/>}
+    {showOptions && <CalculationOptionsDialog config={solverConfig} layers={artifact?.snapshot?.soil_layers?.length} busy={running} onChange={setSolverConfig} onClose={() => setShowOptions(false)} onRecalculate={(config) => recalculate(config)}/>}
+    {cannotCalculate && calculation && <div className="results-body results-body-top">{missingPanel}</div>}
+    {!calculation ? (state === "loading" ? <p className="panel-empty-text">Cargando resultados…</p>
+      : state === "error" ? <EmptyState art="calculate" title="No se pudieron cargar los resultados" description="Puede ser un problema de conexión. Vuelve a intentarlo en unos segundos." testId="results-empty"/>
+      : !artifact ? <EmptyState art="mesh" title="Aún no hay un diseño para calcular" description="Pídele al agente una malla en el chat, por ejemplo «malla de 40 × 30 m con retícula de 5 m», o dibújala tú en el editor de plano." action={onOpenPlan && <button type="button" className="button primary" onClick={onOpenPlan}><IconPlan size={14}/> Dibujar plano</button>} testId="results-empty"/>
+      : cannotCalculate ? <EmptyState art="missing" title="Faltan datos para calcular" description="Con estos datos el motor calcula las tensiones de contacto y paso y verifica la norma. Completa cada uno donde se indica." testId="results-empty">{missingPanel}</EmptyState>
+      : <EmptyState art="calculate" title="Este diseño todavía no se ha calculado" description="Ya tiene todo lo necesario. El cálculo tarda unos segundos y te dirá si las tensiones de contacto y paso cumplen la norma." action={<button type="button" className="button primary" disabled={running} onClick={() => recalculate()}><RefreshCw size={14}/> {running ? "Calculando…" : "Calcular ahora"}</button>} secondary={<button type="button" className="button" onClick={() => setShowOptions(true)}><IconOptions size={14}/> Opciones del cálculo</button>} testId="results-empty"/>)
       : calculation.status !== "completed" ? <div className="artifact-status"><strong>Cálculo {calculation.status === "pending" || calculation.status === "running" ? "en curso…" : calculation.status}</strong>{calculation.error && <span className="no-information">{calculation.error}</span>}</div>
-      : <>
+      : <div className="results-body">
         {freshnessLabel && <div className="artifact-update-warning">{freshnessLabel} {recalculateButton}</div>}
-        <details className="solver-config-panel"><summary><Settings2 size={14}/> Configuración del solver</summary><div className="solver-config-grid"><label>Discretización (m)<select value={solverConfig.discretization_m} onChange={(event) => setSolverConfig((current) => ({ ...current, discretization_m: event.target.value }))}>{[0.25, 0.5, 1, 2, 5].map((value) => <option value={value} key={value}>{value}</option>)}</select></label><label>Segmentación<select value={solverConfig.segmentation} onChange={(event) => setSolverConfig((current) => ({ ...current, segmentation: event.target.value }))}><option value="graded">Graduada en nodos críticos</option><option value="uniform">Uniforme</option></select></label><label>Raster de superficie<select value={solverConfig.surface_spacing_m} onChange={(event) => setSolverConfig((current) => ({ ...current, surface_spacing_m: event.target.value }))}>{[0.25, 0.5, 1].map((value) => <option value={value} key={value}>{value} m</option>)}</select></label><label title="Margen alrededor de la malla donde se busca la tensión de contacto; 0 = dentro del perímetro (IEEE 80)">Alcance de contacto<select value={solverConfig.touch_reach_m} onChange={(event) => setSolverConfig((current) => ({ ...current, touch_reach_m: event.target.value }))}>{[0, 0.5, 1, 2].map((value) => <option value={value} key={value}>{value === 0 ? "Perímetro de la malla" : `${value} m fuera de la malla`}</option>)}</select></label><label className="solver-config-check"><input type="checkbox" checked={solverConfig.estimate_uncertainty} onChange={(event) => setSolverConfig((current) => ({ ...current, estimate_uncertainty: event.target.checked }))}/> Estimar incertidumbre numérica</label><label className="solver-config-justification">Justificación registrada<textarea value={solverConfig.justification} maxLength={500} onChange={(event) => setSolverConfig((current) => ({ ...current, justification: event.target.value }))}/></label><small>Capas del modelo: {artifact?.snapshot?.soil_layers?.length || "pendientes en Entradas"}. La cantidad de capas se define en el modelador de suelo y se valida antes de calcular.</small></div></details>
-        <div className={`agent-verdict ${verdict}`}>{verdictLabels[verdict]}</div>
-        <div className="result-interpretation"><div className="result-interpretation-title"><strong>Interpretación</strong></div><div><small>Restricción dominante</small><strong>{interpretation.constraint}</strong></div><div><small>Por qué</small><span>{interpretation.explanation}</span></div><div className="result-interpretation-actions"><small>Siguiente acción</small>{interpretation.actions.map((action) => <button className="button" key={action} onClick={() => onSuggestion?.(action)}>{action}</button>)}</div></div>
-        <div className="artifact-status"><strong>Malla</strong><span>R = {Number(result.grid_resistance_ohm).toLocaleString("es-CO", { maximumFractionDigits: 3 })} Ω · GPR = {value(result.gpr_v)} V · I = {value(result.injected_current_a)} A</span></div>
-        {safety.map((standard) => <div className="artifact-status" key={standard.standard}><strong>{standard.standard}</strong>{(standard.criteria || []).map((c) => <span key={c.criterion} className={c.status === "cumple" ? "" : "agent-fails"}>{c.criterion === "touch" ? "Contacto" : "Paso"}: {value(c.actual_v)} V / {value(c.tolerable_v)} V tolerable ({(100 * c.margin_rel).toLocaleString("es-CO", { maximumFractionDigits: 1 })} %)</span>)}{standard.reason && <span className="no-information">{standard.reason}</span>}</div>)}
-        {result.conductor_thermal && <div className="artifact-status"><strong>Conductor (térmico)</strong><span className={result.conductor_thermal.status === "cumple" ? "" : "agent-fails"}>Sección {value(result.conductor_thermal.selected_section_mm2)} mm² · mínima {value(result.conductor_thermal.minimum_section_mm2)} mm²</span></div>}
-        <section className="design-optimization-options" aria-labelledby="design-optimization-title">
-          <div className="design-optimization-heading"><strong id="design-optimization-title">¿Cómo quieres mejorar este diseño?</strong></div>
-          <div className="design-optimization-grid">
-            <article className="design-optimization-card">
-              <div className="design-optimization-card-title"><Sparkles size={16}/><h3>Mejorar con el agente</h3><span>Asistido</span></div>
-              <p>Propone ajustes a la malla, guarda cada uno como versión y lo vuelve a calcular hasta cumplir o agotar las iteraciones.</p>
-              {verdict === "no_cumple" && conversation && calculation.artifact_version === artifact?.version && freshness !== "desactualizado"
-                ? <button className="button primary" data-testid="optimize-until-compliant" disabled={optimizing || recalculating || Boolean(autonomousRun)} onClick={optimizeUntilCompliant}><Sparkles size={14}/>{optimizing ? "Iniciando…" : autonomousRun ? "El agente está trabajando…" : "Mejorar con el agente"}</button>
-                : <small className="design-optimization-requirement">Disponible cuando el cálculo de la versión actual no cumple.</small>}
-            </article>
-            <article className="design-optimization-card matherra">
-              <div className="design-optimization-card-title"><Activity size={16}/><h3>Optimizar con Matherra</h3><span>Matemático</span></div>
-              <p>Busca y compara trazados por costo y seguridad dentro de las áreas intervenibles, con las tarifas que definas.</p>
-              <button className="button" data-testid="open-matherra-optimizer" onClick={onOpenMatherra}>Configurar Matherra <ChevronRight size={14}/></button>
-            </article>
+        <ModelWarnings warnings={result.model_warnings}/>
+        <VerdictCallout result={result} footer={<ImproveDesign verdict={verdict} suggestions={verdict === "no_cumple" ? interpretation.actions : []} onSuggestion={onSuggestion} onOpenMatherra={() => setShowMatherra(true)}
+          agent={{ available: Boolean(agentReady), disabled: optimizing || recalculating || Boolean(autonomousRun), onRun: optimizeUntilCompliant,
+            label: optimizing ? "Iniciando…" : autonomousRun ? "El agente está trabajando…" : "Iterar con el agente",
+            requirement: verdict === "no_cumple" ? "Disponible cuando el resultado corresponde a la versión actual del diseño." : "Disponible cuando el diseño no cumple." }}/>}/>
+        <section className="result-section" aria-labelledby="grid-values-title">
+          <div className="result-section-heading"><h3 id="grid-values-title">Malla de puesta a tierra</h3><p>Cómo se comporta la malla al inyectarle la corriente de falla.</p></div>
+          <div className="result-metric-grid">
+            <Metric label="Resistencia de malla" value={value(result.grid_resistance_ohm, 3)} unit="Ω" tip="Oposición de la malla a que la corriente pase al suelo. Depende del área, del conductor enterrado, de las varillas y de la resistividad del suelo. Cuanto menor, mejor."/>
+            <Metric label="Elevación de potencial (GPR)" value={value(result.gpr_v)} unit="V" tip="Tensión que alcanza la malla respecto a tierra remota durante la falla: resistencia de malla × corriente inyectada. Si es menor que la tensión de contacto tolerable, el diseño cumple sin más análisis."/>
+            <Metric label="Corriente inyectada" value={value(result.injected_current_a)} unit="A" tip="Parte de la corriente de falla que la malla descarga al suelo, después del factor de división."/>
           </div>
         </section>
-      </>}
-    {improvements}
-    {calculation?.status === "completed" && <>
-        {result.surface_potential && <div className="agent-grid-preview"><SurfacePotentialMap field={result.surface_potential}/></div>}
-        {result.surface_potential && <p className="no-information">Contacto evaluado sobre la malla ({value(result.surface_potential.grid_width_m)} × {value(result.surface_potential.grid_height_m)} m{Number(calculation.parameters?.touch_reach_m) > 0 ? `, ${calculation.parameters.touch_reach_m} m fuera del perímetro` : ", dentro del perímetro"}); paso en todo el terreno, salvo dentro de construcciones.</p>}
-        {result.surface_potential && geometry && <button className="button primary agent-3d-button" onClick={() => setShow3d(true)}><Rotate3d size={15}/> Ver en 3D</button>}
+        {surface && <SurfacePotentialMap field={surface} note={reachNote} action={geometry && <button type="button" className="button" onClick={() => setShow3d(true)}><Icon3D size={15}/> Ver en 3D</button>}/>}
         {show3d && <Suspense fallback={<div className="surface3d-backdrop"><div className="surface3d-loading">Cargando vista 3D…</div></div>}>
           <Surface3D calculation={calculation} onClose={() => setShow3d(false)} plan={{ ...gridPlan(geometry), length: geometry.length_m, width: geometry.width_m, burialDepth: geometry.burial_depth_m || 0.5, rodLength: geometry.rod_length_m || 2.4 }}/>
         </Suspense>}
-        {result.model_warnings?.length > 0 && <div className="artifact-status"><strong>Advertencias del modelo</strong>{result.model_warnings.map((w) => <span key={w} className="no-information">{w}</span>)}</div>}
-        <p className="no-information agent-results-note">Verificación de prefactibilidad; requiere revisión de un ingeniero competente.</p>
-      </>}
+      </div>}
+    {improvements}
+    {calculation?.status === "completed" && <p className="no-information agent-results-note">Verificación de prefactibilidad; requiere revisión de un ingeniero competente.</p>}
   </aside>;
 }
 
-export { AgentArtifactPanel, AgentResultsPanel, ArtifactGrid, ArtifactUpdateCard };
+export { AgentArtifactPanel, AgentResultsPanel, ArtifactGrid, ArtifactUpdateCard, PlanViews, gridPlan, planWindow };

@@ -1,6 +1,7 @@
 """Study publication and read-only sharing endpoints (E5 / H3)."""
 
 from hashlib import sha256
+import re
 import os
 from time import time
 from uuid import uuid4
@@ -15,6 +16,7 @@ from src.infrastructure.security.middleware import require
 from src.infrastructure.services.study_text import denies_results as _denies_results  # noqa: F401
 from src.infrastructure.services.study_text import latest_completed as _latest_completed
 from src.infrastructure.services.study_text import plain_codes as _plain_codes  # noqa: F401
+from src.infrastructure.services.bill_of_materials import bill_of_materials as _bill_of_materials
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/studies", tags=["studies"])
 public_router = APIRouter(prefix="/api/v1/public/studies", tags=["public-studies"])
@@ -108,14 +110,20 @@ def _owned_project(db, project_id, actor):
 def _public_study(db, slug, access=None, render=False):
     study = db.one("studies", slug=slug)
     now = int(time())
-    if not study or study["status"] != "published" or (study["expires_at"] and study["expires_at"] <= now):
-        raise HTTPException(404, "Study not found")
+    # Say why a link does not open. A draft is reported as missing so its existence is not disclosed.
+    if study and study["status"] == "revoked":
+        raise HTTPException(410, {"code": "revoked", "message": "El enlace existe, pero el estudio fue revocado.", "revoked_at": study["updated_at"]})
+    if not study or study["status"] != "published":
+        raise HTTPException(404, {"code": "not_found", "message": "No existe un estudio publicado con este enlace."})
+    if study["expires_at"] and study["expires_at"] <= now:
+        raise HTTPException(410, {"code": "expired", "message": "El enlace existe, pero venció.", "expired_at": study["expires_at"]})
     if not render and access and study["access"] == "password" and study["password_hash"] != _hash(access.password or ""):
         raise HTTPException(401, "Study password required")
     return study
 
 
-RESULT_DETAIL_KEYS = ("grid_resistance_ohm", "gpr_v", "injected_current_a", "safety", "conductor_thermal", "surface_potential", "model_warnings")
+# max_touch_v / max_step_v place the worst points in the report's 3D view.
+RESULT_DETAIL_KEYS = ("grid_resistance_ohm", "gpr_v", "injected_current_a", "safety", "conductor_thermal", "surface_potential", "model_warnings", "max_touch_v", "max_step_v")
 
 
 def _calculation_detail(calculation):
@@ -161,70 +169,6 @@ def _optimization(db, project_id, origin):
         "rates": [{"item": key, **{k: value.get(k) for k in ("source_type", "source", "unit", "catalog_version")}}
                   for key, value in sorted((comparison["rate_provenance"] or {}).items())],
         "warnings": comparison["warnings"],
-    }
-
-
-def _bill_of_materials(snapshot, origin, db, project_id) -> dict | None:
-    """BL-21: quantities taken off the pinned version's geometry (conductor by material, rods by material and
-    length, connections, trench). Geometric quantities only: no waste, slack or overlaps. The excavation volume
-    needs a trench width, which only an optimizer run declares (with its source); the cost comes from the applied
-    alternative when there is one, never recomputed here."""
-    from src.domain.spat import grid_geometry
-    from src.domain.spat.geometry_cost import takeoff
-    from src.domain.spat.geometry_graph import DEFAULT_MATERIAL
-
-    if snapshot.get("schema_version") == "2.0":
-        geometries = [e["geometry"] for kind in ("networks", "electrodes") for e in snapshot.get(kind) or [] if e.get("geometry")]
-    else:
-        geometries = [snapshot["geometry"]] if snapshot.get("geometry") else []
-    if not geometries:
-        return None
-    conductor: dict[str, float] = {}
-    rods: dict[tuple[str, float], int] = {}
-    connections, trench, excavation_m3, trench_width = 0, 0.0, 0.0, None
-    applied = (origin or {}).get("optimizer") or {}
-    run = None
-    if applied.get("run_id"):
-        from src.infrastructure.persistence.optimizer_run_repository import OptimizerRunRepository
-        run = OptimizerRunRepository(db.connection).get_run(project_id, applied["run_id"])
-        trench_width = (((run or {}).get("request_snapshot") or {}).get("rate_card") or {}).get("assumptions", {}).get("trench_width_m")
-    try:
-        for geometry in geometries:
-            quantities = takeoff(geometry, trench_width_m=trench_width)
-            for material, length in quantities["conductor_length_m"].items():
-                conductor[material] = conductor.get(material, 0.0) + length
-            declared = geometry.get("rods") or []    # explicit rods may name a material; perimeter rods never do
-            for index, (_, _, length) in enumerate(grid_geometry.rod_points(geometry)):
-                material = (declared[index].get("material") if index < len(declared) else None) or DEFAULT_MATERIAL
-                key = (material, round(float(length), 3))
-                rods[key] = rods.get(key, 0) + 1
-            connections += quantities["connections"]
-            trench += quantities["trench_length_m"]
-            excavation_m3 += quantities["excavation_m3"] or 0.0
-    except (KeyError, TypeError, ValueError):
-        return None
-    section = snapshot.get("conductor") or {}
-    cost = None
-    if run and applied.get("alternative_id"):
-        from src.infrastructure.persistence.optimizer_run_repository import OptimizerRunRepository
-        alternative = next((a for a in OptimizerRunRepository(db.connection).list_alternatives(project_id, applied["run_id"])
-                            if a["id"] == applied["alternative_id"]), None)
-        evaluation = (alternative or {}).get("evaluation_snapshot") or {}
-        if evaluation.get("cost") is not None:
-            cost = {"currency": (run.get("result_summary") or {}).get("cost_currency"), "total": evaluation["cost"],
-                    "by_group": (evaluation.get("cost_detail") or {}).get("by_group"),
-                    "note": "Costo de la alternativa aplicada según la corrida del optimizador y las tarifas listadas abajo; no se recalcula aquí."}
-    return {
-        "conductor": [{"material": m, "length_m": round(v, 3), "cross_section_mm2": section.get("cross_section_mm2"),
-                       "material_id": section.get("material_id")} for m, v in sorted(conductor.items())],
-        "rods": [{"material": m, "length_m": length, "count": count} for (m, length), count in sorted(rods.items())],
-        "rods_total": {"count": sum(rods.values()), "length_m": round(sum(length * count for (_, length), count in rods.items()), 3)},
-        "connections": connections,
-        "trench": {"length_m": round(trench, 3), "width_m": trench_width, "depth_m": geometries[0].get("burial_depth_m"),
-                   "excavation_m3": round(excavation_m3, 3) if trench_width is not None else None},
-        "cost": cost,
-        "notes": ["Cantidades geométricas de la versión publicada: sin desperdicio, traslapos ni holguras de instalación.",
-                  *([] if trench_width is not None else ["El volumen de excavación requiere un ancho de zanja declarado con su fuente; esta versión no lo trae."])],
     }
 
 
@@ -291,9 +235,11 @@ def create_study(project_id: str, data: StudyRequest, request: Request, actor=De
         artifact = _artifact_version(db, project_id, data.artifact_id, data.artifact_version)
         if not artifact:
             raise HTTPException(404, "Artifact version not found")
-        slug = data.slug or _slug(data.title)
+        # The public link is an opaque UUID: it does not reveal the project or the study's title. Existing
+        # title-based links keep working.
+        slug = data.slug or str(uuid4())
         if db.one("studies", slug=slug):
-            slug = f"{slug}-{uuid4().hex[:6]}"
+            slug = str(uuid4())
         row = {"id": str(uuid4()), "project_id": project_id, "owner_id": actor.user_id, "slug": slug, "artifact_id": data.artifact_id, "artifact_version": artifact["version"], "title": data.title, "access": data.access, "status": "draft", "config": _merge_study_config(DEFAULT_CONFIG, data.config), "password_hash": _hash(data.password), "expires_at": data.expires_at, "published_at": None, "created_at": now, "updated_at": now}
         db.add("studies", **row)
         return row
@@ -340,7 +286,8 @@ def update_study_access(project_id: str, study_id: str, data: StudyAccessRequest
 @router.post("/{study_id}/sections/{section_id}/generate", status_code=202)
 def generate_study_section(project_id: str, study_id: str, section_id: str, data: SectionGenerationRequest, request: Request, actor=Depends(require("designs:write"))):
     """Queue the section text; poll /api/v1/jobs/{job_id} for {section_id, text}."""
-    if section_id not in {"summary", "inputs", "results", "references"}:
+    # Fixed sections, or a free text block the user added to the report («bloque-…»).
+    if section_id not in {"summary", "inputs", "results", "references"} and not re.fullmatch(r"bloque-[a-z0-9]{4,32}", section_id):
         raise HTTPException(404, "Study section not found")
     with request.app.state.services.store.transaction() as db:
         _owned_project(db, project_id, actor)
@@ -362,8 +309,8 @@ def republish_study(project_id: str, study_id: str, data: StudyRequest, request:
         if not previous: raise HTTPException(404, "Study not found")
         artifact = _artifact_version(db, project_id, data.artifact_id, data.artifact_version)
         if not artifact: raise HTTPException(404, "Artifact version not found")
-        slug = data.slug or f"{previous['slug']}-v{artifact['version']}"
-        if db.one("studies", slug=slug): slug = f"{slug}-{uuid4().hex[:6]}"
+        slug = data.slug or str(uuid4())
+        if db.one("studies", slug=slug): slug = str(uuid4())
         row = {"id": str(uuid4()), "project_id": project_id, "owner_id": actor.user_id, "slug": slug, "artifact_id": data.artifact_id, "artifact_version": artifact["version"], "title": data.title, "access": data.access, "status": "published", "config": _merge_study_config(previous["config"], data.config), "password_hash": _hash(data.password) or previous["password_hash"], "expires_at": data.expires_at, "published_at": now, "created_at": now, "updated_at": now}
         db.add("studies", **row)
         return row
@@ -396,7 +343,7 @@ def get_study_pdf(project_id: str, study_id: str, request: Request, actor=Depend
     result = {"study_id": study_id, "pdf_status": study["pdf_status"], "error": study["pdf_error"], "updated_at": study["pdf_updated_at"]}
     if study["pdf_status"] == "ready" and study["pdf_key"]:
         from src.infrastructure.entrypoint.api.file_routes import storage_client
-        result["url"] = storage_client().presign_download(storage_client().allowed_buckets["designs"], study["pdf_key"], f"{study['slug']}.pdf")
+        result["url"] = storage_client().presign_download(storage_client().allowed_buckets["designs"], study["pdf_key"], f"{_slug(study['title'])}.pdf")
     return result
 
 

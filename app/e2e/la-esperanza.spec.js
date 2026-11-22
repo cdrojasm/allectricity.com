@@ -165,9 +165,9 @@ test("SE La Esperanza: carga, chat, malla, cálculo, estudio y PDF", async ({ pa
   }
 
   // 10. DXF y visualización del artefacto
-  await openSection(page, "Plano");
+  await openSection(page, "Resumen");
+  await page.getByRole("button", { name: /^(Editar|Dibujar) plano$/ }).click();
   await shot(page, "10a-plano");
-  await page.getByRole("button", { name: "Abrir editor de plano" }).click();
   await page.waitForTimeout(2000);
   const dxfSelect = page.locator("label", { hasText: /^DXF/ }).locator("select");
   const option = await dxfSelect.locator("option", { hasText: "03_malla" }).getAttribute("value");

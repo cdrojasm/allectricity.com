@@ -65,6 +65,7 @@ test("P1: optimiza desde el cálculo vigente, versiona y recalcula hasta cerrar"
     expect(nonCompliant, "El fixture debe arrancar en No cumple; si cambió el solver, ajusta el fixture.").toBe(true);
 
     await page.getByRole("tablist", { name: "Secciones del artefacto" }).getByRole("tab", { name: "Resultado" }).click();
+    await page.getByRole("button", { name: "Cómo hacer que cumpla" }).click(); // the ways to improve sit behind one button
     const optimize = page.getByTestId("optimize-until-compliant");
     await expect(optimize).toBeVisible();
     await optimize.click();

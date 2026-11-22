@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Cable, CircleDot, Download, Maximize2, Minus, Plus, Square, Undo2, Redo2, X, Image, Upload, SlidersHorizontal, ChevronLeft, ChevronRight } from "lucide-react";
 import TopologyOptimizerPanel from "./TopologyOptimizerPanel.jsx";
+import { IconPlan } from "../icons.jsx";
 import { awaitJob } from "../asyncJobs.js";
 
 const VIEW = { x: 70, y: 55, width: 860, height: 530 };
@@ -40,11 +41,12 @@ function conflictText(conflict) {
   }
 }
 
-function GroundingPlanDrawer({ projectId, projectName, conversation, token, focusOptimizer = 0, onShowResults }) {
+function GroundingPlanDrawer({ projectId, projectName, conversation, token, focusOptimizer = 0, onShowResults, onClose }) {
   const [plan, setPlan] = useState(emptyPlan);
   const [artifact, setArtifact] = useState(null);
   const [hydrated, setHydrated] = useState(false);
-  const [opened, setOpened] = useState(false);
+  const opened = true; // The editor is its own project view now, not a modal.
+  const saveNowRef = useRef(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(225);
   const [inspectorWidth, setInspectorWidth] = useState(245);
@@ -70,9 +72,6 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token, focu
   const planRef = useRef(plan);
   const snapshotRef = useRef(null);
   const saveTimerRef = useRef(null);
-  useEffect(() => {
-    if (focusOptimizer) setOpened(true);
-  }, [focusOptimizer]);
   useEffect(() => {
     if (!focusOptimizer || !opened || !optimizerPanelRef.current) return undefined;
     optimizerPanelRef.current.open = true;
@@ -323,7 +322,8 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token, focu
   useEffect(() => {
     if (!hydrated || !dirtyRef.current) return undefined;
     clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(async () => {
+    const run = async () => {
+      saveNowRef.current = null;
       const current = planRef.current;
       const base = snapshotRef.current || { schema_version: "1.0", soil_layers: [], fault: {}, conductor: {}, compliance: [] };
       const payload = { ...base, name: base.name || `${projectName} · Plano`, geometry: geometryFromPlan(current) };
@@ -344,7 +344,9 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token, focu
         setSaveState("error");
         setMessage(`No se pudo guardar el plano: ${error.message}`);
       }
-    }, 650);
+    };
+    saveNowRef.current = run;
+    saveTimerRef.current = setTimeout(run, 650);
     return () => clearTimeout(saveTimerRef.current);
   }, [plan, hydrated, projectId, projectName, token]);
   useEffect(() => {
@@ -376,7 +378,7 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token, focu
     function onKeyDown(event) {
       if (!opened || ["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName) || event.target.isContentEditable) return;
       const key = event.key.toLowerCase();
-      if (key === "escape") { event.preventDefault(); setOpened(false); setAnchor(null); setContextMenu(null); return; }
+      if (key === "escape") { event.preventDefault(); setAnchor(null); setContextMenu(null); setTool("select"); return; }
       if ((key === "delete" || key === "backspace") && selectedIds.length) { event.preventDefault(); deleteSelected(); return; }
       if (!(event.ctrlKey || event.metaKey)) return;
       if (key === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); }
@@ -600,6 +602,12 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token, focu
     setLayers((current) => ({ ...current, conductors: true }));
     setMessage(`${lines.length} conductores generados en «${area.label || "la zona"}» (retícula de ${plan.spacing} m, paso ${step} m). La malla anterior se reemplazó${orphans.length ? ` y se retiraron ${orphans.length} electrodos que quedaban fuera de la nueva malla` : ""}.`);
   }
+  async function close() {
+    // Leaving the view unmounts the editor: write a pending change now instead of dropping its timer.
+    clearTimeout(saveTimerRef.current);
+    if (dirtyRef.current && saveNowRef.current) await saveNowRef.current();
+    onClose?.();
+  }
   function exportPlan() {
     const data = { project_id: projectId, project_name: projectName, unit: "m", geometry: { length_m: plan.length, width_m: plan.width, discretization_m: plan.spacing, areas: plan.areas || [] }, components: plan.items, validation: issues };
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })); const link = document.createElement("a"); link.href = url; link.download = `plano-puesta-tierra-${projectId}.json`; link.click(); URL.revokeObjectURL(url);
@@ -643,13 +651,12 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token, focu
   const field = (label, key, value, min = 0, step = "any") => <label key={key}>{label}<input type="number" min={min} step={step} value={value} onChange={(event) => updateSelected(key, event.target.value)}/></label>;
   const selectedLabel = selectedItem?.type === "electrode" ? "Electrodo" : selectedItem?.type === "conductor" ? "Conductor" : selectedItem ? "Elemento constructivo" : "";
   return <>
-    <section className="panel ground-plan-launch"><div className="panel-heading"><div><Cable size={17}/><h2>Plano de puesta a tierra</h2></div><span className="muted-label">{plan.items.length} elementos</span></div><p>Dibuja la malla del proyecto, coloca electrodos y representa los elementos constructivos que no se pueden atravesar.</p><div className="ground-plan-launch-preview ground-plan-preview">{renderPreview()}{legend}</div><button className="button primary" onClick={() => setOpened(true)}><Maximize2 size={15}/>Abrir editor de plano</button></section>
-    {opened&&<div className="ground-plan-backdrop" onMouseDown={(e)=>{if(e.target===e.currentTarget){setOpened(false);setAnchor(null);}}}><section className="ground-plan-drawer" onClick={()=>contextMenu&&setContextMenu(null)} role="dialog" aria-modal="true" aria-label={`Dibujo de puesta a tierra: ${projectName}`}>
-      <header className="ground-plan-header"><div><div className="eyebrow">{projectName}</div><h2>Plano de puesta a tierra</h2></div><div className="ground-plan-header-actions"><button className="button" onClick={undo} disabled={!history.past.length} title="Deshacer (Ctrl/Cmd+Z)"><Undo2 size={15}/>Deshacer</button><button className="button" onClick={redo} disabled={!history.future.length} title="Rehacer (Ctrl/Cmd+Y)"><Redo2 size={15}/>Rehacer</button><button className="button" onClick={exportPlan}><Download size={15}/>Exportar plano</button><button className="icon-button" aria-label="Cerrar editor de plano" onClick={()=>{setOpened(false);setAnchor(null);}}><X size={18}/></button></div></header>
+    <section className="ground-plan-drawer ground-plan-page" onClick={()=>contextMenu&&setContextMenu(null)} aria-label={`Editor del plano de puesta a tierra: ${projectName}`}>
+      <header className="ground-plan-header"><div className="ground-plan-title"><button className="button" aria-label="Cerrar editor de plano" onClick={close}><ChevronLeft size={15}/>Volver al proyecto</button><div><div className="eyebrow">{projectName} · versión {artifact?.version ?? "nueva"}</div><h2><IconPlan size={18}/>Plano de puesta a tierra</h2></div></div><div className="ground-plan-header-actions"><button className="button" onClick={undo} disabled={!history.past.length} title="Deshacer (Ctrl/Cmd+Z)"><Undo2 size={15}/>Deshacer</button><button className="button" onClick={redo} disabled={!history.future.length} title="Rehacer (Ctrl/Cmd+Y)"><Redo2 size={15}/>Rehacer</button><button className="button" onClick={exportPlan}><Download size={15}/>Exportar plano</button></div></header>
       <div className={`ground-plan-body${resizingPane ? " resizing" : ""}`} style={{"--ground-plan-sidebar-width": sidebarCollapsed ? "42px" : `${sidebarWidth}px`, "--ground-plan-inspector-width": `${inspectorWidth}px`}}><aside className={`ground-plan-sidebar${sidebarCollapsed ? " collapsed" : ""}`}><div className="ground-plan-sidebar-heading">{!sidebarCollapsed && <h3>Paleta</h3>}<button className="ground-plan-pane-toggle" aria-label={sidebarCollapsed ? "Expandir panel izquierdo" : "Contraer panel izquierdo"} title={sidebarCollapsed ? "Expandir panel" : "Contraer panel"} onClick={()=>setSidebarCollapsed((collapsed)=>!collapsed)}>{sidebarCollapsed ? <ChevronRight size={16}/> : <ChevronLeft size={16}/>}</button></div>{!sidebarCollapsed && <div className="ground-plan-sidebar-content">{palette}{tool==="structure"&&<div className="ground-plan-fields"><label>Largo (m)<input type="number" min={plan.spacing} step={plan.spacing} value={obstacleWidth} onChange={(e)=>setObstacleWidth(e.target.value)}/></label><label>Ancho (m)<input type="number" min={plan.spacing} step={plan.spacing} value={obstacleHeight} onChange={(e)=>setObstacleHeight(e.target.value)}/></label></div>}
         {selectedIds.length>1&&<div className="ground-plan-multi-selection"><strong>{selectedIds.length} elementos seleccionados</strong><small>Arrastra uno para moverlos en pasos discretos.</small><button className="button ground-plan-delete" onClick={deleteSelected}>Eliminar seleccionados</button></div>}
         <details className="ground-plan-properties" open={propertiesOpen} onToggle={(event)=>setPropertiesOpen(event.currentTarget.open)}><summary>{selectedItem ? `Propiedades · ${selectedLabel}` : "Propiedades del elemento"}</summary>{selectedItem ? <div className="ground-plan-fields">{selectedItem.type === "conductor" ? <><strong>Punto inicial</strong>{field("X (m)","from.x",selectedItem.from.x,0,1)}{field("Y (m)","from.y",selectedItem.from.y,0,1)}<strong>Punto final</strong>{field("X (m)","to.x",selectedItem.to.x,0,1)}{field("Y (m)","to.y",selectedItem.to.y,0,1)}</> : <>{field("X (m)","x",selectedItem.x)}{field("Y (m)","y",selectedItem.y)}{selectedItem.type === "structure" && <><label>Etiqueta<input type="text" value={selectedItem.label || ""} placeholder="Elemento constructivo" onChange={(event)=>updateSelected("label",event.target.value)}/></label>{field("Largo (m)","width",selectedItem.width,plan.spacing,plan.spacing)}{field("Ancho (m)","height",selectedItem.height,plan.spacing,plan.spacing)}<small>Las dimensiones avanzan en pasos de {plan.spacing} m.</small></>}</>}<button className="button ground-plan-delete" onClick={deleteSelected}>Eliminar elemento</button></div> : <p>Selecciona un elemento en el plano o en la lista.</p>}</details>
-        <h3 className="ground-plan-section-title">Elementos ({plan.items.length})</h3><ul className="ground-plan-object-list">{plan.items.map((item,index)=><li key={item.id}><button className={selectedIds.includes(item.id)?"selected":""} onClick={()=>{setSelectedId(item.id);setSelectedIds([item.id]);setPropertiesOpen(true);setTool("select");}}><span>{item.type==="conductor"?"Conductor":item.type==="electrode"?"Electrodo":item.label||"Elemento constructivo"} {index+1}</span><small>{item.type==="electrode"?`${item.x.toFixed(2)}, ${item.y.toFixed(2)} m`:item.type==="conductor"?`${item.from.x}, ${item.from.y} → ${item.to.x}, ${item.to.y} m`:`${item.width.toFixed(1)} × ${item.height.toFixed(1)} m`}</small></button></li>)}</ul>
+        <h3 className="ground-plan-section-title">Elementos ({plan.items.length})</h3><ul className="ground-plan-object-list">{plan.items.map((item,index)=><li key={item.id}><button className={selectedIds.includes(item.id)?"selected":""} onClick={()=>{setSelectedId(item.id);setSelectedIds([item.id]);setPropertiesOpen(true);setTool("select");}}><span>{item.type==="conductor"?"Conductor":item.type==="electrode"?"Electrodo":item.label||"Elemento constructivo"} {index+1}</span><small>{item.type==="electrode"?`${item.x.toFixed(2)}, ${item.y.toFixed(2)} m`:item.type==="conductor"?`${+item.from.x.toFixed(2)}, ${+item.from.y.toFixed(2)} → ${+item.to.x.toFixed(2)}, ${+item.to.y.toFixed(2)} m`:`${item.width.toFixed(1)} × ${item.height.toFixed(1)} m`}</small></button></li>)}</ul>
         <h3 className="ground-plan-section-title">Terreno</h3><div className="ground-plan-fields"><label>Largo del terreno (m)<input type="number" min="1" step="any" value={plan.length} onChange={(e)=>setGeometry("length",e.target.value)}/></label><label>Ancho del terreno (m)<input type="number" min="1" step="any" value={plan.width} onChange={(e)=>setGeometry("width",e.target.value)}/></label><label>Discretización (m)<input type="number" min="0.1" step="any" value={plan.spacing} onChange={(e)=>setGeometry("spacing",e.target.value)}/></label><label>Paso de dibujo (m)<input type="number" min="0.05" max="10" step="any" value={step} onChange={(e)=>setGeometry("snap",e.target.value)}/></label></div>
         <h3 className="ground-plan-section-title">Zonas del terreno ({(plan.areas||[]).length})</h3><div className="ground-plan-zones">{(plan.areas||[]).map((area,index)=><fieldset key={index} className={`ground-plan-zone ${area.type}`}><div className="ground-plan-zone-head"><input aria-label="Nombre de la zona" value={area.label||""} onChange={(e)=>updateArea(index,"label",e.target.value)}/><button className="icon-button" title="Eliminar zona" onClick={()=>removeArea(index)}><X size={13}/></button></div><select aria-label="Tipo de zona" value={area.type} onChange={(e)=>updateArea(index,"type",e.target.value)}><option value="intervenible">Intervenible</option><option value="non_intervenible">No intervenible</option></select><label>Vértices (x,y en m; separados por punto y coma)<textarea defaultValue={areaPoints(area).map((p)=>`${p.x},${p.y}`).join("; ")} onBlur={(e)=>updateArea(index,"polygon_text",e.target.value)}/></label>{area.type==="intervenible"&&<button className="button primary" onClick={()=>generateAreaGrid(index)}>Generar malla aquí</button>}</fieldset>)}<div className="ground-plan-zone-actions"><button className="button" onClick={()=>addArea("intervenible")}><Plus size={13}/>Área intervenible</button><button className="button" onClick={()=>addArea("non_intervenible")}><Plus size={13}/>No intervenible</button></div><small>Las áreas intervenibles son espacio disponible: genera la malla en la que vayas a usar. Los edificios existentes se dibujan como elemento constructivo (B); la malla no puede atravesarlos.</small></div>
         <h3 className="ground-plan-section-title">Plano de fondo y CAD</h3><div className="ground-plan-fields"><label>Fondo<select value={backgroundFile} onChange={(e)=>setBackgroundFile(e.target.value)}><option value="">Selecciona imagen o PDF</option>{sourceFiles.filter((file)=>file.status === "available" && ["application/pdf","image/png","image/jpeg"].includes(file.mime_type)).map((file)=><option key={file.upload_id} value={file.upload_id}>{file.filename}</option>)}</select></label>{sourceFiles.find((file)=>file.upload_id === backgroundFile)?.mime_type === "application/pdf"&&<label>Página PDF<input type="number" min="1" step="1" value={backgroundPage} onChange={(e)=>setBackgroundPage(e.target.value)}/></label>}<button className="button" onClick={prepareBackground}><Image size={14}/>Calibrar con dos puntos</button><button className="button" onClick={proposePlanVision} disabled={visionBusy}>{visionBusy ? "Analizando plano…" : "Proponer obstáculos con IA"}</button>{calibrationMode&&<><label>Distancia real (m)<input type="number" min="0.001" step="any" value={calibrationDistance} onChange={(e)=>setCalibrationDistance(e.target.value)}/></label><small>{calibrationPoints.length}/2 puntos marcados. Haz clic sobre los extremos de una cota conocida.</small><button className="button primary" disabled={calibrationPoints.length !== 2} onClick={attachBackground}>Guardar escala</button></>}{plan.background&&<small>Escala guardada: {plan.background.scale_m_per_pixel} m/píxel{plan.background.source_page ? ` · página ${plan.background.source_page}` : ""}</small>}<label>DXF<select value={dxfFile} onChange={(e)=>setDxfFile(e.target.value)}><option value="">Selecciona un DXF</option>{sourceFiles.filter((file)=>file.status === "available" && file.mime_type === "application/dxf").map((file)=><option key={file.upload_id} value={file.upload_id}>{file.filename}</option>)}</select></label><button className="button" onClick={importDxf}><Upload size={14}/>Importar propuesta DXF</button>{visionProposal&&<div className="ground-plan-vision-proposal"><strong>Revisión de propuesta</strong><span>{visionProposal.structures?.length || 0} obstáculos detectados{visionProposal.source_page ? ` · página ${visionProposal.source_page}` : ""}</span>{visionProposal.warnings?.map((warning, index)=><small key={index}>{warning}</small>)}{visionProposal.structures?.length > 0&&<ul>{visionProposal.structures.map((item, index)=><li key={`${item.x}-${item.y}-${index}`}>{item.label || "Elemento constructivo"} · {item.width} × {item.height} m · ({item.x}, {item.y}) m</li>)}</ul>}<div><button className="button primary" onClick={acceptVisionProposal}>Aceptar propuesta editable</button><button className="button" onClick={()=>setVisionProposal(null)}>Descartar</button></div></div>}</div>
@@ -662,7 +669,7 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token, focu
         <p className="ground-plan-shortcuts">Ctrl/Cmd+Z deshacer · Ctrl/Cmd+Y rehacer</p></aside></div>
       {contextMenu&&<div className="ground-plan-context-menu" style={{left:contextMenu.x,top:contextMenu.y}} onClick={(event)=>event.stopPropagation()}><button disabled={!history.past.length} onClick={undo}><Undo2 size={14}/>Deshacer</button><button disabled={!history.future.length} onClick={redo}><Redo2 size={14}/>Rehacer</button><button onClick={()=>{activateTool("select");setContextMenu(null);}}><Maximize2 size={14}/>Seleccionar</button><details open={contextAddOpen} onMouseEnter={()=>setContextAddOpen(true)} onMouseLeave={()=>setContextAddOpen(false)}><summary onClick={(event)=>{event.preventDefault();setContextAddOpen(true);}}><Square size={14}/>Añadir</summary><div><button onClick={()=>{activateTool("conductor");setContextMenu(null);setContextAddOpen(false);}}><Cable size={14}/>Conductor</button><button disabled={selectedItem?.type === "electrode"} title={selectedItem?.type === "electrode" ? "Ya hay un electrodo seleccionado" : undefined} onClick={()=>{activateTool("electrode");setContextMenu(null);setContextAddOpen(false);}}><CircleDot size={14}/>Electrodo</button><button onClick={()=>{activateTool("structure");setContextMenu(null);setContextAddOpen(false);}}><Square size={14}/>Elemento constructivo</button></div></details></div>}
       <footer className="ground-plan-footer">La discretización define las celdas y los puntos de conexión. {saveState === "pending" ? "Guardando versión…" : saveState === "error" ? "Error de guardado" : artifact ? `Versión ${artifact.version} guardada` : "Plano pendiente de guardar"}<span>{issues.length?`${issues.length} conflictos`:"Sin conflictos"}</span></footer>
-    </section></div>}
+    </section>
   </>;
 }
 

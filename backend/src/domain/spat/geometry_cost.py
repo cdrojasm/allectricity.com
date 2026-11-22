@@ -49,7 +49,9 @@ def takeoff(source: GeometryGraph | dict, *, trench_width_m: float | None = None
         entry["length_m"] += length
     degree = graph.degree()
     # A connection is a place where conductors are joined to each other or to a rod.
-    connections = sum(1 for node, d in degree.items() if d >= 3) + len(graph.rods)
+    conductor_joints = sum(1 for node, d in degree.items() if d >= 3)   # crossings and T junctions between conductors
+    rod_joints = len(graph.rods)                                          # each rod is bonded to the grid once
+    connections = conductor_joints + rod_joints
     conductor_length = sum(conductor_by_material.values())
     burial = graph.site.burial_depth_m
     return {
@@ -57,6 +59,7 @@ def takeoff(source: GeometryGraph | dict, *, trench_width_m: float | None = None
         "conductor_length_total_m": round(conductor_length, 6),
         "rods": {m: {"count": int(v["count"]), "length_m": round(v["length_m"], 6)} for m, v in sorted(rods_by_material.items())},
         "connections": connections,
+        "connections_by_type": {"conductor_conductor": conductor_joints, "conductor_rod": rod_joints},
         "trench_length_m": round(conductor_length, 6),
         "burial_depth_m": burial,
         "excavation_m3": None if trench_width_m is None else round(conductor_length * trench_width_m * burial, 6),

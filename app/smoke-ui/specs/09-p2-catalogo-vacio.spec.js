@@ -39,8 +39,8 @@ test("P2-01: con el catálogo sin perfiles revisados, el optimizador no sugiere 
     expect(artifact.status, JSON.stringify(artifact.body)).toBe(201);
 
     await page.goto(`/project/${projectId}`);
-    await page.getByRole("tablist", { name: "Secciones del artefacto" }).getByRole("tab", { name: "Plano" }).click();
-    await page.getByRole("button", { name: "Abrir editor de plano" }).click();
+    await page.getByRole("tablist", { name: "Secciones del artefacto" }).getByRole("tab", { name: "Resumen" }).click();
+    await page.getByRole("button", { name: /^(Editar|Dibujar) plano$/ }).click();
     await page.getByText("Matherra · optimización matemática").click();
 
     // Ningún perfil ofrecido ni marcado por defecto, y la búsqueda dice por qué no puede empezar.

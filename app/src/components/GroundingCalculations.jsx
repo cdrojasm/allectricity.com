@@ -39,26 +39,13 @@ import {
   Zap,
 } from "lucide-react";
 import { MeasurementTemplates } from "./MeasurementTemplates.jsx";
+import { VerdictCallout } from "./ResultBlocks.jsx";
+import { HelpLabel } from "./HelpTip.jsx";
+
+const FIELD_HELP = { current_a: "fault_current", clearing_time_s: "clearing_time", surface_resistivity_ohm_m: "surface_resistivity", surface_thickness_m: "surface_thickness", body_weight_kg: "body_weight" };
+import { IconMeasurements, IconParameters, IconResult, IconSoil } from "../icons.jsx";
 import { awaitJob } from "../asyncJobs.js";
 
-const REQUIRED_DESIGN_FIELDS = [
-  "length_m",
-  "width_m",
-  "burial_depth_m",
-  "conductor_spacing_m",
-  "rods_count",
-  "rod_length_m",
-  "current_a",
-  "clearing_time_s",
-  "surface_resistivity_ohm_m",
-  "surface_thickness_m",
-  "body_weight_kg",
-  "conductor_section_mm2",
-  "conductor_maximum_temperature_c",
-  "thermal_duration_s",
-  "ambient_temperature_c",
-  "split_factor",
-];
 
 // Fallback until the backend catalog (/api/v1/perfiles-termicos) loads: the original IEEE 80-2013 choices.
 const FALLBACK_THERMAL_PROFILES = [
@@ -96,21 +83,34 @@ const VOLTAGE_LEVEL_LABELS = {
 const quantityValue = (quantity) =>
   quantity !== null && typeof quantity === "object" ? quantity.value : quantity;
 
-function isDesignComplete(design) {
-  const numericFieldsPresent = REQUIRED_DESIGN_FIELDS.every(
-    (key) =>
-      design[key] !== "" &&
-      design[key] != null &&
-      Number.isFinite(Number(design[key])) &&
-      Number(design[key]) > 0,
-  );
-  return (
-    numericFieldsPresent &&
-    Boolean(design.conductor_material_id && design.conductor_joint_type) &&
-    Number(design.body_weight_kg) >= 50 &&
-    Number(design.body_weight_kg) <= 70 &&
-    Number(design.split_factor) <= 1
-  );
+// Fields the safety form needs, said in engineering words and with where they are filled in.
+const DESIGN_FIELD_LABELS = {
+  length_m: ["Largo de la malla", "plano"], width_m: ["Ancho de la malla", "plano"], burial_depth_m: ["Profundidad de la malla", "plano"],
+  conductor_spacing_m: ["Retícula de la malla", "plano"], rod_length_m: ["Longitud de las varillas", "plano"],
+  current_a: ["Corriente de falla", "falla"], clearing_time_s: ["Tiempo de despeje", "falla"],
+  surface_resistivity_ohm_m: ["Resistividad superficial", "falla"], surface_thickness_m: ["Espesor superficial", "falla"],
+  body_weight_kg: ["Peso corporal", "falla"], conductor_section_mm2: ["Sección del conductor", "conductor"],
+  conductor_maximum_temperature_c: ["Temperatura máxima", "conductor"], thermal_duration_s: ["Duración térmica", "conductor"],
+  ambient_temperature_c: ["Temperatura ambiente", "conductor"],
+};
+const positive = (value) => value !== "" && value != null && Number.isFinite(Number(value)) && Number(value) > 0;
+
+// Everything that keeps «Calcular» disabled, so the form can say it instead of graying the button out.
+function designGaps(design, { drawnConductors = false } = {}) {
+  const gaps = [];
+  for (const [key, [label, where]] of Object.entries(DESIGN_FIELD_LABELS)) {
+    if (key === "conductor_spacing_m" && drawnConductors) continue;          // a drawn grid has no single spacing
+    if (key === "rod_length_m" && !(Number(design.rods_count) > 0)) continue; // no rods, no rod length
+    if (!positive(design[key])) gaps.push({ key, text: `${label}: falta`, where });
+  }
+  if (design.rods_count === "" || design.rods_count == null || !(Number(design.rods_count) >= 0)) gaps.push({ key: "rods_count", text: "Número de varillas: falta (puede ser 0)", where: "plano" });
+  if (!design.conductor_material_id) gaps.push({ key: "conductor_material_id", text: "Material del conductor: elige uno", where: "conductor" });
+  if (!design.conductor_joint_type) gaps.push({ key: "conductor_joint_type", text: "Tipo de unión: elige uno", where: "conductor" });
+  if (positive(design.body_weight_kg) && (Number(design.body_weight_kg) < 50 || Number(design.body_weight_kg) > 70))
+    gaps.push({ key: "body_weight_kg", text: "Peso corporal: IEEE 80 solo admite valores entre 50 y 70 kg", where: "falla" });
+  if (design.split_factor !== "" && design.split_factor != null && !(Number(design.split_factor) > 0 && Number(design.split_factor) <= 1))
+    gaps.push({ key: "split_factor", text: "Factor de reparto S_f: debe estar entre 0 y 1 (o déjalo vacío)", where: "avanzados" });
+  return gaps;
 }
 
 function SoilFitChart({ readings, fit }) {
@@ -186,75 +186,78 @@ function SoilFitChart({ readings, fit }) {
   );
 }
 
-function SurfacePotentialMap({ field }) {
-  if (!field?.values_v?.length || !field.nx || !field.ny) return null;
-  const values = field.values_v;
-  const min = values.reduce((a, b) => Math.min(a, b), Infinity),
-    max = values.reduce((a, b) => Math.max(a, b), -Infinity);
-  const color = (value) => {
-    const t = (value - min) / (max - min || 1);
-    const hue = 220 - 220 * t;
-    return `hsl(${hue} 78% 52%)`;
+// Index window of the raster: the whole terrain, or the grid outline with a margin ("detail").
+function potentialWindow(field, view) {
+  const all = { i0: 0, i1: field.nx - 1, j0: 0, j1: field.ny - 1 };
+  if (view !== "detail" || !field.grid_width_m) return all;
+  const dx = field.spacing_m;
+  const pad = Math.max(1, 0.25 * Math.max(field.grid_width_m, field.grid_height_m));
+  const clamp = (value, top) => Math.max(0, Math.min(top, value));
+  return {
+    i0: clamp(Math.floor(((field.grid_x_m || 0) - pad) / dx), field.nx - 1),
+    i1: clamp(Math.ceil(((field.grid_x_m || 0) + field.grid_width_m + pad) / dx), field.nx - 1),
+    j0: clamp(Math.floor(((field.grid_y_m || 0) - pad) / dx), field.ny - 1),
+    j1: clamp(Math.ceil(((field.grid_y_m || 0) + field.grid_height_m + pad) / dx), field.ny - 1),
   };
-  const dx = field.spacing_m,
-    width = field.nx * dx,
-    height = field.ny * dx;
+}
+
+// Surface potential heat map. A terrain taller than wide is turned 90° to read in landscape; «Zona de la malla»
+// crops to the grid and rescales the colours to that area, where the contact voltage is evaluated.
+function SurfacePotentialMap({ field, action = null, note = null, view: fixedView = null }) {
+  const [chosen, setChosen] = useState("general");
+  if (!field?.values_v?.length || !field.nx || !field.ny) return null;
+  const general = potentialWindow(field, "general"), detail = potentialWindow(field, "detail");
+  const worthDetail = (detail.i1 - detail.i0 + 1) * (detail.j1 - detail.j0 + 1) < 0.6 * field.nx * field.ny;
+  const view = fixedView || (worthDetail ? chosen : "general");
+  const win = view === "detail" ? detail : general;
+  const dx = field.spacing_m;
+  const cols = win.i1 - win.i0 + 1, rows = win.j1 - win.j0 + 1;
+  const rotated = rows > cols * 1.1;
+  let min = Infinity, max = -Infinity;
+  for (let j = win.j0; j <= win.j1; j += 1) for (let i = win.i0; i <= win.i1; i += 1) { const v = field.values_v[j * field.nx + i]; if (v < min) min = v; if (v > max) max = v; }
+  const color = (value) => `hsl(${220 - 220 * ((value - min) / (max - min || 1))} 78% 52%)`;
+  const width = (rotated ? rows : cols) * dx, height = (rotated ? cols : rows) * dx;
+  // Cell (i, j) → top-left corner on screen; plan y grows upward.
+  const cell = (i, j) => rotated ? [(j - win.j0) * dx, (i - win.i0) * dx] : [(i - win.i0) * dx, (win.j1 - j) * dx];
+  const cells = [];
+  for (let j = win.j0; j <= win.j1; j += 1) for (let i = win.i0; i <= win.i1; i += 1) { const [x, y] = cell(i, j); cells.push(<rect key={`${i}-${j}`} x={x} y={y} width={dx + 0.01} height={dx + 0.01} fill={color(field.values_v[j * field.nx + i])}/>); }
+  // Grid outline in raster coordinates (metres from the raster origin).
+  const gx0 = field.grid_x_m || 0, gy0 = field.grid_y_m || 0, gx1 = gx0 + (field.grid_width_m || cols * dx), gy1 = gy0 + (field.grid_height_m || rows * dx);
+  const outline = rotated
+    ? { x: gy0 - win.j0 * dx, y: gx0 - win.i0 * dx, w: gy1 - gy0, h: gx1 - gx0 }
+    : { x: gx0 - win.i0 * dx, y: (win.j1 + 1) * dx - gy1, w: gx1 - gx0, h: gy1 - gy0 };
+  const volts = (value) => value.toLocaleString("es-CO", { maximumFractionDigits: 1 });
   return (
-    <section
-      className="surface-map-panel"
-      aria-label="Mapa de potencial superficial"
-    >
+    <section className="surface-map-panel" aria-label="Mapa de potencial superficial">
       <div className="surface-map-heading">
-        <strong>Potencial superficial</strong>
-        <span>
-          {field.nx} × {field.ny} puntos · V
-        </span>
+        <div>
+          <strong>Potencial en la superficie{view === "detail" ? " · zona de la malla" : ""}</strong>
+          <span>Tensión del suelo respecto a tierra remota durante la falla · {cols} × {rows} puntos{rotated ? " · girado 90°" : ""}</span>
+        </div>
+        <div className="surface-map-tools">
+          {worthDetail && !fixedView && <div className="app-segmented" role="group" aria-label="Zona del mapa">
+            <button type="button" className={view === "general" ? "active" : ""} aria-pressed={view === "general"} onClick={() => setChosen("general")}>Terreno completo</button>
+            <button type="button" className={view === "detail" ? "active" : ""} aria-pressed={view === "detail"} onClick={() => setChosen("detail")}>Zona de la malla</button>
+          </div>}
+          {action}
+        </div>
       </div>
-      <svg
-        className="surface-map"
-        viewBox={`0 0 ${width} ${height}`}
-        role="img"
-        aria-label={`Mapa de potencial superficial, de ${min.toFixed(1)} a ${max.toFixed(1)} voltios`}
-        preserveAspectRatio="none"
-      >
-        {values.map((value, index) => {
-          const col = index % field.nx;
-          const row = Math.floor(index / field.nx);
-          return (
-            <rect
-              key={index}
-              x={col * dx}
-              y={(field.ny - 1 - row) * dx}
-              width={dx + 0.01}
-              height={dx + 0.01}
-              fill={color(value)}
-            />
-          );
-        })}
-        <rect
-          x={field.grid_x_m || 0}
-          y={height - (field.grid_y_m || 0) - (field.grid_height_m || 0)}
-          width={field.grid_width_m || width}
-          height={field.grid_height_m || height}
-          fill="none"
-          stroke="#172a25"
-          strokeWidth={Math.max(0.12, dx * 0.035)}
-          strokeDasharray={`${dx * 0.25} ${dx * 0.16}`}
-        />
+      <svg className="surface-map" viewBox={`0 0 ${width} ${height}`} role="img" style={{ aspectRatio: `${width} / ${height}` }}
+        aria-label={`Mapa de potencial superficial${view === "detail" ? " en la zona de la malla" : ""}, de ${min.toFixed(1)} a ${max.toFixed(1)} voltios${rotated ? ", girado 90°" : ""}`}>
+        {cells}
+        <rect x={outline.x} y={outline.y} width={outline.w} height={outline.h} fill="none" stroke="#172a25" strokeWidth={Math.max(0.12, dx * 0.035)} strokeDasharray={`${dx * 0.25} ${dx * 0.16}`}/>
       </svg>
       <div className="surface-map-scale">
-        <span>
-          {min.toLocaleString("es-CO", { maximumFractionDigits: 1 })} V
-        </span>
+        <span>{volts(min)} V</span>
         <i />
-        <span>
-          {max.toLocaleString("es-CO", { maximumFractionDigits: 1 })} V
-        </span>
+        <span>{volts(max)} V</span>
       </div>
-      <small>
-        El contorno punteado marca el perímetro de la malla; el color representa
-        la tensión calculada en la superficie.
-      </small>
+      <ul className="surface-map-notes">
+        <li><i className="dashed" />El contorno punteado es el perímetro de la malla.</li>
+        <li><i className="gradient" />Del azul (menor tensión) al rojo (mayor tensión){view === "detail" ? "; la escala se ajusta a esta zona" : ""}.</li>
+        {rotated && <li><i className="dot" />El terreno es más largo que ancho: se muestra girado 90° (el eje Y queda horizontal).</li>}
+        {note && <li><i className="dot" />{note}</li>}
+      </ul>
     </section>
   );
 }
@@ -479,7 +482,9 @@ function GroundingCalculations({
         (index === soilLayers.length - 1 || Number(layer.depth_m) > 0),
     ),
   );
-  const designReady = isDesignComplete(design);
+  const drawnConductors = Boolean(baseArtifact?.snapshot?.geometry?.conductors?.length);
+  const gaps = designGaps(design, { drawnConductors });
+  const designReady = gaps.length === 0;
   const validMeasurementCount = readings.filter(
     (reading) =>
       Number(reading.spacing_m) > 0 &&
@@ -661,9 +666,9 @@ function GroundingCalculations({
             length_m: Number(design.length_m),
             width_m: Number(design.width_m),
             burial_depth_m: Number(design.burial_depth_m),
-            conductor_spacing_m: Number(design.conductor_spacing_m),
+            ...(design.conductor_spacing_m !== "" ? { conductor_spacing_m: Number(design.conductor_spacing_m) } : {}),
             rods_count: Number(design.rods_count),
-            rod_length_m: Number(design.rod_length_m),
+            ...(design.rod_length_m !== "" ? { rod_length_m: Number(design.rod_length_m) } : {}),
           },
           soil_layers: soilLayers.map((layer) => ({
             ...layer,
@@ -737,10 +742,11 @@ function GroundingCalculations({
       const calculationParameters = {
         surface_spacing_m: 0.5,
         safety_standards: [standard],
-        fault_split: {
+        // Optional: without S_f the whole fault current enters the grid (conservative).
+        ...(design.split_factor !== "" && design.split_factor != null ? { fault_split: {
           split_factor: Number(design.split_factor),
           split_factor_origin: "Factor S_f ingresado por el usuario",
-        },
+        } } : {}),
       };
       if (design.x_over_r !== "")
         calculationParameters.x_over_r = Number(design.x_over_r);
@@ -809,7 +815,7 @@ function GroundingCalculations({
           <section className="panel calc-panel">
             <div className="panel-heading">
               <div>
-                <FileSpreadsheet size={17} />
+                <IconMeasurements size={17} />
                 <h2>Resistividad del terreno</h2>
               </div>
               <span className="count">{readings.length} puntos</span>
@@ -1161,11 +1167,11 @@ function GroundingCalculations({
         <section className="panel calc-panel">
           <div className="panel-heading">
             <div>
-              <Layers size={17} />
+              <IconSoil size={17} />
               <h2>Modelo de suelo</h2>
             </div>
             {soilLayers?.length > 0 && (
-              <span className="muted-label">{soilLayers.length} capas</span>
+              <span className="muted-label">{soilLayers.length} {soilLayers.length === 1 ? "capa" : "capas"}</span>
             )}
           </div>
           <p className="calc-help">
@@ -1189,7 +1195,7 @@ function GroundingCalculations({
           {soilSource === "measurements" ? (
             <>
               <label className="layer-count-control">
-                Capas que quieres ajustar
+                <HelpLabel text="Capas que quieres ajustar" topic="soil_layers_fit"/>
                 <select
                   value={selectedLayerCount}
                   onChange={(e) => {
@@ -1211,15 +1217,17 @@ function GroundingCalculations({
                 {selectedLayerCount * 2}. Agrega mediciones en la pestaña
                 Mediciones. Wenner y Schlumberger están disponibles.
               </p>
-              <button
-                className="button primary"
-                disabled={busy || !canFitMeasurements}
-                onClick={fitSoil}
-              >
-                {busy
-                  ? "Ajustando…"
-                  : `Ajustar ${selectedLayerCount} capas con las mediciones`}
-              </button>
+              <div className="calc-actions">
+                <button
+                  className="button primary"
+                  disabled={busy || !canFitMeasurements}
+                  onClick={fitSoil}
+                >
+                  {busy
+                    ? "Ajustando…"
+                    : `Ajustar ${selectedLayerCount} capas con las mediciones`}
+                </button>
+              </div>
               {fit && (
                 <>
                   <div className="soil-fit-result">
@@ -1264,7 +1272,7 @@ function GroundingCalculations({
                           </select>
                         </label>
                         <label>
-                          Resistividad (Ω·m)
+                          <HelpLabel text="Resistividad (Ω·m)" topic="soil_resistivity"/>
                           <input
                             type="number"
                             min="0.01"
@@ -1334,7 +1342,7 @@ function GroundingCalculations({
                       </select>
                     </label>
                     <label>
-                      Resistividad (Ω·m)
+                      <HelpLabel text="Resistividad (Ω·m)" topic="soil_resistivity"/>
                       <input
                         type="number"
                         min="0.01"
@@ -1428,7 +1436,7 @@ function GroundingCalculations({
         <section className="panel calc-panel safety-panel">
           <div className="panel-heading">
             <div>
-              <ShieldCheck size={17} />
+              <IconParameters size={17} />
               <h2>Parámetros eléctricos</h2>
             </div>
             <span className="muted-label">IEEE 80-2013</span>
@@ -1440,7 +1448,7 @@ function GroundingCalculations({
           </p>
           <div className="safety-standard">
             <label>
-              Norma de seguridad
+              <HelpLabel text="Norma de seguridad" topic="standards"/>
               <select
                 value={standard}
                 onChange={(e) => setStandard(e.target.value)}
@@ -1468,7 +1476,7 @@ function GroundingCalculations({
                 ["Tiempo de despeje (s)", "clearing_time_s"],
               ].map(([label, key]) => (
                 <label key={key}>
-                  {label}
+                  <HelpLabel text={label} topic={FIELD_HELP[key]}/>
                   <input
                     type="number"
                     min="0.01"
@@ -1500,7 +1508,7 @@ function GroundingCalculations({
                 ["Peso corporal (kg)", "body_weight_kg"],
               ].map(([label, key]) => (
                 <label key={key}>
-                  {label}
+                  <HelpLabel text={label} topic={FIELD_HELP[key]}/>
                   <input
                     type="number"
                     min={key === "body_weight_kg" ? "50" : "0.01"}
@@ -1528,7 +1536,7 @@ function GroundingCalculations({
             </p>
             <div className="calc-form-grid">
               <label>
-                Norma de dimensionamiento
+                <HelpLabel text="Norma de dimensionamiento" topic="thermal_standard"/>
                 <select
                   value={design.conductor_thermal_profile}
                   onChange={(e) =>
@@ -1544,7 +1552,7 @@ function GroundingCalculations({
               </label>
               {thermalProfile.modes.length > 1 && (
                 <label>
-                  Nivel de tensión
+                  <HelpLabel text="Nivel de tensión" topic="voltage_level"/>
                   <select
                     value={thermalMode.voltage_level}
                     onChange={(e) =>
@@ -1560,7 +1568,7 @@ function GroundingCalculations({
                 </label>
               )}
               <label>
-                Material
+                <HelpLabel text="Material" topic="conductor_material"/>
                 <select
                   value={
                     design.conductor_material_id === "copper_clad_rod_20" &&
@@ -1583,7 +1591,7 @@ function GroundingCalculations({
                 </select>
               </label>
               <label>
-                Unión
+                <HelpLabel text="Unión" topic="joint_type"/>
                 <select
                   value={design.conductor_joint_type}
                   onChange={(e) =>
@@ -1600,7 +1608,7 @@ function GroundingCalculations({
                 </select>
               </label>
               <label>
-                Sección elegida (mm²)
+                <HelpLabel text="Sección elegida (mm²)" topic="conductor_section"/>
                 <input
                   type="number"
                   min="0.01"
@@ -1615,9 +1623,7 @@ function GroundingCalculations({
                 />
               </label>
               <label>
-                {thermalInitialFinal
-                  ? "Temperatura final θf (°C)"
-                  : "Temperatura máxima Tₘ (°C)"}
+                <HelpLabel text={thermalInitialFinal ? "Temperatura final θf (°C)" : "Temperatura máxima Tₘ (°C)"} topic="max_temperature"/>
                 <input
                   type="number"
                   min="-50"
@@ -1633,7 +1639,7 @@ function GroundingCalculations({
                 />
               </label>
               <label>
-                Duración térmica t꜀ (s)
+                <HelpLabel text="Duración térmica t꜀ (s)" topic="thermal_duration"/>
                 <input
                   type="number"
                   min="0.001"
@@ -1646,9 +1652,7 @@ function GroundingCalculations({
                 />
               </label>
               <label>
-                {thermalInitialFinal
-                  ? "Temperatura inicial θi (°C)"
-                  : "Temperatura ambiente Tₐ (°C)"}
+                <HelpLabel text={thermalInitialFinal ? "Temperatura inicial θi (°C)" : "Temperatura ambiente Tₐ (°C)"} topic="ambient_temperature"/>
                 <input
                   type="number"
                   min="-50"
@@ -1683,7 +1687,7 @@ function GroundingCalculations({
             </p>
             <div className="calc-form-grid">
               <label>
-                Factor de reparto S<sub>f</sub> (0–1)
+                <HelpLabel text={<>Factor de reparto S<sub>f</sub> (0–1)</>} topic="split_factor"/>
                 <input
                   type="number"
                   min="0.001"
@@ -1699,7 +1703,7 @@ function GroundingCalculations({
                 </small>
               </label>
               <label>
-                Relación X/R (opcional)
+                <HelpLabel text="Relación X/R (opcional)" topic="x_over_r"/>
                 <input
                   type="number"
                   min="0"
@@ -1717,64 +1721,50 @@ function GroundingCalculations({
             </div>
           </details>
 
+          {(!soilReady || !designReady || durationExceeded) && (
+            <div className="missing-inputs calc-missing" data-testid="calc-missing">
+              <div className="missing-inputs-head"><div><strong>Para calcular falta</strong><p>El botón se habilita cuando completes esto.</p></div></div>
+              <ul>
+                {!soilReady && <li><span className="missing-dot"/><div><strong>Modelo de suelo</strong><small>Define las capas en la pestaña Suelo: ajustándolas con mediciones o por materiales.</small></div></li>}
+                {gaps.map((gap) => <li key={gap.key}><span className="missing-dot"/><div><strong>{gap.text}</strong><small>{{ plano: "Viene del plano de la malla (Resumen › Editar plano).", falla: "En «Falla» o «Seguridad de las personas», arriba en este formulario.", conductor: "En «Conductor de puesta a tierra».", avanzados: "En «Parámetros avanzados»." }[gap.where]}</small></div></li>)}
+                {durationExceeded && <li><span className="missing-dot"/><div><strong>Duración térmica fuera del rango de la norma</strong><small>Redúcela al máximo que admite la norma elegida.</small></div></li>}
+              </ul>
+            </div>
+          )}
           <button
             className="button primary calc-run"
             disabled={!soilReady || !designReady || durationExceeded || busy}
             onClick={calculate}
           >
-            <Activity size={15} />
+            <IconResult size={15} />
             {busy ? "Calculando…" : "Calcular tensiones y sección térmica"}
           </button>
           {calculation?.result && (
-            <div className="soil-fit-result">
-              <div className="fit-title">
-                {calculation.result.safety?.[0]?.status ||
-                  "Resultado disponible"}
-              </div>
-              <div className="result-metrics">
-                <span>
-                  <small>Tensión de contacto</small>
-                  <strong>{num(quantityValue(calculation.result.max_touch_v))} V</strong>
-                </span>
-                <span>
-                  <small>Tensión de paso</small>
-                  <strong>{num(quantityValue(calculation.result.max_step_v))} V</strong>
-                </span>
-                <span>
-                  <small>GPR</small>
-                  <strong>{num(calculation.result.gpr_v)} V</strong>
-                </span>
-                <span>
-                  <small>Sección térmica mínima</small>
-                  <strong>
-                    {num(
-                      calculation.result.conductor_thermal.minimum_section_mm2,
-                      2,
-                    )}{" "}
-                    mm²
-                  </strong>
-                </span>
-              </div>
-              <p>
-                Sección elegida:{" "}
-                {num(
-                  calculation.result.conductor_thermal.selected_section_mm2,
-                  2,
-                )}{" "}
-                mm² · margen{" "}
-                {num(calculation.result.conductor_thermal.margin_mm2, 2)} mm² (
-                {num(calculation.result.conductor_thermal.margin_percent, 1)} %)
-                · sección estándar sugerida{" "}
-                {calculation.result.conductor_thermal
-                  .suggested_standard_section_mm2 ??
-                  "supera la tabla orientativa"}{" "}
-                mm² · norma {calculation.result.conductor_thermal.profile}.
-              </p>
-              {calculation.result.conductor_thermal.warnings?.map((w) => (
-                <small className="calc-warning" role="note" key={w}>
-                  Conductor: {w}
-                </small>
-              ))}
+            <div className="calc-verdict">
+              <VerdictCallout
+                result={calculation.result}
+                footer={
+                  <div className="verdict-callout-foot">
+                    <p>
+                      Sección elegida {num(calculation.result.conductor_thermal.selected_section_mm2, 2)} mm² ·
+                      sección estándar sugerida{" "}
+                      {calculation.result.conductor_thermal.suggested_standard_section_mm2 != null
+                        ? `${calculation.result.conductor_thermal.suggested_standard_section_mm2} mm²`
+                        : "fuera de la tabla orientativa"}{" "}
+                      · norma {calculation.result.conductor_thermal.profile}.
+                    </p>
+                    <p>
+                      Este es un cálculo rápido con los parámetros del formulario. Para ver el mapa de
+                      potencial y las formas de mejorar el diseño, abre la pestaña Resultado.
+                    </p>
+                    {calculation.result.conductor_thermal.warnings?.map((w) => (
+                      <small className="calc-warning" role="note" key={w}>
+                        Conductor: {w}
+                      </small>
+                    ))}
+                  </div>
+                }
+              />
             </div>
           )}
         </section>

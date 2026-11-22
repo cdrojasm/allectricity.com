@@ -17,6 +17,34 @@ if (/^\/app(\/|$)/.test(window.location.pathname)) {
   window.history.replaceState({}, "", `${window.location.pathname.replace(/^\/app/, "") || "/"}${window.location.search}${window.location.hash}`);
 }
 
+const roleLabels = { super_admin: "Administrador", user_admin: "Administrador de usuarios", designer: "Diseñador", viewer: "Solo lectura" };
+
+// Account menu under the avatar: it never signs out on a single click.
+function AccountMenu({ user, onHome, onPlans, onLogout }) {
+  const [open, setOpen] = useState(false);
+  const box = React.useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointer = (event) => { if (!box.current?.contains(event.target)) setOpen(false); };
+    const onKey = (event) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("pointerdown", onPointer); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+  const initials = `${user.first_name?.[0] || "U"}${user.last_name?.[0] || ""}`.toUpperCase();
+  const name = [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email;
+  const run = (action) => () => { setOpen(false); action(); };
+  return <div className="account-menu" ref={box}>
+    <button className="avatar" aria-haspopup="menu" aria-expanded={open} aria-label={`Cuenta de ${name}`} onClick={() => setOpen((value) => !value)}>{initials}</button>
+    {open && <div className="account-menu-popover" role="menu" aria-label="Cuenta">
+      <div className="account-menu-user"><span className="avatar static">{initials}</span><div><strong>{name}</strong><small>{user.email}</small><small>{(user.roles || []).map((role) => roleLabels[role] || role).join(", ")}</small></div></div>
+      <button role="menuitem" onClick={run(onHome)}><LayoutGrid size={15} />Inicio</button>
+      <button role="menuitem" onClick={run(onPlans)}><CreditCard size={15} />Ir a mi plan</button>
+      <button role="menuitem" className="danger" onClick={run(onLogout)}><LogOut size={15} />Cerrar sesión</button>
+    </div>}
+  </div>;
+}
+
 function App() {
   const publicStudy = window.location.pathname.match(/^\/e\/([^/]+)\/?$/);
   const resetPage = /^\/reset-password\/?$/.test(window.location.pathname);
@@ -189,7 +217,7 @@ function App() {
         </div>
         <div className="rail-bottom">
           <IconButton title="Ayuda del espacio" onClick={() => setNotice("Abre un proyecto para revisar sus archivos, mediciones, plano y seguridad.")}><CircleHelp size={20} /></IconButton>
-          <button className="avatar" title={`${user.email} · ${user.roles.join(", ")}. Cerrar sesión`} onClick={logout}>{`${user.first_name?.[0] || "U"}${user.last_name?.[0] || ""}`.toUpperCase()}</button>
+          <AccountMenu user={user} onHome={showDashboard} onPlans={showPlans} onLogout={logout} />
         </div>
       </nav>
       {tab === "users" && canManageUsers ? <UsersAdminPage token={token} onNotice={setNotice} /> : tab === "plans" ? <BillingPage token={token} user={user} onNotice={setNotice} /> : tab === "projects" ? <ProjectsPage token={token} onNotice={setNotice} onOpen={openProject} /> : tab === "catalog" ? <MaterialCatalogSuite token={token} userId={user.id} initialProjectId={catalogProjectId} onNotice={setNotice} /> : activeProject ? <ProjectChatWorkspace onOpenCatalog={showCatalog} project={activeProject} token={token} userId={user.id} onBack={showProjects} onNotice={setNotice} /> : <DashboardPage token={token} user={user} lastVisit={lastVisit} onOpen={openProject} onShowProjects={showProjects} />}

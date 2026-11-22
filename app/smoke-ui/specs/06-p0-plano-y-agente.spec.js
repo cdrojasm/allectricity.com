@@ -79,7 +79,7 @@ test.describe.serial("flujos P0: plano y agente", () => {
     await page?.context().close();
   });
 
-  test("P3: abre la retícula paramétrica y las varillas en Resumen y Plano", async () => {
+  test("P3: abre la retícula paramétrica y las varillas en Resumen y en el editor de plano", async () => {
     const state = await api(page, `/api/v1/conversations/${seed.conversationId}/agent-state`, {
       method: "PUT", body: JSON.stringify({ artifact_id: seed.artifactId }),
     });
@@ -90,14 +90,10 @@ test.describe.serial("flujos P0: plano y agente", () => {
     await expect(page.locator('.agent-grid-svg line[stroke="#2563c9"]')).toHaveCount(15);
     await expect(page.locator(".agent-grid-svg circle")).toHaveCount(8);
 
-    await tabs.getByRole("tab", { name: "Plano" }).click();
-    const launchPreview = page.locator(".ground-plan-launch-preview");
-    await expect(launchPreview.locator(".ground-plan-preview-conductor")).toHaveCount(15);
-    await expect(launchPreview.locator(".ground-plan-preview-electrode")).toHaveCount(8);
-    await expect(page.getByText("23 elementos")).toBeVisible();
-
-    await page.getByRole("button", { name: "Abrir editor de plano" }).click();
-    const dialog = page.getByRole("dialog", { name: /Dibujo de puesta a tierra/ });
+    // The plan editor is its own project view, opened from Resumen.
+    await page.getByRole("button", { name: "Editar plano" }).click();
+    const dialog = page.getByRole("region", { name: /Editor del plano de puesta a tierra/ });
+    await expect(dialog.getByText("Elementos (23)")).toBeVisible();
     await expect(dialog.locator(".ground-plan-preview-conductor")).toHaveCount(15);
     await expect(dialog.locator(".ground-plan-preview-electrode")).toHaveCount(8);
     await dialog.locator("g[data-item-id]").nth(7).click({ force: true });
@@ -116,8 +112,8 @@ test.describe.serial("flujos P0: plano y agente", () => {
     }));
     expect(versions.body[1].snapshot.geometry.conductors).toEqual([]); // la versión original no se muta
     await dialog.getByRole("button", { name: "Cerrar editor de plano" }).click();
-    await page.getByRole("button", { name: "Abrir editor de plano" }).click();
-    const reopened = page.getByRole("dialog", { name: /Dibujo de puesta a tierra/ });
+    await page.getByRole("button", { name: "Editar plano" }).click();
+    const reopened = page.getByRole("region", { name: /Editor del plano de puesta a tierra/ });
     await expect(reopened.locator(".ground-plan-preview-conductor")).toHaveCount(15);
     await expect(reopened.locator(".ground-plan-preview-electrode")).toHaveCount(8);
     expect((await api(page, `/api/v1/projects/${seed.projectId}/artefactos-diseno-tierras/${seed.artifactId}/versions`)).body.length).toBe(2);
@@ -131,12 +127,9 @@ test.describe.serial("flujos P0: plano y agente", () => {
       });
       expect(state.status).toBe(200);
       await page.goto(`/project/${seed.projectId}`);
-      await page.getByRole("tablist", { name: "Secciones del artefacto" }).getByRole("tab", { name: "Plano" }).click();
-      const preview = page.locator(".ground-plan-launch-preview");
-      await expect(preview.locator(".ground-plan-preview-conductor")).toHaveCount(15);
-      await expect(preview.locator(".ground-plan-preview-electrode")).toHaveCount(8);
-      await page.getByRole("button", { name: "Abrir editor de plano" }).click();
-      const dialog = page.getByRole("dialog", { name: /Dibujo de puesta a tierra/ });
+      await page.getByRole("tablist", { name: "Secciones del artefacto" }).getByRole("tab", { name: "Resumen" }).click();
+      await page.getByRole("button", { name: "Editar plano" }).click();
+      const dialog = page.getByRole("region", { name: /Editor del plano de puesta a tierra/ });
       await expect(dialog.locator(".ground-plan-preview-conductor")).toHaveCount(15);
       await expect(dialog.locator(".ground-plan-preview-electrode")).toHaveCount(8);
       await dialog.getByRole("button", { name: "Cerrar editor de plano" }).click();

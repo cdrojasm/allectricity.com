@@ -42,7 +42,8 @@ const LOGOUT_ROLE = ROLES[0];
 test(`login y cierre de sesión reales (${LOGOUT_ROLE})`, async ({ page }) => {
   test.skip(!LOGOUT_ROLE, "sin perfiles");
   await login(page, LOGOUT_ROLE);
-  await page.getByTitle(/Cerrar sesión/).click();
+  await page.getByRole("button", { name: /^Cuenta de / }).click(); // the avatar opens the account menu
+  await page.getByRole("menuitem", { name: "Cerrar sesión" }).click();
   await expect(page).toHaveURL(/login/);
   await page.goto("/projects");
   await expect(page).toHaveURL(/login/); // la sesión quedó cerrada de verdad
