@@ -256,6 +256,45 @@ def is_connected(graph: GeometryGraph) -> bool:
     return len(components(graph)) == 1
 
 
+def bridges(graph: GeometryGraph) -> list[Segment]:
+    """Pieces whose loss splits the network: the runs that lie on no closed loop (Tarjan, iterative)."""
+    pieces = sorted(graph.segments)
+    adjacent: dict[Point, list[tuple[Point, int]]] = {}
+    for index, (a, b, _) in enumerate(pieces):
+        adjacent.setdefault(a, []).append((b, index))
+        adjacent.setdefault(b, []).append((a, index))
+    order: dict[Point, int] = {}
+    low: dict[Point, int] = {}
+    found: list[Segment] = []
+    for root in sorted(adjacent):
+        if root in order:
+            continue
+        order[root] = low[root] = len(order)
+        stack = [(root, -1, iter(adjacent[root]))]
+        while stack:
+            node, via, neighbours = stack[-1]
+            advanced = False
+            for other, index in neighbours:
+                if index == via:
+                    continue
+                if other in order:
+                    low[node] = min(low[node], order[other])
+                else:
+                    order[other] = low[other] = len(order)
+                    stack.append((other, index, iter(adjacent[other])))
+                    advanced = True
+                    break
+            if advanced:
+                continue
+            stack.pop()
+            if stack:
+                parent = stack[-1][0]
+                low[parent] = min(low[parent], low[node])
+                if low[node] > order[parent]:
+                    found.append(pieces[via])
+    return sorted(found)
+
+
 def intersections(source: GeometryGraph | dict) -> list[Point]:
     """Interior points where two conductors cross or one ends on another's interior (before noding)."""
     if isinstance(source, dict):

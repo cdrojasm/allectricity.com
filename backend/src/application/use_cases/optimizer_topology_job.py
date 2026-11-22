@@ -27,7 +27,7 @@ from uuid import uuid4
 
 from src.domain.spat import geometry_graph as gg
 from src.domain.spat.geometry_cost import evaluate_geometry_cost, takeoff
-from src.domain.spat.geometry_operators import OperatorConstraints, diagonals_of
+from src.domain.spat.geometry_operators import OperatorConstraints, bridges_of, diagonals_of
 
 TOPOLOGY_ALGORITHM = "topology_alns"
 TOPOLOGY_STRATEGY = "alns"   # the official policy (OPT-017); the experimental refinements stay out of the product
@@ -164,7 +164,7 @@ def check_rate_card_covers(rate_card: dict[str, Any], geometries: list[dict[str,
     return sorted(missing)
 
 
-def operator_constraints(context: dict[str, Any], *, orthogonal: bool = False,
+def operator_constraints(context: dict[str, Any], *, orthogonal: bool = False, redundant: bool = False,
                          geometry: dict[str, Any] | None = None) -> tuple[OperatorConstraints, dict[str, Any]]:
     """Operator limits from the resolved OP-05 context: a sourced rod-length bound narrows the default range."""
     base = OperatorConstraints()
@@ -180,7 +180,13 @@ def operator_constraints(context: dict[str, Any], *, orthogonal: bool = False,
     # Diagonals the design already has stay allowed; the search only adds horizontal and vertical runs.
     inherited = diagonals_of(geometry) if orthogonal and geometry else ()
     applied["orthogonal"] = orthogonal
-    return OperatorConstraints(rod_length_range_m=(low, high), orthogonal=orthogonal, inherited_diagonals=inherited), applied
+    # Every run on a closed loop; a loose run the design already has stays allowed, the search adds none.
+    loose = bridges_of(geometry) if redundant and geometry else ()
+    applied["redundant"] = redundant
+    if redundant:
+        applied["stub_max_m"] = {"value": base.stub_max_m, "source": "optimizer_default"}
+    return OperatorConstraints(rod_length_range_m=(low, high), orthogonal=orthogonal, inherited_diagonals=inherited,
+                               redundant=redundant, inherited_bridges=loose), applied
 
 
 def checkpoint_dir() -> Path:

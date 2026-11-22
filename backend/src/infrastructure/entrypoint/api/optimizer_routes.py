@@ -363,6 +363,7 @@ class TopologyRunRequest(StrictModel):
     max_solver_calls: int = Field(default=150, ge=20, le=400)
     seed_count: int = Field(default=4, ge=1, le=6)
     orthogonal_only: bool = True           # diagonals are hard to build; the search adds only horizontal and vertical runs
+    redundant_only: bool = True            # no loose cables: every run the search adds lies on a closed loop (tails to a rod excepted)
 
     @model_validator(mode="after")
     def known_standards(self):
@@ -440,7 +441,8 @@ def create_topology_run(project_id: str, payload: TopologyRunRequest, request: R
             missing = topology_job.check_rate_card_covers(built["rate_card"], [geometry])
             if missing:
                 raise HTTPException(422, "The rate card leaves cost lines unpriced: " + ", ".join(missing))
-            _, applied = topology_job.operator_constraints(context, orthogonal=payload.orthogonal_only, geometry=geometry)
+            _, applied = topology_job.operator_constraints(context, orthogonal=payload.orthogonal_only,
+                                                             redundant=payload.redundant_only, geometry=geometry)
             base_cost = evaluate_geometry_cost(geometry, built["rate_card"])
         except topology_job.RateCardError as exc:
             raise HTTPException(422, str(exc)) from exc

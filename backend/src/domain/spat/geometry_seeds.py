@@ -31,6 +31,8 @@ class SeedConstraints:
     rod_length_choices_m: tuple[float, ...] = (1.5, 2.4, 3.0, 6.0)
     max_attempts: int = 80
     orthogonal: bool = False       # only horizontal and vertical runs
+    redundant: bool = False        # every run on a closed loop (no branched trees); see OperatorConstraints.redundant
+    stub_max_m: float = 3.0
 
 
 @dataclass(frozen=True)
@@ -210,6 +212,10 @@ def _accept(domain: dict, graph: gg.GeometryGraph, c: SeedConstraints) -> dict |
         return None
     if c.orthogonal and any(abs(a[0] - b[0]) > 1e-6 and abs(a[1] - b[1]) > 1e-6 for a, b, _ in graph.segments):
         return None
+    if c.redundant:
+        from src.domain.spat.geometry_operators import OperatorConstraints, loose_runs
+        if loose_runs(gg.normalize(graph), OperatorConstraints(redundant=True, stub_max_m=c.stub_max_m)):
+            return None
     if evaluate_optimizer_geometry(geometry)["status"] != "valid":
         return None
     return geometry
@@ -250,9 +256,11 @@ def generate_seeds(domain: dict, *, seed: int, count: int = 8, initial: dict | N
 
     if initial is not None:
         graph = gg.normalize(gg.from_geometry(initial))
-        keep("user", _accept(domain, graph, SeedConstraints(**{**constraints.__dict__, "min_segment_m": 0.0, "orthogonal": False})) and gg.to_geometry(graph, initial))
+        keep("user", _accept(domain, graph, SeedConstraints(**{**constraints.__dict__, "min_segment_m": 0.0, "orthogonal": False,
+                                                                 "redundant": False})) and gg.to_geometry(graph, initial))
     builders = {"perimeter": _perimeter, "inscribed": _inscribed, "branched": _branched}
-    order = ("perimeter", "inscribed", "branched")
+    # A branched seed is a tree on purpose: every run of it is a bridge, so a redundant search never starts from one.
+    order = ("perimeter", "inscribed") if constraints.redundant else ("perimeter", "inscribed", "branched")
     attempts = 0
     while len(out) < count and attempts < constraints.max_attempts:
         family = order[attempts % len(order)]

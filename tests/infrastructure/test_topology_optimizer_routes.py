@@ -103,6 +103,9 @@ def test_a_queued_run_is_executed_by_the_worker_with_the_real_solver_and_applied
     assert snapshot["rate_provenance"]["installation.rod"]["source"] == "cotización de prueba"
     assert snapshot["base"]["cost_status"] == "complete" and snapshot["base"]["cost"] > 0
     assert snapshot["request"]["orthogonal_only"] is True and snapshot["operator_constraints"]["orthogonal"] is True
+    assert snapshot["request"]["redundant_only"] is True and snapshot["operator_constraints"]["redundant"] is True
+    assert snapshot["operator_constraints"]["stub_max_m"] == {"value": 3.0, "source": "optimizer_default"}
+    assert build_inputs(snapshot)["constraints"].redundant is True
     assert snapshot["request"]["soil"] == {"model": "homogeneous", "resistivity_ohm_m": 100.0}
 
     assert job.execute_topology_run(deps(services, run_topology_optimizer, PotentialEngineClient, evaluate_base), run["id"]) == "completed"

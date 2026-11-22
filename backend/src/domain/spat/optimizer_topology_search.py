@@ -159,11 +159,12 @@ def search_topology(
     In every policy the finalists are chosen and checked at the finest level afterwards, so a refined design
     never replaces a validated one without that check.
     """
-    if constraints.orthogonal:
+    if constraints.orthogonal or constraints.redundant:
+        shape = {"orthogonal": constraints.orthogonal, "tail_m": constraints.stub_max_m if constraints.redundant else None}
         if propose_operator is random_operator:
-            propose_operator = functools.partial(random_operator, orthogonal=True)
+            propose_operator = functools.partial(random_operator, **shape)
         if propose_repair is random_repair_operator:
-            propose_repair = functools.partial(random_repair_operator, orthogonal=True)
+            propose_repair = functools.partial(random_repair_operator, **shape)
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise ValueError("seed must be an integer")
     if isinstance(parallel_workers, bool) or not isinstance(parallel_workers, int) or parallel_workers < 1:
