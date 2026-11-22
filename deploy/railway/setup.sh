@@ -48,7 +48,7 @@ backend_common() {
     "SPAT_POTENTIAL_ENGINE_URL=http://potential-engine.railway.internal:8080" \
     "PUBLIC_APP_URL=https://$FRONTEND" "AUTH_RESET_URL=https://$FRONTEND/reset-password" \
     "AUTH_JWT_ISSUER=spat-api" "AUTH_JWT_AUDIENCE=spat-workspace" \
-    "DESIGN_MAX_ITERATIONS=6" "AGENT_REQUIRE_BUDGET=true" "AGENT_MIN_STEP_TOKENS=2000" \
+    "DESIGN_MAX_ITERATIONS=15" "AGENT_REQUIRE_BUDGET=true" "AGENT_MIN_STEP_TOKENS=2000" \
     "MAIL_PROVIDER=resend"
   if [ "$1" != api ]; then
     set_vars "$1" \
