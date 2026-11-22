@@ -251,3 +251,15 @@ def test_token_limits_split_between_agents_and_exhausted_project_uses_rules(monk
     assert stored["status"] == "completed_with_errors"
     assert "límite de tokens LLM del proyecto agotado" in stored["errors"][0]
     assert "T1" in by_content(graph)
+
+
+def test_cost_reported_by_openrouter_wins_over_configured_prices(monkeypatch):
+    from src.infrastructure.processing.knowledge_extraction import _cost
+
+    monkeypatch.setenv("LLM_PRICE_INPUT_USD_PER_MTOK", "0.15")
+    monkeypatch.setenv("LLM_PRICE_OUTPUT_USD_PER_MTOK", "0.60")
+    reported = {"extractor": {"prompt_tokens": 1000, "completion_tokens": 200, "cost_usd": 0.0004},
+                "consolidator": {"prompt_tokens": 300, "completion_tokens": 50, "cost_usd": 0.0001}}
+    assert _cost(reported) == 0.0005  # a router has no fixed price: use what OpenRouter charged
+    reported["consolidator"].pop("cost_usd")
+    assert _cost(reported) == round((1300 * 0.15 + 250 * 0.60) / 1e6, 6)  # partial report: configured prices

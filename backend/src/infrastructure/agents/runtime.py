@@ -74,10 +74,16 @@ def run_tool_agent(client, model, messages, tools, handlers, final_tool, finaliz
             completion_tokens = response.usage.completion_tokens or 0
             usage["prompt_tokens"] += prompt_tokens
             usage["completion_tokens"] += completion_tokens
+            # Keyed by the model that answered (OpenRouter may report a dated snapshot or, for a router, the one it picked).
+            answered = getattr(response, "model", None)
             per_model = usage.setdefault("models", {}).setdefault(
-                model, {"prompt_tokens": 0, "completion_tokens": 0})
+                answered if isinstance(answered, str) and answered else model,
+                {"prompt_tokens": 0, "completion_tokens": 0})
             per_model["prompt_tokens"] += prompt_tokens
             per_model["completion_tokens"] += completion_tokens
+            cost = getattr(response.usage, "cost", None)  # USD, reported by OpenRouter
+            if isinstance(cost, (int, float)):
+                usage["cost_usd"] = round(usage.get("cost_usd", 0.0) + float(cost), 8)
         if max_tokens and usage["prompt_tokens"] + usage["completion_tokens"] > max_tokens:
             raise TokenLimitExceeded(f"Agent exceeded its token limit ({max_tokens})")
         message = response.choices[0].message

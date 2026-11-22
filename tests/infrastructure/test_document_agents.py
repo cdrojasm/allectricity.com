@@ -50,6 +50,19 @@ def test_extractor_gets_source_validation_feedback_before_finishing(monkeypatch)
     assert any(error.startswith("a1: missing_evidence") for error in feedback["errors"])
 
 
+def test_a_numeric_schema_version_is_read_as_its_string(monkeypatch):
+    numeric = copy.deepcopy(LLM_PAYLOAD)
+    numeric["schema_version"] = float(LLM_PAYLOAD["schema_version"])  # what the models send
+    client = ScriptedClient([numeric])
+    monkeypatch.setattr(document_agents, "_clients", lambda: (None, client))
+    source = parse_document(MEMORIA, DOCX_MIME)
+
+    result = document_agents.run_llm_extraction(source, {}, "m.docx", {"extractor": _prompt()})
+
+    assert result["errors"] == [] and result["payload"]["schema_version"] == LLM_PAYLOAD["schema_version"]
+    assert result["usage"]["submissions"] == 1
+
+
 def test_last_submission_is_kept_even_with_finding_level_problems(monkeypatch):
     broken = copy.deepcopy(LLM_PAYLOAD)
     broken["evidence"][0]["finding_ids"].remove("a1")

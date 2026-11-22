@@ -133,6 +133,11 @@ def run_llm_extraction(source, rule_payload: dict, filename: str, prompts: dict,
 
     def finalize(arguments):
         attempts["count"] += 1
+        # Models write the version as a JSON number (1.1) even with the enum of strings in the tool schema, and
+        # keep doing it after the error; it is unambiguous, so it is read as its string.
+        if isinstance(arguments.get("schema_version"), (int, float)) and not isinstance(
+                arguments["schema_version"], bool):
+            arguments["schema_version"] = f"{float(arguments['schema_version']):.1f}"
         errors = structural_errors(arguments)
         # Tras el último intento, los errores de ítems sueltos los descarta la validación;
         # solo un payload inválido en su raíz anula la extracción.

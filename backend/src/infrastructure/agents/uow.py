@@ -141,6 +141,7 @@ class UnitOfWork:
         self.context = context or WorkContext()
         self._client, self._prompt, self._store, self._charge = client, prompt, store, charge
         self.tokens = {"input": 0, "output": 0, "calls": 0}
+        self.cost_usd = 0.0  # as reported by OpenRouter (usage.cost); 0 when the provider does not report it
 
     # Configuration (Phoenix) ------------------------------------------------------------------------
     @cached_property
@@ -189,8 +190,9 @@ class UnitOfWork:
         if block is not None:
             raise BudgetUnavailable(block)
 
-    def _account(self, response) -> None:
+    def _account(self, response, current=None) -> None:
         usage = getattr(response, "usage", None)
+        self._observe(current, response, usage)
         tokens_in = int(getattr(usage, "prompt_tokens", None) or getattr(usage, "input_tokens", None) or 0)
         tokens_out = int(getattr(usage, "completion_tokens", None) or getattr(usage, "output_tokens", None) or 0)
         self.tokens["input"] += tokens_in
@@ -212,6 +214,23 @@ class UnitOfWork:
         except Exception:
             logger.exception("Could not debit %s token usage for user %s", self.application, self.context.user_id)
 
+    def _observe(self, current, response, usage) -> None:
+        """Record on the span the model that answered when it differs from the requested one (a dated snapshot, or
+        the pick of a router) and what OpenRouter charged."""
+        cost = getattr(usage, "cost", None)
+        if isinstance(cost, (int, float)):
+            self.cost_usd += float(cost)
+        if current is None:
+            return
+        try:
+            answered = getattr(response, "model", None)
+            if isinstance(answered, str) and answered and answered != self.model:
+                current.set_attribute("llm.routed_model", answered)
+            if isinstance(cost, (int, float)):
+                current.set_attribute("llm.cost.total", self.cost_usd)
+        except Exception:
+            logger.debug("Could not record the routed model or cost", exc_info=True)
+
     # Invocation -------------------------------------------------------------------------------------
     def _span(self, kind: str, input_value=None):
         return telemetry.span(
@@ -229,7 +248,7 @@ class UnitOfWork:
         with self._span("CHAIN", input_value=_last_text(messages)) as current:
             response = self.client.chat.completions.create(
                 **self._call_parameters(params), model=self.model, messages=[*self.system_messages, *messages])
-            self._account(response)
+            self._account(response, current)
             choices = getattr(response, "choices", None) or []
             telemetry.set_output(current, getattr(choices[0].message, "content", "") if choices else "")
             return response
@@ -247,7 +266,7 @@ class UnitOfWork:
                 parameters.setdefault("max_output_tokens", limit)
             response = self.client.responses.create(
                 **parameters, model=self.model, instructions=instructions or None, input=input_text)
-            self._account(response)
+            self._account(response, current)
             telemetry.set_output(current, getattr(response, "output_text", "") or "")
             return response
 
@@ -259,7 +278,7 @@ class UnitOfWork:
             result = runtime.run_tool_agent(
                 self.client, self.model, conversation, tools, _traced(handlers), final_tool, finalize, usage,
                 max_rounds=max_rounds, max_tokens=max_tokens, parameters=self.parameters,
-                on_response=self._account)
+                on_response=lambda response: self._account(response, current))
             telemetry.set_output(current, result)
             return result
 

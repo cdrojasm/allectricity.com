@@ -165,7 +165,11 @@ def _tokens(usage: dict) -> int:
 
 
 def _cost(usage: dict) -> float | None:
-    """Coste estimado en USD con los precios por millón de tokens configurados (EG-13)."""
+    """Coste en USD: el que reporta OpenRouter cuando viene en todas las partes (un router no tiene precio propio y los
+    precios configurados se desactualizan); si no, el estimado con los precios configurados (EG-13)."""
+    parts = [part for part in usage.values() if isinstance(part, dict) and _tokens(part)]
+    if parts and all(isinstance(part.get("cost_usd"), (int, float)) for part in parts):
+        return round(sum(float(part["cost_usd"]) for part in parts), 6)
     input_price = os.getenv("LLM_PRICE_INPUT_USD_PER_MTOK")
     output_price = os.getenv("LLM_PRICE_OUTPUT_USD_PER_MTOK")
     if not input_price or not output_price:

@@ -109,8 +109,11 @@ sync-prompts:
 	  -v $(CURDIR)/scripts/sync_phoenix_prompts.py:/app/scripts/sync_phoenix_prompts.py:ro \
 	  -v $(CURDIR)/prompts:/app/prompts:ro agent-worker python scripts/sync_phoenix_prompts.py
 
+# DOCUMENT_EXTRACTOR_MODEL / DOCUMENT_CONSOLIDATOR_MODEL=<approved id> evaluate with another model (default: Phoenix's).
+DOCUMENT_EXTRACTOR_MODEL ?=
+DOCUMENT_CONSOLIDATOR_MODEL ?=
 eval-extraction:
-	$(COMPOSE) run --rm --no-deps -v "$(CURDIR):/workspace" -w /workspace --entrypoint python document-worker scripts/evaluate_extraction.py $(ARGS)
+	$(COMPOSE) run --rm --no-deps -e DOCUMENT_EXTRACTOR_MODEL=$(DOCUMENT_EXTRACTOR_MODEL) -e DOCUMENT_CONSOLIDATOR_MODEL=$(DOCUMENT_CONSOLIDATOR_MODEL) -v "$(CURDIR):/workspace" -w /workspace --entrypoint python document-worker scripts/evaluate_extraction.py $(ARGS)
 
 .PHONY: smoke-auth
 smoke-auth:

@@ -268,3 +268,55 @@ def test_tracing_setup_is_a_no_op_without_phoenix(monkeypatch):
     monkeypatch.delenv("PHOENIX_ENDPOINT", raising=False)
     monkeypatch.delenv("PHOENIX_COLLECTOR_ENDPOINT", raising=False)
     assert telemetry.setup("test") is False
+
+
+def test_the_span_records_the_model_that_answered_and_the_cost(store, spans, monkeypatch):
+    add_budget(store, 100_000)
+    monkeypatch.setenv("DOCUMENT_EXTRACTOR_MODEL", "anthropic/claude-haiku-5.5")
+    client = FakeClient(["Bogotá"])
+    routed = client._create
+
+    def answer_from_routed_model(**kwargs):
+        response = routed(**kwargs)
+        response.model = "anthropic/claude-haiku-5.5-20261015"  # OpenRouter answers with a dated snapshot
+        response.usage.cost = 0.0000057
+        return response
+
+    client.chat.completions.create = answer_from_routed_model
+    work = uow.UnitOfWork("spat-document-extractor", uow.WorkContext(user_id=store.user_id), client=client,
+                          store=store, prompt=uow.seed_prompt("spat-document-extractor"))
+    work.complete([{"role": "user", "content": "a"}])
+    assert client.requests[0]["model"] == "anthropic/claude-haiku-5.5"
+    span = {span.name: span for span in spans.get_finished_spans()}["spat-document-extractor"]
+    assert span.attributes["llm.model_name"] == "anthropic/claude-haiku-5.5"
+    assert span.attributes["llm.routed_model"] == "anthropic/claude-haiku-5.5-20261015"
+    assert span.attributes["llm.cost.total"] == pytest.approx(0.0000057) and work.cost_usd == pytest.approx(0.0000057)
+    assert [row["model"] for row in ledger(store)] == ["anthropic/claude-haiku-5.5-20261015"]  # the model that answered
+
+
+def test_the_same_model_adds_no_routed_model_attribute(store, spans):
+    work = uow.UnitOfWork("spat-study-writer", client=FakeClient(), prompt=prompt(model="openai/gpt-6.1-terra"),
+                          store=store)
+    work.complete([{"role": "user", "content": "a"}])
+    span = {span.name: span for span in spans.get_finished_spans()}["spat-study-writer"]
+    assert "llm.routed_model" not in span.attributes and "llm.cost.total" not in span.attributes
+
+
+def test_tool_loop_reports_the_model_that_answered_and_the_cost_in_usage(store):
+    client = FakeClient([("submit", {"answer": "ok"})])
+    routed = client._create
+
+    def answer_from_routed_model(**kwargs):
+        response = routed(**kwargs)
+        response.model, response.usage.cost = "anthropic/claude-haiku-5.5-20261015", 0.0002
+        return response
+
+    client.chat.completions.create = answer_from_routed_model
+    work = uow.UnitOfWork("spat-document-extractor", client=client, store=store,
+                          prompt=prompt(model="anthropic/claude-haiku-5.5"))
+    usage = runtime.new_usage()
+    work.run_tools([{"role": "user", "content": "a"}],
+                   [runtime.tool("submit", "", {"answer": {"type": "string"}}, ["answer"])], {}, "submit",
+                   lambda args: (True, {"ok": True}), usage)
+    assert usage["models"] == {"anthropic/claude-haiku-5.5-20261015": {"prompt_tokens": 100, "completion_tokens": 20}}
+    assert usage["cost_usd"] == 0.0002
