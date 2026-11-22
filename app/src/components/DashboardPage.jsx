@@ -79,7 +79,7 @@ function DashboardPage({ token, user, lastVisit, onOpen, onShowProjects }) {
       <section className="dashboard-card dashboard-activity"><div className="dashboard-section-heading"><div><Sparkles size={17}/><h2>Funciones usadas recientemente</h2></div></div>
         {visibleFeatures.length ? <ul className="dashboard-feature-list">{visibleFeatures.map((item, index) => <li key={`${item.usedAt}-${index}`}><span className="dashboard-feature-icon"><Activity size={15}/></span><span><strong>{featureNames[item.feature] || item.feature}</strong><small>{item.projectName || "Proyecto"} · {formatDate(item.usedAt, true)}</small></span></li>)}</ul> : <div className="dashboard-empty compact"><Sparkles size={23}/><strong>Sin actividad reciente</strong><span>Las funciones que abras aparecerán aquí.</span></div>}
       </section>
-      <SystemHealthCard token={token}/>
+      <SystemHealthCard token={token} isSuperAdmin={user.roles?.includes("super_admin")}/>
     </div>
   </main>;
 }
