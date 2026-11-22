@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { awaitJob } from "../asyncJobs.js";
 import { Bot, Check, CheckCircle2, ChevronRight, CircleHelp, ExternalLink, Filter, Globe2, LoaderCircle, MapPin, Package, Plus, Search, Send, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
 
 const CATEGORIES = ["Conductor", "Varilla", "Conector", "Soldadura", "Accesorio"];
@@ -366,8 +367,9 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ geography: location, design_context: "El usuario está preparando cotizaciones de materiales para un sistema de puesta a tierra.", messages: nextMessages }),
       });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.detail || "No se pudo consultar al asistente.");
+      const accepted = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(accepted.detail || "No se pudo consultar al asistente.");
+      const body = await awaitJob(token, accepted);
       setAssistantMessages((current) => [...current, { role: "assistant", content: body.reply, questions: body.questions || [], recommendations: body.recommendations || [] }]);
     } catch (error) {
       setAssistantError(error.message || "El asistente no está disponible en este momento.");

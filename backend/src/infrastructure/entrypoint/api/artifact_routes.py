@@ -4,9 +4,7 @@ from time import time
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from hashlib import sha256
 from pydantic import BaseModel, Field
-from zipfile import BadZipFile
 
 from src.application.use_cases import potential_calculations
 from src.domain.spat.artifact_contract import snapshot_fields, validate_artifact
@@ -19,16 +17,14 @@ from src.infrastructure.entrypoint.api.schemas import (GroundingArtifactRequest,
                                                        SoilFileImportRequest, SoilMeasurementsRequest)
 from src.domain.spat import soil_materials
 from src.infrastructure.calculations.conductor_thermal_profiles import thermal_profile_catalog
-from src.infrastructure.calculations.soil_sounding import fit_sounding
 from src.application.use_cases.agent_runs import AgentRuns
 from src.infrastructure.entrypoint.worker.tasks import calculate_artifact_potential, enqueue_agent_step
 from src.infrastructure.security.middleware import require
 from src.infrastructure.entrypoint.api.file_routes import storage_client
-from src.infrastructure.processing.measurement_tables import XLSX_MIME, extract, read_table
+from src.infrastructure.processing.measurement_tables import XLSX_MIME
 from src.infrastructure.processing.dxf_import import import_dxf
-from src.infrastructure.agents import uow
-from src.infrastructure.processing.plan_vision import propose_plan_from_image
-from src.domain.spat.soundings import apparent_resistivity
+from src.domain.jobs import JobKind
+from src.infrastructure.entrypoint.api.job_routes import queue_job, require_llm_capacity
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/artefactos-diseno-tierras", tags=["artefactos-diseno-tierras"])
 catalog_router = APIRouter(prefix="/api/v1", tags=["catalogos"])
@@ -157,118 +153,38 @@ def attach_plan_background(project_id: str, artifact_id: str, version: int,
         return row
 
 
-def _plan_vision_work(request, actor, project_id: str, artifact_id: str, version: int) -> uow.UnitOfWork:
-    work = uow.UnitOfWork("spat-plan-vision", uow.WorkContext(
-        user_id=actor.user_id, project_id=project_id, session_id=f"artifact:{artifact_id}",
-        entity=f"artifact:{artifact_id}:{version}"), store=request.app.state.services.store)
-    try:
-        work.require_capacity()
-    except uow.BudgetUnavailable as exc:
-        raise HTTPException(402, exc.message) from exc
-    return work
-
-
-@router.post("/{artifact_id}/versions/{version}/plan-proposal")
-def propose_plan(project_id: str, artifact_id: str, version: int, payload: PlanVisionRequest,
-                 request: Request, actor=Depends(require("designs:read"))):
-    """Ask a vision model for obstacles/zone; the response is a reviewable proposal only."""
+def _queue_plan_vision(kind: JobKind, project_id: str, artifact_id: str, version: int, upload_id: str,
+                       source_page: int | None, request: Request, actor) -> dict:
+    """Validate the source cheaply here; rasterizing and the vision model run on the documents worker."""
     with request.app.state.services.store.transaction() as db:
         owned_project(db, project_id, actor)
         row = db.designs.get_version(project_id, artifact_id, version)
-        upload = db.one("file_uploads", id=payload.upload_id, project_id=project_id,
-                        owner_id=actor.user_id, status="available")
-    if not row or not upload:
-        raise HTTPException(404, "Artifact version or source image not found")
-    if upload["expected_mime"] not in {"application/pdf", "image/png", "image/jpeg"}:
-        raise HTTPException(415, "Plan proposal requires a PDF, PNG or JPEG source")
-    try:
-        data = storage_client().read_object(upload["target_bucket"], upload["object_key"], 20 * 1024 * 1024)
-        mime_type = upload["expected_mime"]
-        source_page = payload.source_page
-        if mime_type == "application/pdf":
-            import io
-            import pypdfium2
-
-            document = pypdfium2.PdfDocument(data)
-            page_number = source_page or 1
-            if page_number > len(document):
-                raise HTTPException(422, f"PDF has only {len(document)} page(s)")
-            bitmap = document[page_number - 1].render(scale=144 / 72, rotation=0,
-                                                       fill_color=(255, 255, 255, 255))
-            image = bitmap.to_pil().convert("RGB")
-            if image.width * image.height > 25_000_000:
-                raise HTTPException(413, "Rendered PDF page is too large")
-            output = io.BytesIO()
-            image.save(output, format="PNG", optimize=True)
-            data = output.getvalue()
-            mime_type = "image/png"
-        proposal = propose_plan_from_image(_plan_vision_work(request, actor, project_id, artifact_id, version),
-                                           data, mime_type,
-                                           row["snapshot"].get("geometry") or {})
-    except (RuntimeError, ValueError) as exc:
-        raise HTTPException(422, str(exc)) from exc
-    return {"artifact_id": artifact_id, "version": version, "source_upload_id": payload.upload_id,
-            "source_page": source_page, **proposal}
-
-
-@router.post("/{artifact_id}/versions/{version}/plan-revision")
-def compare_plan_revision(project_id: str, artifact_id: str, version: int, payload: PlanRevisionRequest,
-                          request: Request, actor=Depends(require("designs:write"))):
-    """Analyze a newly uploaded plan, compare it with the current geometry and alert the chat."""
-    with request.app.state.services.store.transaction() as db:
-        owned_project(db, project_id, actor)
-        row = db.designs.get_version(project_id, artifact_id, version)
-        upload = db.one("file_uploads", id=payload.upload_id, project_id=project_id,
+        upload = db.one("file_uploads", id=upload_id, project_id=project_id,
                         owner_id=actor.user_id, status="available")
     if not row or not upload:
         raise HTTPException(404, "Artifact version or source plan not found")
     if upload["expected_mime"] not in {"application/pdf", "image/png", "image/jpeg"}:
-        raise HTTPException(415, "Plan revision requires a PDF, PNG or JPEG source")
-    try:
-        import io
-        data = storage_client().read_object(upload["target_bucket"], upload["object_key"], 20 * 1024 * 1024)
-        mime_type = upload["expected_mime"]
-        source_page = payload.source_page
-        if mime_type == "application/pdf":
-            import pypdfium2
-            document = pypdfium2.PdfDocument(data)
-            page_number = source_page or 1
-            if page_number > len(document):
-                raise HTTPException(422, f"PDF has only {len(document)} page(s)")
-            bitmap = document[page_number - 1].render(scale=144 / 72, rotation=0,
-                                                       fill_color=(255, 255, 255, 255))
-            image = bitmap.to_pil().convert("RGB")
-            if image.width * image.height > 25_000_000:
-                raise HTTPException(413, "Rendered PDF page is too large")
-            output = io.BytesIO()
-            image.save(output, format="PNG", optimize=True)
-            data, mime_type = output.getvalue(), "image/png"
-        proposal = propose_plan_from_image(_plan_vision_work(request, actor, project_id, artifact_id, version),
-                                           data, mime_type,
-                                           row["snapshot"].get("geometry") or {})
-        previous_geometry = row["snapshot"].get("geometry") or {}
-        proposed_geometry = {**previous_geometry, "structures": proposal.get("structures") or []}
-        comparison = compare_plan_revisions(previous_geometry, proposed_geometry)
-    except (RuntimeError, ValueError) as exc:
-        raise HTTPException(422, str(exc)) from exc
+        raise HTTPException(415, "The plan must be a PDF, PNG or JPEG source")
+    require_llm_capacity(request, actor.user_id)
+    return queue_job(request, kind=kind, owner_id=actor.user_id, project_id=project_id,
+                     payload={"artifact_id": artifact_id, "version": version, "upload_id": upload_id,
+                              "source_page": source_page})
 
-    with request.app.state.services.store.transaction(write=True) as db:
-        states = db.many("agent_conversation_state", project_id=project_id, artifact_id=artifact_id, limit=1)
-        if states:
-            now = int(time())
-            payload_data = {"kind": "plan.revision", "artifact_id": artifact_id, "version": version,
-                            "source_upload_id": payload.upload_id, "filename": upload["filename"],
-                            "source_page": source_page, **comparison}
-            db.add("chat_messages", id=str(uuid4()), conversation_id=states[0]["id"], source="notification",
-                   text=(f"Nueva revisión de plano detectada en «{upload['filename']}»: "
-                         f"{len(comparison['added'])} añadidos, {len(comparison['removed'])} eliminados, "
-                         f"{len(comparison['changed'])} modificados" +
-                         (f" y {len(comparison['conflicts'])} conflictos con la malla." if comparison["has_conflicts"] else ".")),
-                   type="text", generated_at=now, created_at=now, updated_at=now, status="completed",
-                   task_id=None, run_id=None, payload=payload_data, created_ms=now * 1000)
-            db.change("conversations", states[0]["id"], updated_at=now)
-    return {"artifact_id": artifact_id, "version": version, "source_upload_id": payload.upload_id,
-            "source_page": source_page, "proposal": proposal, **comparison}
+
+@router.post("/{artifact_id}/versions/{version}/plan-proposal", status_code=202)
+def propose_plan(project_id: str, artifact_id: str, version: int, payload: PlanVisionRequest,
+                 request: Request, actor=Depends(require("designs:read"))):
+    """Queue a vision proposal of obstacles/zone (a reviewable proposal only); poll /api/v1/jobs/{job_id}."""
+    return _queue_plan_vision(JobKind.PLAN_PROPOSAL, project_id, artifact_id, version, payload.upload_id,
+                              payload.source_page, request, actor)
+
+
+@router.post("/{artifact_id}/versions/{version}/plan-revision", status_code=202)
+def compare_plan_revision(project_id: str, artifact_id: str, version: int, payload: PlanRevisionRequest,
+                          request: Request, actor=Depends(require("designs:write"))):
+    """Queue the analysis of a newly uploaded plan against the current geometry (it alerts the chat when done)."""
+    return _queue_plan_vision(JobKind.PLAN_REVISION, project_id, artifact_id, version, payload.upload_id,
+                              payload.source_page, request, actor)
 
 
 @router.post("/geometria/validar")
@@ -312,75 +228,37 @@ def soil_material_table(q: str | None = None, resistividad_ohm_m: float | None =
     return soil_materials.search(q, resistividad_ohm_m, limit=50)
 
 
-@router.post("/mediciones-suelo/ajustar")
+@router.post("/mediciones-suelo/ajustar", status_code=202)
 def fit_soil_measurements(project_id: str, payload: SoilMeasurementsRequest, request: Request,
                           actor=Depends(require("designs:write"))):
-    """Fit a Wenner/Schlumberger sounding to a 2-layer (image series) or 3-8-layer soil model.
+    """Queue the fit of a Wenner/Schlumberger sounding to a 2-layer (image series) or 3-8-layer soil model.
 
-    The returned `soil_layers` use the artifact format (`depth_m` = layer thickness, null for the
+    The job result's `soil_layers` use the artifact format (`depth_m` = layer thickness, null for the
     bottom half-space) and stay within the potential engine's limits, so they can be stored in an
-    artifact and calculated directly.
+    artifact and calculated directly. Poll /api/v1/jobs/{job_id}.
     """
     with request.app.state.services.store.transaction() as db:
         owned_project(db, project_id, actor)
-    try:
-        return fit_sounding([item.model_dump() for item in payload.measurements], payload.array,
-                            payload.layer_count, payload.outlier_threshold)
-    except (ValueError, ArithmeticError) as exc:
-        raise HTTPException(422, str(exc)) from exc
+    return queue_job(request, kind=JobKind.SOIL_FIT, owner_id=actor.user_id, project_id=project_id,
+                     payload={"measurements": [item.model_dump() for item in payload.measurements],
+                              "array": payload.array, "layer_count": payload.layer_count,
+                              "outlier_threshold": payload.outlier_threshold})
 
 
-@router.post("/mediciones-suelo/archivo/ajustar")
+@router.post("/mediciones-suelo/archivo/ajustar", status_code=202)
 def fit_soil_file(project_id: str, payload: SoilFileImportRequest, request: Request,
                   actor=Depends(require("designs:write"))):
-    """Import explicit CSV/XLSX columns from a scanned project upload and fit the sounding."""
+    """Queue the import of explicit CSV/XLSX columns from a scanned project upload and the sounding fit."""
     with request.app.state.services.store.transaction() as db:
         owned_project(db, project_id, actor)
         upload = db.one("file_uploads", id=payload.upload_id, project_id=project_id,
                         owner_id=actor.user_id)
     if not upload or upload["status"] != "available":
         raise HTTPException(404, "Scanned project file not found")
-    mime = upload["expected_mime"]
-    if mime not in {"text/csv", XLSX_MIME}:
+    if upload["expected_mime"] not in {"text/csv", XLSX_MIME}:
         raise HTTPException(415, "Only scanned CSV and XLSX files can be imported")
-    try:
-        data = storage_client().read_object(upload["target_bucket"], upload["object_key"], 25 * 1024 * 1024)
-        sheets = read_table(data, mime)
-        table = extract(sheets, sheet=payload.sheet, spacing_column=payload.spacing_column,
-                        value_column=payload.value_column, potential_column=payload.potential_column,
-                        first_row=payload.first_row, last_row=payload.last_row, decimal=payload.decimal)
-        factor = {"m": 1.0, "cm": 0.01, "mm": 0.001}[payload.spacing_unit]
-        potential_factor = {"m": 1.0, "cm": 0.01, "mm": 0.001}[payload.potential_spacing_unit]
-        value_factor = {"ohm_m": 1.0, "ohm_cm": 0.01, "ohm": 1.0}[payload.value_unit]
-        readings = []
-        for item in table["readings"]:
-            spacing = item["spacing_m"] * factor
-            potential = item.get("potential_spacing_m")
-            if potential is not None:
-                potential *= potential_factor
-            if payload.value_kind == "resistance":
-                if payload.value_unit != "ohm":
-                    raise ValueError("Resistance readings must use value_unit='ohm'")
-                rho = apparent_resistivity(payload.array, spacing, item["value"], potential)
-            else:
-                if payload.value_unit == "ohm":
-                    raise ValueError("Apparent resistivity readings need value_unit='ohm_m' or 'ohm_cm'")
-                rho = item["value"] * value_factor
-            reading = {"spacing_m": spacing, "apparent_resistivity_ohm_m": rho,
-                       "locator": item["locator"]}
-            if potential is not None:
-                reading["potential_spacing_m"] = potential
-            readings.append(reading)
-        source = {"kind": "file", "upload_id": payload.upload_id, "filename": upload["filename"],
-                  "mime_type": mime, "sha256": sha256(data).hexdigest(), "sheet": table["sheet"],
-                  "rows": [r["locator"] for r in readings],
-                  "skipped_rows": table["skipped_rows"], "value_kind": payload.value_kind,
-                  "spacing_unit": payload.spacing_unit, "value_unit": payload.value_unit}
-        fit = fit_sounding([{k: v for k, v in row.items() if k != "locator"} for row in readings],
-                           payload.array, payload.layer_count, payload.outlier_threshold)
-        return {**fit, "source": source, "measurements": readings}
-    except (ValueError, ArithmeticError, UnicodeDecodeError, BadZipFile) as exc:
-        raise HTTPException(422, str(exc)) from exc
+    return queue_job(request, kind=JobKind.SOIL_FILE_FIT, owner_id=actor.user_id, project_id=project_id,
+                     payload=payload.model_dump(mode="json"))
 
 
 def owned_project(db, project_id, actor):

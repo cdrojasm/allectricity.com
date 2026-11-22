@@ -407,6 +407,25 @@ material_discovery_jobs = Table(
     Column("updated_at", BigInteger, nullable=False),
     CheckConstraint("status IN ('queued', 'running', 'completed', 'failed')", name="ck_material_discovery_status"),
 )
+# Slow requests the API accepts with 202 and a worker finishes (src/domain/jobs.py holds the lifecycle).
+async_jobs = Table(
+    "async_jobs",
+    metadata,
+    key(),
+    Column("owner_id", ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True),
+    Column("project_id", ForeignKey("projects.id", ondelete="CASCADE"), index=True),
+    Column("kind", String(40), nullable=False),
+    Column("status", String(20), nullable=False),
+    Column("request", JSON, nullable=False),
+    Column("result", JSON),
+    Column("error", Text),
+    # The HTTP status the synchronous endpoint used to answer with (402 budget, 422 bad input, 502 provider…).
+    Column("error_code", BigInteger),
+    Column("created_at", BigInteger, nullable=False),
+    Column("started_at", BigInteger),
+    Column("updated_at", BigInteger, nullable=False),
+    CheckConstraint("status IN ('queued', 'running', 'completed', 'failed')", name="ck_async_jobs_status"),
+)
 material_catalog_conversations = Table(
     "material_catalog_conversations",
     metadata,

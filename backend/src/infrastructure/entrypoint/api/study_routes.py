@@ -2,7 +2,6 @@
 
 from hashlib import sha256
 import os
-import re
 from time import time
 from uuid import uuid4
 
@@ -10,8 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from src.domain.agent.patches import unconfirmed_critical
-from src.infrastructure.agents import uow
+from src.domain.jobs import JobKind
+from src.infrastructure.entrypoint.api.job_routes import queue_job, require_llm_capacity
 from src.infrastructure.security.middleware import require
+from src.infrastructure.services.study_text import denies_results as _denies_results  # noqa: F401
+from src.infrastructure.services.study_text import latest_completed as _latest_completed
+from src.infrastructure.services.study_text import plain_codes as _plain_codes  # noqa: F401
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/studies", tags=["studies"])
 public_router = APIRouter(prefix="/api/v1/public/studies", tags=["public-studies"])
@@ -122,11 +125,6 @@ def _calculation_detail(calculation):
     parameters = calculation.get("parameters") or {}
     return {"result": {key: result[key] for key in RESULT_DETAIL_KEYS if key in result},
             "parameters": {key: parameters.get(key) for key in ("touch_reach_m", "safety_standards")}}
-
-
-def _latest_completed(db, study):
-    rows = [row for row in db.many("calculos_potencial_tierras", project_id=study["project_id"], artifact_id=study["artifact_id"], artifact_version=study["artifact_version"], limit=1000) if row["status"] == "completed"]
-    return max(rows, key=lambda row: row["created_at"]) if rows else None
 
 
 def _verdict(db, study) -> str:
@@ -274,22 +272,6 @@ def _payload(db, study):
     return {"study": {**{k: study[k] for k in ("id", "slug", "title", "access", "status", "artifact_id", "artifact_version", "expires_at", "published_at", "updated_at")}, "config": config}, "project": {"name": project["name"], "description": project["description"], "city": project.get("city"), "country": project.get("country")}, "artifact": snapshot, "calculation": calculation_detail, "references": references, "optimization": _optimization(db, study["project_id"], artifact.get("origin")), "bill_of_materials": _bill_of_materials(snapshot, artifact.get("origin"), db, study["project_id"]), "draft": bool(unconfirmed) or bool(origin.get("draft")) or bool(assumptions), "unconfirmed_critical": unconfirmed, "assumptions": assumptions, "non_compliant": _verdict(db, study) == "no_cumple", "has_newer_version": bool(latest and latest["version"] > study["artifact_version"])}
 
 
-_DENIALS = ("no se cuenta", "no se dispone", "sin resultados", "no hay resultados", "no existen resultados", "aún no se ha calculado", "no se ha realizado")
-
-
-_VERDICT_CODES = {"no_cumple": "no cumple", "no_evaluado": "no evaluado", "no_evaluable": "no evaluable", "cumple": "cumple"}
-
-
-def _plain_codes(text: str) -> str:
-    """Verdict codes the model copied from the result («"no_cumple"») read as plain Spanish."""
-    def plain(match):
-        return _VERDICT_CODES[match.group(1)]
-    return re.sub(r"[\"“”«»']?\b(no_cumple|no_evaluado|no_evaluable)\b[\"“”«»']?", plain, text)
-
-
-def _denies_results(text: str) -> bool:
-    lowered = text.lower()
-    return any(phrase in lowered for phrase in _DENIALS)
 
 
 @router.get("")
@@ -355,37 +337,19 @@ def update_study_access(project_id: str, study_id: str, data: StudyAccessRequest
         return db.one("studies", id=study_id)
 
 
-@router.post("/{study_id}/sections/{section_id}/generate")
+@router.post("/{study_id}/sections/{section_id}/generate", status_code=202)
 def generate_study_section(project_id: str, study_id: str, section_id: str, data: SectionGenerationRequest, request: Request, actor=Depends(require("designs:write"))):
+    """Queue the section text; poll /api/v1/jobs/{job_id} for {section_id, text}."""
     if section_id not in {"summary", "inputs", "results", "references"}:
         raise HTTPException(404, "Study section not found")
     with request.app.state.services.store.transaction() as db:
         _owned_project(db, project_id, actor)
         study = db.one("studies", id=study_id, project_id=project_id)
         artifact = db.one("artefacto_diseno_tierras", project_id=project_id, artifact_id=study["artifact_id"], version=study["artifact_version"]) if study else None
-        latest = _latest_completed(db, study) if study and artifact else None
-        project = db.one("projects", id=project_id)
     if not study or not artifact: raise HTTPException(404, "Study or artifact not found")
-    from src.infrastructure.agents.calculation_summary import summarize
-    outcome = summarize(latest) if latest else None
-    work = uow.UnitOfWork("spat-study-writer", uow.WorkContext(
-        user_id=actor.user_id, project_id=project_id, session_id=f"study:{study_id}",
-        entity=f"study:{study_id}:{section_id}"), store=request.app.state.services.store)
-    try:
-        work.require_capacity()
-        response = work.complete([
-            {"role": "user", "content": f"Sección: {section_id}. Proyecto: {(project or {}).get('name') or study['title']}. Título del estudio: {study['title']}. Artefacto: {artifact['snapshot']}. Resultado del cálculo fijado: {outcome if outcome else 'sin cálculo para esta versión'}. Instrucción: {data.instruction or 'Resume esta sección para un revisor técnico.'}"},
-        ], temperature=0.2, max_tokens=500)
-        text = _plain_codes((response.choices[0].message.content or "").strip())
-    except uow.BudgetUnavailable as exc:
-        raise HTTPException(402, exc.message) from exc
-    except Exception as exc:
-        raise HTTPException(503, "El generador de texto no está disponible") from exc
-    if outcome and outcome["verdict"] in {"cumple", "no_cumple"} and _denies_results(text):
-        # The model denied results that exist: use the stored verdict instead of publishing a false statement.
-        text = ("El diseño cumple los criterios evaluados." if outcome["verdict"] == "cumple"
-                else "El diseño no cumple los criterios evaluados; ver la tabla de resultados.")
-    return {"section_id": section_id, "text": text}
+    require_llm_capacity(request, actor.user_id)
+    return queue_job(request, kind=JobKind.STUDY_SECTION, owner_id=actor.user_id, project_id=project_id,
+                     payload={"study_id": study_id, "section_id": section_id, "instruction": data.instruction})
 
 
 @router.post("/{study_id}/republish", status_code=201)

@@ -10,7 +10,9 @@ from src.infrastructure.calculations.artifact_potential import (
 )
 from src.infrastructure.calculations.n_layer_soil import NLayerSoil, SoilLayer, apparent_resistivity_n_layer
 from src.infrastructure.calculations.potential_engine_client import LayerStackSoil, PotentialEngineClient, TwoLayerSoil
+from src.application.use_cases import async_jobs
 from src.infrastructure.entrypoint.worker import tasks
+from src.infrastructure.services.async_job_handlers import HANDLERS
 
 from tests.infrastructure.test_identity import env, headers  # noqa: F401
 
@@ -292,10 +294,16 @@ def test_fitted_three_layer_soil_is_stored_and_calculated_through_api(env, engin
     sounding = NLayerSoil((SoilLayer(300.0, 2.0), SoilLayer(80.0, 5.0), SoilLayer(600.0)))
     readings = [{"spacing_m": a, "apparent_resistivity_ohm_m": apparent_resistivity_n_layer(sounding, "wenner", a)}
                 for a in (0.5, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32)]
-    fitted = client.post(f"{base}/mediciones-suelo/ajustar", json={"array": "wenner", "layer_count": 3,
-                                                                   "measurements": readings}, headers=headers(tokens))
-    assert fitted.status_code == 200, fitted.text
-    fit = fitted.json()
+    queued = []
+    monkeypatch.setattr(tasks, "send_async_job", queued.append)
+    accepted = client.post(f"{base}/mediciones-suelo/ajustar", json={"array": "wenner", "layer_count": 3,
+                                                                     "measurements": readings}, headers=headers(tokens))
+    assert accepted.status_code == 202, accepted.text
+    [job] = queued
+    async_jobs.run(services.store, job["id"], HANDLERS)  # what the calculations worker does
+    fitted = client.get(f"/api/v1/jobs/{job['id']}", headers=headers(tokens)).json()
+    assert fitted["status"] == "completed", fitted["error"]
+    fit = fitted["result"]
     assert fit["layer_count"] == 3 and fit["model"]["model"] == "n-layer" and fit["excluded"] == []
     assert fit["soil_layers"][-1]["depth_m"] is None and fit["rms_error_percent"] < 0.5
     assert len(fit["relative_uncertainty_percent"]) == 3 and "koefoed-transform" in fit["forward_model"]

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Cable, CircleDot, Download, Maximize2, Minus, Plus, Square, Undo2, Redo2, X, Image, Upload, SlidersHorizontal } from "lucide-react";
 import TopologyOptimizerPanel from "./TopologyOptimizerPanel.jsx";
+import { awaitJob } from "../asyncJobs.js";
 
 const VIEW = { x: 70, y: 55, width: 860, height: 530 };
 const emptyPlan = { length: 40, width: 30, spacing: 5, items: [], areas: [], background: null };
@@ -274,8 +275,9 @@ function GroundingPlanDrawer({ projectId, projectName, conversation, token, focu
     try {
       const sourcePage = file.mime_type === "application/pdf" ? Math.max(1, Number(backgroundPage) || 1) : null;
       const response = await fetch(`/api/v1/projects/${projectId}/artefactos-diseno-tierras/${artifactRef.current.artifact_id}/versions/${artifactRef.current.version}/plan-revision`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ upload_id: file.upload_id, source_page: sourcePage }) });
-      const proposal = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(proposal.detail || "No se pudo analizar el plano.");
+      const accepted = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(accepted.detail || "No se pudo analizar el plano.");
+      const proposal = await awaitJob(token, accepted);
       setVisionProposal({ ...proposal.proposal, ...proposal, structures: proposal.proposal?.structures || [] });
       setMessage("Revisión comparada y alerta publicada en el chat. Revisa y confirma los obstáculos antes de incorporarlos.");
     } catch (error) {

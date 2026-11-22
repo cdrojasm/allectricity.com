@@ -4,6 +4,7 @@ import json
 import os
 import socket
 from concurrent.futures import ThreadPoolExecutor, wait
+from threading import Lock
 from time import monotonic, time
 from urllib.request import urlopen
 
@@ -117,8 +118,23 @@ def _run(check, request):
     return {"status": status, "detail": detail, "latency_ms": round((monotonic() - started) * 1000)}
 
 
+HEALTH_CACHE_S = float(os.getenv("SYSTEM_HEALTH_CACHE_S", "15"))
+_health_lock = Lock()
+
+
 @router.get("/system/health")
 def system_health(request: Request, actor=Depends(require())):
+    """Dependency health, reused for HEALTH_CACHE_S: the worker ping alone waits its full 2 s timeout, so
+    every viewer of the dashboard would otherwise hold an API thread for 2 s per refresh."""
+    with _health_lock:  # concurrent callers wait for one check instead of each running their own
+        cached = getattr(request.app.state, "system_health", None)
+        if cached is None or monotonic() - cached[0] >= HEALTH_CACHE_S:
+            cached = (monotonic(), _check_health(request))
+            request.app.state.system_health = cached
+        return cached[1]
+
+
+def _check_health(request: Request) -> dict:
     """Check every dependency in parallel; `status` is "ok" only when all required ones are."""
     pool = ThreadPoolExecutor(max_workers=len(COMPONENTS))
     futures = {cid: pool.submit(_run, check, request) for cid, _, check, _ in COMPONENTS}
@@ -169,8 +185,10 @@ def _work_in_progress(db, now: int) -> dict[str, dict]:
 
     calculations = [r for status in ("pending", "running") for r in db.many("calculos_potencial_tierras", status=status)]
     runs = [r for status in ("queued", "running") for r in db.many("optimizer_runs", status=status)]
+    jobs = [r for status in ("queued", "running") for r in db.many("async_jobs", status=status)]
     return {"calculations": summarize(calculations, ("pending",), ("running",)),
-            "optimizer": summarize(runs, ("queued",), ("running",))}
+            "optimizer": summarize(runs, ("queued",), ("running",)),
+            "jobs": summarize(jobs, ("queued",), ("running",))}
 
 
 def queue_report(request: Request) -> dict:

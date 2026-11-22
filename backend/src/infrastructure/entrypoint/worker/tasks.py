@@ -34,6 +34,7 @@ celery_app.conf.update(
         "spat.reconcile_file_uploads": {"queue": "documents"},
         "spat.calculate_artifact_potential": {"queue": "calculations"},
         "spat.optimize_topology": {"queue": "optimizer"},
+        "spat.optimize_discrete": {"queue": "optimizer"},
         "spat.render_study_pdf": {"queue": "render"},
         "spat.dispatch_reset_mail": {"queue": "mail"},
         "spat.send_reset_mail": {"queue": "mail"},
@@ -97,6 +98,22 @@ def discover_materials_job(job_id):
             db.change("material_discovery_jobs", job_id, status="failed",
                       error="Ocurrió un error interno durante la búsqueda.", updated_at=int(now()))
         raise
+
+
+@celery_app.task(name="spat.run_async_job", soft_time_limit=240, time_limit=270)
+def run_async_job(job_id):
+    """Run one background job (src/domain/jobs.py); the queue was chosen by its kind at dispatch."""
+    from src.application.use_cases import async_jobs
+    from src.infrastructure.services.async_job_handlers import HANDLERS
+
+    async_jobs.run(upload_store(), job_id, HANDLERS)
+
+
+def send_async_job(job: dict) -> None:
+    """Publish a committed job to the queue whose worker carries its dependencies."""
+    from src.domain.jobs import QUEUES, JobKind
+
+    run_async_job.apply_async(args=[job["id"]], task_id=job["id"], queue=QUEUES[JobKind(job["kind"])])
 
 
 @celery_app.task(name="spat.render_study_pdf", autoretry_for=(Exception,), retry_backoff=30, max_retries=2)
@@ -375,6 +392,14 @@ def optimize_topology(run_id):
     execute_topology_run(TopologyJobDeps(
         store=upload_store(), repository=OptimizerRunRepository, client_factory=PotentialEngineClient,
         run_optimizer=run_topology_optimizer, build_inputs=build_inputs, evaluate_base=evaluate_base), run_id)
+
+
+@celery_app.task(name="spat.optimize_discrete", soft_time_limit=1500, time_limit=1650)
+def optimize_discrete(run_id):
+    """Evaluate a queued discrete optimizer run (OP-06/OP-19) and store its alternatives."""
+    from src.infrastructure.calculations.optimizer_discrete_job import execute_discrete_run
+
+    execute_discrete_run(upload_store(), run_id)
 
 
 @celery_app.task(name="spat.scan_file_upload", bind=True, autoretry_for=(Exception,), retry_backoff=30, retry_jitter=True, max_retries=5)

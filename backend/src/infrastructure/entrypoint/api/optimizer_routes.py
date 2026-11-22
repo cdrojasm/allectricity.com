@@ -1,4 +1,4 @@
-"""Project-scoped optimizer runs: the synchronous discrete search (OP-06/OP-19) and the queued topological search."""
+"""Project-scoped optimizer runs: the queued discrete search (OP-06/OP-19) and the queued topological search."""
 
 from __future__ import annotations
 
@@ -13,15 +13,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.application.use_cases import potential_calculations
-from src.application.use_cases.optimizer_run import run_discrete_optimizer
 from src.domain.spat.artifact_contract import validate_artifact
 from src.infrastructure.calculations import artifact_potential, safety_criteria
 from src.infrastructure.calculations.conductor_thermal import equivalent_radius_m
 from src.infrastructure.calculations.potential_engine_client import (
-    HomogeneousSoil,
-    LayerStackSoil,
-    PotentialEngineClient,
-    TwoLayerSoil,
     soil_record,
 )
 from src.infrastructure.entrypoint.api.constraint_profile_routes import (
@@ -186,24 +181,6 @@ class OptimizerRunRequest(StrictModel):
         return self
 
 
-def _soil_model(value: SoilInput):
-    if value.model == "homogeneous":
-        return HomogeneousSoil(value.resistivity_ohm_m)
-    if value.model == "two-layer":
-        return TwoLayerSoil(value.upper_resistivity_ohm_m, value.lower_resistivity_ohm_m,
-                            value.upper_thickness_m)
-    return LayerStackSoil(tuple((layer.resistivity_ohm_m, layer.thickness_m)
-                                for layer in value.layers), value.kernel_density)
-
-
-def _top_resistivity(value: SoilInput) -> float:
-    if value.model == "homogeneous":
-        return value.resistivity_ohm_m
-    if value.model == "two-layer":
-        return value.upper_resistivity_ohm_m
-    return value.layers[0].resistivity_ohm_m
-
-
 def _base_parameters(geometry: dict[str, Any], variables: list[str], conductor: dict[str, Any]) -> dict[str, Any]:
     spacing_x = geometry.get("conductor_spacing_x_m") or geometry.get("conductor_spacing_m")
     spacing_y = geometry.get("conductor_spacing_y_m") or geometry.get("conductor_spacing_m")
@@ -238,7 +215,7 @@ def _base_parameters(geometry: dict[str, Any], variables: list[str], conductor: 
     return parameters
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=202)
 def create_optimizer_run(project_id: str, payload: OptimizerRunRequest, request: Request,
                          actor=Depends(require("designs:write"))):
     now = int(time())
@@ -316,11 +293,13 @@ def create_optimizer_run(project_id: str, payload: OptimizerRunRequest, request:
                     json.dumps(snapshot, sort_keys=True, separators=(",", ":"),
                                ensure_ascii=False).encode("utf-8")
                 ).hexdigest(),
+                # What the optimizer worker needs beyond the request, resolved here against the stored artifact.
+                "worker_inputs": {"base_parameters": base_parameters, "quantities": quantities},
             }
             repo = OptimizerRunRepository(db.connection)
-            repo.create_run({
+            run = repo.create_run({
                 "id": run_id, "project_id": project_id, "artifact_id": payload.artifact_id,
-                "artifact_version": payload.artifact_version, "status": "running",
+                "artifact_version": payload.artifact_version, "status": "queued",
                 "request_snapshot": request_snapshot, "result_summary": None, "error": None,
                 "created_by": actor.user_id, "created_at": now, "updated_at": now,
             })
@@ -329,81 +308,21 @@ def create_optimizer_run(project_id: str, payload: OptimizerRunRequest, request:
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
+    # Dispatch only after the database transaction has committed; the optimizer worker evaluates the candidates.
     try:
-        exposure = safety_criteria.FaultExposure(
-            clearing_time_s=payload.exposure.clearing_time_s,
-            body_weight_kg=payload.exposure.body_weight_kg,
-            surface_resistivity_ohm_m=payload.exposure.surface_resistivity_ohm_m,
-            surface_thickness_m=payload.exposure.surface_thickness_m,
-            soil_resistivity_ohm_m=_top_resistivity(payload.soil),
-            exposure_class=payload.exposure.exposure_class,
-            surface_layer_present=payload.exposure.surface_layer_present,
-        )
-        result = run_discrete_optimizer(
-            base_parameters=base_parameters,
-            base_geometry=geometry,
-            constraint_context=context,
-            optimized_variables=payload.variables,
-            soil=_soil_model(payload.soil),
-            injection_a=payload.injection_a,
-            points=[],  # OP-04 derives its safety search points from each candidate geometry.
-            client=PotentialEngineClient(),
-            exposure=exposure,
-            standards=payload.standards,
-            explicit_quantities=quantities,
-            cost_currency=payload.cost_currency,
-            seed=payload.seed,
-            max_evaluations=payload.max_evaluations,
-            restarts=payload.restarts,
-        )
-        alternatives = []
-        for rank, candidate in enumerate(result.get("feasible_candidates", []), start=1):
-            cost_detail = candidate.get("cost_detail") or {}
-            evaluation = candidate.get("safety") or {}
-            evaluation_snapshot = {
-                "feasible": evaluation.get("Feasible") is True,
-                "feasibility_status": evaluation.get("FeasibilityStatus"),
-                "certified": (evaluation.get("FeasibilityBasis") or {}).get("certified") is True,
-                "cost": candidate.get("cost"),
-                "cost_detail": cost_detail,
-                "safety": evaluation,
-                "geometry": evaluation.get("geometry"),
-                "trace": {
-                    "candidate_sha256": candidate.get("candidate_sha256"),
-                    "selected_discrete_options": evaluation.get("SelectedDiscreteOptions"),
-                    "solver_input_sha256": evaluation.get("SolverInputSha256"),
-                    "constraint_context_schema_version": context.get("schema_version"),
-                    "site_geometry_sha256": context.get("site_geometry_sha256"),
-                },
-            }
-            alternatives.append({
-                "id": str(uuid4()), "candidate_sha256": candidate["candidate_sha256"],
-                "rank": rank, "recommended": rank == 1,
-                "candidate_snapshot": candidate["parameters"],
-                "evaluation_snapshot": evaluation_snapshot,
-                "created_at": int(time()),
-            })
-        result_summary = {key: result.get(key) for key in (
-            "algorithm", "seed", "max_evaluations", "unique_evaluations", "solver_evaluations",
-            "budget_exhausted", "restarts_requested", "restarts_started", "restart_summaries",
-            "best", "diagnostics", "cost_policy", "cost_currency",
-        )}
-        with request.app.state.services.store.transaction(write=True) as db:
-            repo = OptimizerRunRepository(db.connection)
-            saved = repo.add_alternatives(project_id, run_id, alternatives)
-            run = repo.update_run(project_id, run_id, {
-                "status": "completed", "result_summary": result_summary,
-                "error": None, "updated_at": int(time()),
-            })
-        return {"run": run, "alternatives": saved}
+        dispatch_discrete_run(run_id)
     except Exception as exc:
         with request.app.state.services.store.transaction(write=True) as db:
-            run = OptimizerRunRepository(db.connection).update_run(project_id, run_id, {
-                "status": "failed", "error": str(exc)[:2000], "updated_at": int(time()),
-            })
-        if isinstance(exc, (ValueError, TypeError)):
-            raise HTTPException(422, str(exc)) from exc
-        raise HTTPException(502, "Optimizer run failed while evaluating candidates") from exc
+            OptimizerRunRepository(db.connection).transition(project_id, run_id, ("queued",), {
+                "status": "failed", "error": "No se pudo poner la búsqueda en cola.", "updated_at": int(time())})
+        raise HTTPException(503, "El worker del optimizador no está disponible.") from exc
+    return {"run": run, "alternatives": []}
+
+
+def dispatch_discrete_run(run_id: str) -> None:
+    from src.infrastructure.entrypoint.worker.tasks import optimize_discrete
+
+    optimize_discrete.apply_async(args=[run_id], task_id=f"optimizer-discrete:{run_id}")
 
 
 # ---- topological optimizer (OPT-010…017 in the product): queued job, cancel, comparison, apply ------------------

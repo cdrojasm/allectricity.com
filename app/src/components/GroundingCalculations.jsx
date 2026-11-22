@@ -39,6 +39,7 @@ import {
   Zap,
 } from "lucide-react";
 import { MeasurementTemplates } from "./MeasurementTemplates.jsx";
+import { awaitJob } from "../asyncJobs.js";
 
 const REQUIRED_DESIGN_FIELDS = [
   "length_m",
@@ -551,7 +552,7 @@ function GroundingCalculations({
     setBusy(true);
     setError("");
     try {
-      const imported = await request(
+      const imported = await awaitJob(token, await request(
         `${root}/mediciones-suelo/archivo/ajustar`,
         {
           method: "POST",
@@ -563,7 +564,7 @@ function GroundingCalculations({
             layer_count: Number(selectedLayerCount),
           }),
         },
-      );
+      ));
       setReadings(imported.measurements);
       setFit(imported);
       setSoilFileSource(imported.source);
@@ -622,7 +623,7 @@ function GroundingCalculations({
     try {
       setSoilFileSource(null);
       setFit(
-        await request(`${root}/mediciones-suelo/ajustar`, {
+        await awaitJob(token, await request(`${root}/mediciones-suelo/ajustar`, {
           method: "POST",
           body: JSON.stringify({
             array: measurementMethod,
@@ -632,7 +633,7 @@ function GroundingCalculations({
               apparent_resistivity_ohm_m: Number(r.apparent_resistivity_ohm_m),
             })),
           }),
-        }),
+        })),
       );
     } catch (e) {
       setError(e.message);

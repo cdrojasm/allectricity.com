@@ -54,6 +54,7 @@ def test_templates_report_503_when_the_catalog_is_missing(env, monkeypatch):  # 
 
 def test_system_health_reports_each_component(env, monkeypatch):  # noqa: F811
     _, _, client, _, tokens, _ = env
+    monkeypatch.setattr(system_routes, "HEALTH_CACHE_S", 0)  # each call below must check again
 
     def failing(request):
         raise RuntimeError("Buckets faltantes: plantillas")

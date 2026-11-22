@@ -27,6 +27,7 @@ from src.infrastructure.entrypoint.api.knowledge_graph_routes import (
 from src.infrastructure.entrypoint.api.system_routes import router as system_router
 from src.infrastructure.entrypoint.api.study_routes import router as study_router, public_router as public_study_router
 from src.infrastructure.entrypoint.api.optimizer_routes import router as optimizer_router
+from src.infrastructure.entrypoint.api.job_routes import router as job_router
 from src.infrastructure.entrypoint.api.material_catalog_routes import router as material_catalog_router
 from src.infrastructure.entrypoint.api.material_catalog_persistence_routes import (
     router as material_catalog_persistence_router,
@@ -82,6 +83,7 @@ def create_app(settings=None, services=None):
     app.include_router(material_catalog_persistence_router)
     app.include_router(constraint_profile_router)
     app.include_router(optimizer_router)
+    app.include_router(job_router)
     app.state.geocoder_search_url = getattr(
         settings,
         "geocoder_search_url",
