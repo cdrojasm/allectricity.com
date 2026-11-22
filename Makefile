@@ -83,8 +83,9 @@ lint:
 	$(COMPOSE) --profile test run --rm --no-deps tests ruff check --no-cache src tests --select E9,F63,F7,F82
 
 .PHONY: local-config migrate create-admin sync-prompts phoenix-openrouter smoke-local templates eval-extraction
+# Runs as the host user: on Linux (CI) a root-owned .env with mode 600 would be unreadable to `docker compose`.
 local-config:
-	docker run --rm --name grounding-design-ai-config -v "$(CURDIR):/workspace" -w /workspace python:3.12-alpine python scripts/configure_local.py
+	docker run --rm --name grounding-design-ai-config --user "$$(id -u):$$(id -g)" -v "$(CURDIR):/workspace" -w /workspace python:3.12-alpine python scripts/configure_local.py
 
 migrate:
 	$(COMPOSE) run --rm migrate
