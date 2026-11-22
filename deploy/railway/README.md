@@ -4,6 +4,20 @@
 
 Las tareas Celery están separadas por colas: `agent`, `documents`, `calculations`, `mail` y `render`. Cada worker escucha únicamente su cola, por lo que una extracción documental pesada no bloquea al agente ni a los cálculos.
 
+## Despliegue automático desde GitHub
+
+`.github/workflows/deploy.yml` despliega a producción **solo cuando `ci` pasa en `main`**, y solo los
+servicios afectados por los archivos cambiados desde el último despliegue exitoso (tag `deployed/production`).
+`changed_services.py` traduce archivos a servicios (por ejemplo, una ruta en `entrypoint/api/` → solo `api`;
+`app/` → solo `frontend`; `backend/src/` → api, scheduler y workers; tests y docs → nada). `deploy_services.py`
+despliega el `api` primero (aplica las migraciones al arrancar), espera su SUCCESS y luego el resto en paralelo.
+
+- Manual: Actions → **deploy** → *Run workflow*: vacío = según los cambios, `all` = todos, o una lista
+  (`api frontend`). Un despliegue manual parcial no mueve el tag.
+- Requiere el secreto del repositorio `RAILWAY_TOKEN`: un *project token* de Railway del entorno production.
+- Si un despliegue falla, el tag no se mueve y esos cambios salen con el siguiente.
+- Probar el mapeo: `python3 deploy/railway/changed_services.py --self-test`.
+
 ## Despliegue con el CLI (piloto)
 
 Desde la raíz del repositorio, con `railway login` hecho:
