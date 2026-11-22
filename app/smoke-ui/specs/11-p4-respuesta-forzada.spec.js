@@ -101,7 +101,7 @@ test("P4-03 forzado: tras un cambio válido, el inválido no se anuncia ni se gu
   expect(after.every((row) => row.snapshot.geometry.burial_depth_m > 0)).toBe(true);
   expect(answer).toContain(`Se guardó la versión ${created[0].version}`);
   const saved = (answer.split("Campos guardados:")[1] || "").split(/Cambios no aplicados|no se aplic|rechaz/i)[0];
-  expect(saved).toContain("geometry.width_m=38");
+  expect(saved).toContain("ancho: 38 m");
   expect(saved, "La profundidad rechazada no puede figurar como guardada").not.toContain("burial_depth_m");
   // P4-03: el rechazo se conserva y se explica en la misma respuesta.
   expect(answer, "La respuesta debe explicar el cambio rechazado").toMatch(/(no aplicad|rechaz|no se guard|no pas)[^]*burial_depth_m|burial_depth_m[^]*(no aplicad|rechaz|no se guard|no pas)/i);

@@ -78,7 +78,7 @@ for (const [index, negation] of ["No se realizaron cambios.", "No hicimos cambio
     expect(latest.snapshot.geometry.width_m).toBe(width);
     expect(answer).not.toContain(negation);
     expect(answer).toContain(`Se guardó la versión ${latest.version}`);
-    expect(answer).toContain(`geometry.width_m=${width}`);
+    expect(answer).toContain(`ancho: ${width} m`);
     await expect(page.getByText(`Se guardó la versión ${latest.version}`).last()).toBeVisible();
   });
 }
@@ -112,7 +112,7 @@ test("P4-03: un cambio rechazado por validación no se anuncia como guardado ni 
     expect(created.length).toBe(1);
     expect(created[0].snapshot.geometry.width_m).toBe(36);
     expect(answer).toContain(`Se guardó la versión ${created[0].version}`);
-    expect(answer).toContain("geometry.width_m=36");
+    expect(answer).toContain("ancho: 36 m");
     expect(answer, "La respuesta debe explicar el cambio rechazado").toMatch(/burial_depth_m|profundidad/i);
   } else {
     expect(answer).not.toMatch(/Se guardó la versión/);
