@@ -487,7 +487,8 @@ function GroundingCalculations({
       Number(reading.apparent_resistivity_ohm_m) > 0 &&
       Number.isFinite(Number(reading.apparent_resistivity_ohm_m)),
   ).length;
-  const selectedLayerCount = layerCount;
+  // The fit admits 2–8 layers: a homogeneous plan (1 layer) would otherwise ask for an impossible fit.
+  const selectedLayerCount = Math.min(8, Math.max(2, Number(layerCount) || 2));
   const canFitMeasurements =
     validMeasurementCount >= Math.max(4, selectedLayerCount * 2) &&
     ["wenner", "schlumberger"].includes(measurementMethod);
@@ -502,7 +503,11 @@ function GroundingCalculations({
     });
     const data = response.status === 204 ? null : await response.json();
     if (!response.ok)
-      throw new Error(data?.detail || "No se pudo completar la operación.");
+      throw new Error(
+        typeof data?.detail === "string" ? data.detail
+          : Array.isArray(data?.detail) ? data.detail.map((item) => item?.msg).filter(Boolean).join(" · ") || "Los datos enviados no son válidos."
+          : data?.detail?.message || "No se pudo completar la operación.",
+      );
     return data;
   };
   const root = `/api/v1/projects/${project.id}/artefactos-diseno-tierras`;
