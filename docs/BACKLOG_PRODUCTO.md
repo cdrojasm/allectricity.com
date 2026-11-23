@@ -153,6 +153,19 @@ H1 va primero porque H2 sin una sola verdad reproduce las incoherencias actuales
 | PR-57 | ✅ **Implementada.** Supuestos críticos impiden publicar como final; los borradores llevan marca de agua visible. | PR-25 | PR-25, PR-51 |
 | PR-58 | **Dominio propio del cliente** (`estudios.miempresa.com`). Candidato a plan de pago; después de H3. ⏸ **En espera comercial (15 nov):** se decide después de H3. | — | PR-51 |
 
+## Iniciativa: catálogo reutilizable, BOM y cotizaciones
+
+Solicitado el 23 nov 2026. El catálogo debe separar referencias generales del usuario (reutilizables en todos sus proyectos) de referencias particulares de un proyecto. El formulario debe admitir cualquier material, equipo o servicio y presentar unidad, contactos accionables, imágenes y plazos con el origen de cada dato. La búsqueda libre debe conservar la lista de referencias halladas para revisión.
+
+- **BOM / BOMElement:** representar cantidades requeridas por instalación y permitir excedentes explícitos por elemento (porcentaje o cantidad adicional), conservando cantidad base, regla aplicada y total calculado para revisión.
+- **Quotation / QuotationElement:** cotización numerada, estado y vigencia; derivar partidas de BOM, costo, margen/rentabilidad, descuentos, impuestos y tipo, transporte por partida o global, condiciones y datos de contacto/pago del usuario. Guardar decisiones de presentación de campos (por ejemplo, mostrar forma de pago o impuestos).
+- **Grupos de cotización:** entidad `QuotationGroup` para agrupar partidas como «Subestación» (transformador, cables, etc.) dentro de la cotización de un proyecto.
+- **Editor de cotización:** ofrecer una tabla estructurada y un editor narrativo con bloques de texto, tablas y descripciones, similar al editor de informes.
+- **Plantillas y agentes:** permitir plantillas reutilizables de cotización e informe de puesta a tierra; habilitar un agente cotizador y un agente de informes que compongan estos elementos sin inventar precios, fuentes ni datos técnicos.
+- **Plantilla de servicios:** modelar precio global por un entregable único (p. ej. comisionamiento de equipo) o tarifa por unidad medible (p. ej. excavación por m³ o instalación por hora). Registrar cantidad, unidad, alcance/criterio de aceptación y duración; separar duración del trabajo de tiempo de espera o disponibilidad.
+
+Imágenes y plazos de servicio/despacho pueden capturarse cuando la fuente los publique, conservando URL y fecha de consulta; si la búsqueda no los encuentra, quedan sin confirmar para completar por contacto con el proveedor.
+
 ## 7. Qué se congela
 
 No se borra; no recibe trabajo hasta cerrar H2:

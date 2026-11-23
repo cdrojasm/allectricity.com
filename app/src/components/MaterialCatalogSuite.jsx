@@ -2,10 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { awaitJob } from "../asyncJobs.js";
 import { Bot, Check, CheckCircle2, ChevronRight, CircleHelp, ExternalLink, Filter, Globe2, LoaderCircle, MapPin, Package, Plus, Search, Send, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
 
-const CATEGORIES = ["Conductor", "Varilla", "Conector", "Soldadura", "Accesorio"];
+const CATEGORIES = ["Material", "Equipo", "Servicio", "Conductor", "Varilla", "Conector", "Soldadura", "Accesorio"];
 const EMPTY_FORM = {
-  name: "", category: "Conductor", material: "Cobre", section: "", price: "", quantity: "", unit: "m", currency: "COP",
-  structured_options_text: "",
+  name: "", category: "Conductor", material: "Cobre", section: "", price: "", quantity: "", unit: "unidad", currency: "COP",
+  structured_options_text: "", contact_email: "", contact_phone: "", contact_whatsapp_url: "", contact_url: "", image_url: "", lead_time: "", lead_time_type: "dispatch",
   supplier: "", source_url: "", source_name: "", country: "", city: "", quoted_at: "", expires_at: "", notes: "",
 };
 
@@ -22,6 +22,8 @@ function contactNote(contact = {}) {
     contact.phone && `teléfono: ${contact.phone}`,
     contact.whatsapp_url && `WhatsApp: ${contact.whatsapp_url}`,
     contact.contact_url && `formulario: ${contact.contact_url}`,
+    contact.image_url && `imagen: ${contact.image_url}`,
+    contact.lead_time && `plazo: ${contact.lead_time}`,
   ].filter(Boolean);
   return parts.length ? `Contacto público: ${parts.join("; ")}` : "";
 }
@@ -29,7 +31,7 @@ function contactNote(contact = {}) {
 function contactsFromNotes(notes = "") {
   const line = String(notes).split("\n").find((value) => value.startsWith("Contacto público:")) || "";
   const get = (label) => line.match(new RegExp(`${label}: ([^;]+)`))?.[1]?.trim() || "";
-  return { email: get("correo"), phone: get("teléfono"), whatsapp_url: get("WhatsApp"), contact_url: get("formulario") };
+  return { email: get("correo"), phone: get("teléfono"), whatsapp_url: get("WhatsApp"), contact_url: get("formulario"), image_url: get("imagen"), lead_time: get("plazo") };
 }
 
 function notesWithContacts(notes, contacts) {
@@ -111,7 +113,8 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
   const storageKey = `allectricity_material_catalog_project_v1:${userId || "local"}`;
   const [tab, setTab] = useState("discover");
   const [location, setLocation] = useState({ country: "Colombia", city: "", radius_km: "100", currency: "COP" });
-  const [category, setCategory] = useState("Conductor");
+  const [category, setCategory] = useState("Material");
+  const [searchText, setSearchText] = useState("");
   const [maxResults, setMaxResults] = useState(8);
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState(() => initialProjectId || readMigratedItem(storageKey) || "");
@@ -247,7 +250,7 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
       const response = await fetch("/api/v1/material-catalog/discover", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ geography: { ...location, radius_km: Number(location.radius_km) || null, currency: location.currency.toUpperCase() }, category, query: `${category} puesta a tierra`, max_results: Number(maxResults) }),
+        body: JSON.stringify({ geography: { ...location, radius_km: Number(location.radius_km) || null, currency: location.currency.toUpperCase() }, category, query: searchText.trim() || category, max_results: Number(maxResults) }),
       });
       const queued = await readJson(response);
       setDiscoveryStatus("En cola");
@@ -275,7 +278,7 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
           country: location.country, city: location.city,
           quoted_at: Math.floor(new Date(item.captured_at || body.metadata?.captured_at || Date.now()).getTime() / 1000), expires_at: null,
           notes: notesWithContacts(item.notes, { email: item.contact_email, phone: item.contact_phone,
-            whatsapp_url: item.contact_whatsapp_url, contact_url: item.contact_url }) || null };
+            whatsapp_url: item.contact_whatsapp_url, contact_url: item.contact_url, image_url: item.image_url, lead_time: item.lead_time }) || null };
         try {
           const saved = await readJson(await fetch(catalogUrl, { method: "POST", headers, body: JSON.stringify(payload) }));
           found.push(catalogItem(saved));
@@ -302,11 +305,6 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
       setMessage("Para guardar precio o proveedor, agrega una URL o nota que permita rastrear la fuente.");
       return;
     }
-    let structuredOptions = null;
-    if (form.structured_options_text.trim()) {
-      try { structuredOptions = JSON.parse(form.structured_options_text); }
-      catch { setMessage("Las opciones discretas deben ser JSON válido."); return; }
-    }
     setBusy(true);
     try {
       const original = items.find((item) => item.id === editingId);
@@ -314,11 +312,11 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
         material: form.material, specification: form.section || "Pendiente de especificar", quantity: form.quantity === "" ? null : Number(form.quantity), quantity_unit: form.unit,
         quantity_basis: form.quantity === "" ? null : `${form.quantity} ${form.unit}`, price_per_unit: normalizedPrice,
         price_currency: form.currency.toUpperCase(), supplier: form.supplier || null, source_url: form.source_url || null,
-        structured_options: structuredOptions,
+        structured_options: original?.structured_options || null,
         country: form.country || location.country, city: form.city || location.city,
         source_name: form.source_name || null, quoted_at: form.quoted_at ? Math.floor(new Date(form.quoted_at).getTime() / 1000) : Math.floor(Date.now() / 1000),
         expires_at: form.expires_at ? Math.floor(new Date(form.expires_at).getTime() / 1000) : null,
-        notes: notesWithContacts(form.notes, original ? contactsFromNotes(original.notes) : {}) || null };
+        notes: notesWithContacts(form.notes, { email: form.contact_email, phone: form.contact_phone, whatsapp_url: form.contact_whatsapp_url, contact_url: form.contact_url, image_url: form.image_url, lead_time: form.lead_time }) || null };
       const saved = await readJson(await fetch(editingId ? `${catalogUrl}/${encodeURIComponent(editingId)}` : catalogUrl, { method: editingId ? "PATCH" : "POST", headers, body: JSON.stringify(payload) }));
       setItems((current) => [catalogItem(saved), ...current]); await reloadCatalog();
       setForm(EMPTY_FORM); setEditingId(null); setFormOpen(false); setTab("discover"); setMessage(editingId ? "Cotización actualizada en el proyecto." : "Renglón guardado en el proyecto como candidato. Verifica su fuente antes de aprobarlo.");
@@ -346,10 +344,12 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
       const date = typeof value === "number" || /^\d+$/.test(String(value)) ? new Date(Number(value) * 1000) : new Date(value);
       return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
     };
+    const contacts = contactsFromNotes(item.notes);
     setEditingId(item.id);
     setForm({ ...EMPTY_FORM, name: item.name || "", category: item.category || "Accesorio", material: item.material || "",
       section: item.section || "", price: item.price ?? "", quantity: item.quantity ?? "", unit: item.unit || "unidad",
-      structured_options_text: item.structured_options ? JSON.stringify(item.structured_options, null, 2) : "",
+      structured_options_text: "", contact_email: contacts.email, contact_phone: contacts.phone, contact_whatsapp_url: contacts.whatsapp_url,
+      contact_url: contacts.contact_url, image_url: contacts.image_url, lead_time: contacts.lead_time,
       currency: item.currency || location.currency, supplier: item.supplier || "", source_url: item.source_url || "",
       source_name: item.source_name || "", country: item.country || location.country, city: item.city || location.city,
       quoted_at: toDateInput(item.quoted_at || item.captured_at), expires_at: toDateInput(item.expires_at), notes: item.notes || "" });
@@ -390,7 +390,7 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
     </header>
 
     <section className="catalog-heading">
-      <div><div className="eyebrow">CATÁLOGO DE MATERIALES</div><h1>Catálogo de materiales</h1><p>Encuentra precios locales, valida las fuentes y crea una base trazable para estimar costos.</p></div>
+      <div><div className="eyebrow">CATÁLOGO DE MATERIALES</div><h1>Catálogo de materiales y servicios</h1><p>Guarda referencias para reutilizarlas en tus proyectos y registra precios con su fuente.</p></div>
       <div className="catalog-heading-actions" style={{ display: "flex", alignItems: "end", gap: 10 }}><label className="catalog-project-select" style={{ display: "grid", gap: 5, color: "#64736f", fontSize: 10 }}>Proyecto<select style={{ minWidth: 190, height: 36, border: "1px solid #dfe5e7", borderRadius: 6, padding: "0 9px", background: "white" }} value={projectId} onChange={(event) => changeProject(event.target.value)}><option value="">Seleccionar proyecto…</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label><button className="button primary" disabled={!projectId} onClick={() => { setEditingId(null); setForm(EMPTY_FORM); setFormOpen(true); }}><Plus size={15}/>Agregar cotización</button></div>
     </section>
 
@@ -408,7 +408,8 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
         <label>Ciudad o región<input value={location.city} onChange={(e) => setLocation({ ...location, city: e.target.value })} placeholder="Medellín" required/></label>
         <label>Radio<select value={location.radius_km} onChange={(e) => setLocation({ ...location, radius_km: e.target.value })}><option value="25">25 km</option><option value="50">50 km</option><option value="100">100 km</option><option value="250">250 km</option></select></label>
         <label>Moneda<select value={location.currency} onChange={(e) => setLocation({ ...location, currency: e.target.value })}><option value="COP">COP · Peso colombiano</option><option value="USD">USD · Dólar</option><option value="MXN">MXN · Peso mexicano</option><option value="PEN">PEN · Sol</option><option value="CLP">CLP · Peso chileno</option><option value="BRL">BRL · Real</option></select></label>
-        <label>Material<select value={category} onChange={(e) => setCategory(e.target.value)}>{CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label>
+        <label>Tipo de referencia<select value={category} onChange={(e) => setCategory(e.target.value)}>{CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label>
+        <label className="catalog-form-wide">¿Qué necesitas encontrar?<input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Ej.: bomba centrífuga 5 HP, cable THHN 12 AWG o excavación manual"/></label>
         <label>Resultados<select value={maxResults} onChange={(e) => setMaxResults(Number(e.target.value))}><option value={3}>3 resultados</option><option value={5}>5 resultados</option><option value={8}>8 resultados</option><option value={10}>10 resultados</option></select></label>
         <button className="button primary catalog-discover-button" type="submit" disabled={busy}><Search size={15}/>{busy ? `${discoveryStatus || "Iniciando búsqueda"}…` : "Buscar proveedores"}</button>
       </form>
@@ -437,7 +438,7 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
         return <article className="catalog-item" key={item.id}>
         <div className="catalog-item-mark"><Package size={18}/></div><div className="catalog-item-main"><div className="catalog-item-title"><h3>{item.name || "Material sin nombre"}</h3><span className={`catalog-status ${item.status}`}>{item.status === "approved" ? "Aprobado" : "Por revisar"}</span></div>
           <p>{[item.material, item.section, item.category].filter(Boolean).join(" · ")}</p><div className="catalog-item-meta"><span><MapPin size={12}/>{[item.city, item.country].filter(Boolean).join(", ") || "Ubicación sin registrar"}</span>{item.supplier && <span>{item.supplier}</span>}<span>{displayDate(item.captured_at)}</span>{item.expires_at && <span>{expired ? "Cotización vencida" : `Vigente hasta ${displayDate(item.expires_at)}`}</span>}{item.source_url && <a href={item.source_url} target="_blank" rel="noreferrer">Ver fuente <ExternalLink size={11}/></a>}{item.source_name && <span>Fuente: {item.source_name}</span>}</div>
-          {(() => { const contacts = contactsFromNotes(item.notes); return Object.values(contacts).some(Boolean) && <div className="catalog-item-contacts"><strong>Contacto público</strong>{contacts.email && <a href={`mailto:${contacts.email}`}>{contacts.email}</a>}{contacts.phone && <a href={`tel:${contacts.phone}`}>{contacts.phone}</a>}{contacts.whatsapp_url && <a href={contacts.whatsapp_url} target="_blank" rel="noreferrer">WhatsApp</a>}{contacts.contact_url && <a href={contacts.contact_url} target="_blank" rel="noreferrer">Contactar al proveedor</a>}</div>; })()}
+          {(() => { const contacts = contactsFromNotes(item.notes); return (Object.values(contacts).some(Boolean) || contacts.lead_time) && <div className="catalog-item-contacts"><strong>Contacto y disponibilidad</strong>{contacts.email && <a href={`mailto:${contacts.email}?subject=${encodeURIComponent(`Consulta: ${item.name}`)}`}>Email: {contacts.email}</a>}{contacts.phone && <a href={`tel:${contacts.phone.replace(/[^+\d]/g, "")}`}>Llamar: {contacts.phone}</a>}{contacts.whatsapp_url && <a href={contacts.whatsapp_url} target="_blank" rel="noreferrer">Abrir WhatsApp</a>}{contacts.contact_url && <a href={contacts.contact_url} target="_blank" rel="noreferrer">Formulario del proveedor</a>}{contacts.lead_time && <span>{contacts.lead_time}</span>}{contacts.image_url && <a href={contacts.image_url} target="_blank" rel="noreferrer">Ver imagen del producto</a>}</div>; })()}
         </div><div className="catalog-item-price"><strong>{money(item.price, item.currency || location.currency)}</strong><span>{item.quantity ? `${item.quantity} ${item.unit || "unidad"} · ${money(Number(item.price) * Number(item.quantity), item.currency || location.currency)} total` : `por ${item.unit || "unidad"}`}</span></div>
         <div className="catalog-item-actions">{item.status === "candidate" && <><button className="button" onClick={() => editCandidate(item)}>Editar</button><button className="button approve-button" disabled={expired || !item.price || !item.supplier} title={!item.price ? "Agrega un precio confirmado para aprobar" : expired ? "Actualiza la cotización vencida" : undefined} onClick={() => approve(item.id)}><Check size={14}/>Aprobar</button></>}<button className="icon-button catalog-remove" aria-label="Eliminar material" title="Eliminar" onClick={() => remove(item.id)}><Trash2 size={15}/></button></div>
       </article>;})}</div> : <div className="catalog-empty"><span className="catalog-empty-icon">{tab === "catalog" ? <Package size={20}/> : <Search size={20}/>}</span><h3>{tab === "catalog" ? "Tu catálogo aprobado empieza aquí" : "No hay candidatos para revisar"}</h3><p>{tab === "catalog" ? "Aprueba materiales con una fuente y un precio verificables para que estén listos para estimar." : "Busca proveedores por región o registra una cotización que ya tengas."}</p><button className="button" disabled={!projectId} onClick={() => { setForm(EMPTY_FORM); setFormOpen(true); }}><Plus size={14}/>Registrar cotización</button></div>}
@@ -452,14 +453,18 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
         <label>Tipo<select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>{CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label>
         <label>Material<input value={form.material} onChange={(e) => setForm({ ...form, material: e.target.value })} placeholder="Cobre"/></label>
         <label>Sección / referencia<input value={form.section} onChange={(e) => setForm({ ...form, section: e.target.value })} placeholder="2/0 AWG · 67,4 mm²"/></label>
-        <label className="catalog-form-wide">Opciones discretas de ingeniería (JSON)<textarea rows="7" value={form.structured_options_text} onChange={(e) => setForm({ ...form, structured_options_text: e.target.value })} placeholder={'{"domain_id":"project.grid.rod_length","options":[{"option_id":"rod-2m","target":"rod_length_m","value":2,"unit":"m","applicability_filters":{},"provenance":{"source_type":"manufacturer_datasheet","reference":"URL o documento"}}]}'} /></label>
-        <p className="catalog-form-wide">Declara valores numéricos y su procedencia de ingeniería. La especificación libre no se convierte en parámetros. Solo opciones ligadas a una cotización aprobada y vigente llegan al optimizador.</p>
         <label>Precio por unidad<div className="catalog-price-fields"><input type="number" min="0.01" step="any" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="Opcional"/><select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}><option>COP</option><option>USD</option><option>MXN</option><option>PEN</option><option>CLP</option><option>BRL</option></select></div></label>
         <label>Cantidad estimada<input type="number" min="0.001" step="any" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} placeholder="Opcional"/></label>
-        <label>Unidad<select value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })}><option value="m">metro</option><option value="kg">kilogramo</option><option value="unidad">unidad</option><option value="rollo">rollo</option><option value="kit">kit</option></select></label>
+        <label>Unidad de compra<select value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })}><option value="unidad">Unidad (und)</option><option value="m">Metro (m)</option><option value="kg">Kilogramo (kg)</option><option value="hora">Hora (h)</option><option value="día">Día</option><option value="m2">Metro cuadrado (m²)</option><option value="m3">Metro cúbico (m³)</option><option value="viaje">Viaje</option><option value="rollo">Rollo</option><option value="kit">Kit</option></select></label>
+        {form.category === "Servicio" && <label>Forma de cobro<select value={form.unit === "servicio" ? "unique" : "measured"} onChange={(e) => setForm({ ...form, quantity: "1", unit: e.target.value === "unique" ? "servicio" : "hora", notes: e.target.value === "unique" ? "Alcance: servicio único; confirma entregables y duración en las notas." : "Servicio medido; especifica alcance, criterio de aceptación y duración en las notas." })}><option value="unique">Por un servicio completo</option><option value="measured">Por unidad ejecutada (hora, m², m³…)</option></select></label>}
         <label>Proveedor<input value={form.supplier} onChange={(e) => setForm({ ...form, supplier: e.target.value })} placeholder="Pendiente de confirmar"/></label>
         <label>Ciudad<input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder={location.city || "Ciudad"}/></label>
         <label className="catalog-form-wide">URL de la fuente<input type="url" value={form.source_url} onChange={(e) => setForm({ ...form, source_url: e.target.value })} placeholder="https://proveedor.com/producto"/></label>
+        <label>Email<input type="email" value={form.contact_email} onChange={(e) => setForm({ ...form, contact_email: e.target.value })} placeholder="ventas@proveedor.com"/></label>
+        <label>Teléfono<input type="tel" value={form.contact_phone} onChange={(e) => setForm({ ...form, contact_phone: e.target.value })} placeholder="+57…"/></label>
+        <label>Enlace de WhatsApp<input type="url" value={form.contact_whatsapp_url} onChange={(e) => setForm({ ...form, contact_whatsapp_url: e.target.value })} placeholder="https://wa.me/…"/></label>
+        <label>Imagen de referencia<input type="url" value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })} placeholder="URL pública de imagen"/></label>
+        <label>Plazo informado<input value={form.lead_time} onChange={(e) => setForm({ ...form, lead_time: e.target.value })} placeholder={form.category === "Servicio" ? "Duración: 2 días; espera: 1 semana" : "Disponible; despacho en 3–5 días"}/></label>
         <label>Fecha de cotización<input type="date" value={form.quoted_at} onChange={(e) => setForm({ ...form, quoted_at: e.target.value })}/></label>
         <label>Válida hasta<input type="date" value={form.expires_at} onChange={(e) => setForm({ ...form, expires_at: e.target.value })}/></label>
         <label className="catalog-form-wide">Notas<textarea rows="2" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Impuestos, disponibilidad, cantidad mínima…"/></label>
