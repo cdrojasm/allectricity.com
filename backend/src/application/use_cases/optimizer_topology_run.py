@@ -41,7 +41,8 @@ def _seed_constraints(constraints: OperatorConstraints) -> geometry_seeds.SeedCo
     low, high = constraints.rod_length_range_m
     defaults = geometry_seeds.SeedConstraints()
     lengths = tuple(length for length in defaults.rod_length_choices_m if low <= length <= high) or (round((low + high) / 2, 3),)
-    return replace(defaults, orthogonal=constraints.orthogonal, rod_length_choices_m=lengths)
+    return replace(defaults, orthogonal=constraints.orthogonal, redundant=constraints.redundant,
+                   stub_max_m=constraints.stub_max_m, rod_length_choices_m=lengths)
 
 
 def strategy_options(strategy: str, domain: dict[str, Any], constraints: OperatorConstraints,

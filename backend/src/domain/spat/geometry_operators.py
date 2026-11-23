@@ -9,7 +9,8 @@ checks the result against the site, the single-network rule and the constructive
   missing       the operator names a node, segment or rod that does not exist (or already exists)
   domain        the result leaves the allowed polygons, crosses a structure, overlaps or floats a rod
   connectivity  the result is not one connected network
-  constructive  a piece shorter than `min_segment_m`, too many segments or rods, a rod length out of range
+  constructive  a piece shorter than `min_segment_m`, too many segments or rods, a rod length out of range,
+                a new diagonal in an orthogonal search, or (with `redundant`) a run that lies on no closed loop
 """
 
 from __future__ import annotations
@@ -39,6 +40,12 @@ class OperatorConstraints:
     # already had (`inherited_diagonals`, as (a, b) point pairs) is kept: the rule is about what the search adds.
     orthogonal: bool = False
     inherited_diagonals: tuple = ()
+    # Every run must lie on a closed loop, so one break never isolates copper (no bridges in the graph). The only
+    # loose end allowed is a straight tail of at most `stub_max_m` that ends at a rod, the usual way a rod is bonded.
+    # Bridges the base design already had (`inherited_bridges`, as (a, b) point pairs) are kept.
+    redundant: bool = False
+    stub_max_m: float = 3.0
+    inherited_bridges: tuple = ()
 
 
 is_diagonal = gg.is_diagonal
@@ -48,6 +55,25 @@ def diagonals_of(geometry: dict) -> tuple:
     """The diagonal runs of a geometry, to keep them allowed when the search is orthogonal."""
     graph = gg.from_geometry(geometry)
     return tuple((a, b) for a, b, _ in sorted(graph.segments) if is_diagonal(a, b))
+
+
+def bridges_of(geometry: dict) -> tuple:
+    """The runs of a geometry that lie on no loop, to keep them allowed when the search is redundant."""
+    return tuple((a, b) for a, b, _ in gg.bridges(gg.normalize(gg.from_geometry(geometry))))
+
+
+def loose_runs(graph: gg.GeometryGraph, constraints: "OperatorConstraints") -> list[gg.Segment]:
+    """Bridges the redundancy rule does not allow: not inherited, and not a short tail ending at a rod."""
+    degree, rods = graph.degree(), graph.rod_nodes()
+    loose = []
+    for a, b, m in gg.bridges(graph):
+        if any(_on_piece(a, p, q) and _on_piece(b, p, q) for p, q in constraints.inherited_bridges):
+            continue
+        tail = (degree[a] == 1 and a in rods) or (degree[b] == 1 and b in rods)
+        if tail and gg._dist(a, b) <= constraints.stub_max_m + 1e-9:
+            continue
+        loose.append((a, b, m))
+    return loose
 
 
 def _on_piece(p: gg.Point, a: gg.Point, b: gg.Point) -> bool:
@@ -278,6 +304,12 @@ def check(graph: gg.GeometryGraph, constraints: OperatorConstraints = OperatorCo
                 raise OperatorRejected("constructive", f"a diagonal run {a}-{b}; only horizontal and vertical runs are built")
     if not gg.is_connected(graph):
         raise OperatorRejected("connectivity", f"the geometry splits into {len(gg.components(graph))} parts")
+    if constraints.redundant:
+        loose = loose_runs(graph, constraints)
+        if loose:
+            a, b, _ = loose[0]
+            raise OperatorRejected("constructive", f"the run {a}-{b} lies on no closed loop; only tails of up to "
+                                                   f"{constraints.stub_max_m} m ending at a rod may hang loose")
     report = evaluate_optimizer_geometry(gg.to_geometry(graph, base))
     if report["violations"]:
         raise OperatorRejected("domain", report["violations"][0]["message"])
@@ -299,9 +331,10 @@ KINDS = ("add", "remove", "split", "connect", "reconnect", "add_rod", "move_rod"
 REPAIR_WEIGHTS = (4.0, 0.25, 1.0, 4.0, 1.0, 4.0, 1.0, 0.25)
 
 
-def random_repair_operator(graph: gg.GeometryGraph, rng: random.Random, orthogonal: bool = False) -> Operator:
+def random_repair_operator(graph: gg.GeometryGraph, rng: random.Random, orthogonal: bool = False,
+                           tail_m: float | None = None) -> Operator:
     """Like `random_operator`, biased toward adding conductors and rods, for a design that violates."""
-    return random_operator(graph, rng, REPAIR_WEIGHTS, orthogonal=orthogonal)
+    return random_operator(graph, rng, REPAIR_WEIGHTS, orthogonal=orthogonal, tail_m=tail_m)
 
 
 def _aligned(node: gg.Point, others: list[gg.Point]) -> list[gg.Point]:
@@ -309,15 +342,23 @@ def _aligned(node: gg.Point, others: list[gg.Point]) -> list[gg.Point]:
 
 
 def random_operator(graph: gg.GeometryGraph, rng: random.Random, weights: tuple[float, ...] | None = None,
-                    kind: str | None = None, orthogonal: bool = False) -> Operator:
+                    kind: str | None = None, orthogonal: bool = False, tail_m: float | None = None) -> Operator:
     """One plausible operator for the graph; it may still be rejected by `apply_operator`.
 
     With no weights every kind is equally likely (and the random stream is what it always was). `kind` forces one.
     With `orthogonal`, new runs are horizontal or vertical (the random stream differs from the unconstrained one).
+    With `tail_m` (a redundant search), "add" lays a tail of at most that length and drives a rod at its free end,
+    the only loose run the redundancy rule admits; loops are closed by "connect" and the large-neighbourhood moves.
     """
     nodes, segments = sorted(graph.nodes()), sorted(graph.segments)
     if kind is None:
         kind = rng.choice(KINDS) if weights is None else rng.choices(KINDS, weights=weights)[0]
+    if kind == "add" and tail_m is not None:
+        from src.domain.spat.geometry_lns import CompositeOperator   # geometry_lns imports this module
+        a = rng.choice(nodes)
+        step = rng.choice((-1, 1)) * rng.choice([m for m in (1.5, 2.0, 3.0) if m <= tail_m] or [tail_m])
+        b = gg.point(a[0] + step, a[1]) if rng.random() < 0.5 else gg.point(a[0], a[1] + step)
+        return CompositeOperator((AddSegment(a, b), AddRod(b, rng.choice((1.5, 2.4, 3.0, 6.0)))))
     if kind == "add":
         a = rng.choice(nodes)
         if orthogonal:

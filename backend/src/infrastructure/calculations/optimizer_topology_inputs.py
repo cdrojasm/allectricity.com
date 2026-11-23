@@ -10,7 +10,7 @@ import os
 from typing import Any
 
 from src.application.use_cases.optimizer_topology_job import TOPOLOGY_STRATEGY
-from src.domain.spat.geometry_operators import OperatorConstraints, diagonals_of
+from src.domain.spat.geometry_operators import OperatorConstraints, bridges_of, diagonals_of
 from src.infrastructure.calculations import safety_criteria
 from src.infrastructure.calculations.potential_engine_client import HomogeneousSoil, LayerStackSoil, TwoLayerSoil
 
@@ -50,7 +50,9 @@ def parallel_workers() -> int:
 
 def build_inputs(snapshot: dict[str, Any]) -> dict[str, Any]:
     request = snapshot["request"]
-    limits = snapshot["operator_constraints"]["rod_length_range_m"]
+    applied = snapshot["operator_constraints"]
+    limits = applied["rod_length_range_m"]
+    redundant = bool(applied.get("redundant"))          # runs from before the rule have no key: they replay unconstrained
     return {
         "domain": snapshot["site"], "initial_geometry": snapshot["initial_geometry"],
         "rate_card": snapshot["rate_card"], "soil": soil_model(request["soil"]), "injection_a": request["injection_a"],
@@ -58,7 +60,9 @@ def build_inputs(snapshot: dict[str, Any]) -> dict[str, Any]:
         "max_solver_calls": request["max_solver_calls"], "seed_count": request["seed_count"],
         "strategy": TOPOLOGY_STRATEGY, "constraints": OperatorConstraints(
             rod_length_range_m=(limits["min"], limits["max"]), orthogonal=bool(snapshot["operator_constraints"].get("orthogonal")),
-            inherited_diagonals=diagonals_of(snapshot["initial_geometry"]) if snapshot["operator_constraints"].get("orthogonal") else ()),
+            inherited_diagonals=diagonals_of(snapshot["initial_geometry"]) if snapshot["operator_constraints"].get("orthogonal") else (),
+            redundant=redundant, inherited_bridges=bridges_of(snapshot["initial_geometry"]) if redundant else (),
+            **({"stub_max_m": float(applied["stub_max_m"]["value"])} if redundant and applied.get("stub_max_m") else {})),
         "constraint_context": snapshot["constraint_context"], "parallel_workers": snapshot.get("parallel_workers", 1),
         "settings": snapshot.get("settings"),
     }
