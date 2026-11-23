@@ -1,6 +1,10 @@
 # SV-01: the backend suite, including the solver reference cases and the frozen results (SV-27), runs on every
 # push and pull request. It uses the same `make test` as a developer machine: the tests image and an isolated
 # PostgreSQL in Docker Compose, so CI cannot pass on a path a developer cannot reproduce.
+# The `changes` job skips lint and the backend suite when nothing in the range can break it (frontend, docs, deploy
+# files: see NO_BACKEND_TESTS in deploy/railway/changed_services.py). The range is everything not yet in production
+# (tag deployed/production → HEAD) on main, or the whole PR against its base, so a cancelled or failed run never
+# lets an untested change through. `[ci: full]` in any commit message of the range forces the suite.
 name: ci
 
 on:
@@ -13,8 +17,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.plan.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0               # the range needs history and the deployed/production tag
+
+      - name: Plan
+        id: plan
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            BASE=$(git merge-base "origin/$BASE_REF" HEAD); WHY="PR contra $BASE_REF"
+          elif git rev-parse -q --verify "refs/tags/deployed/production^{commit}" >/dev/null; then
+            BASE=$(git rev-parse "deployed/production^{commit}"); WHY="pendiente desde el último deploy"
+          else
+            BASE=""; WHY="sin tag deployed/production"
+          fi
+          if [ -n "$BASE" ]; then
+            python3 deploy/railway/changed_services.py --ci "$BASE" HEAD | tee -a "$GITHUB_OUTPUT"
+            RANGE="${BASE:0:7}..$(git rev-parse --short HEAD)"
+          else
+            printf 'backend=true\nreason=%s\n' "$WHY" | tee -a "$GITHUB_OUTPUT"; RANGE="-"
+          fi
+          {
+            echo "### CI de $(git rev-parse --short HEAD)"
+            echo "Rango: $RANGE ($WHY)"
+            git log --oneline "$BASE..HEAD" 2>/dev/null | sed 's/^/- /' || true
+            echo
+            echo "Suite backend: $(grep '^reason=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2-)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   backend:
     name: Backend tests (solver regression included)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:

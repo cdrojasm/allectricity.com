@@ -1,7 +1,8 @@
 # Deploys to Railway production only what changed, and only after `ci` passed on main.
 #  - Automatic: when `ci` finishes successfully on main. The services come from the files changed since the last
 #    successful deploy (tag `deployed/production`), mapped by deploy/railway/changed_services.py. A failed deploy
-#    leaves the tag where it was, so its changes go out with the next one.
+#    leaves the tag where it was, so its changes go out with the next one. `[deploy: api frontend]` (or
+#    `[deploy: all]`) in any commit message of that range adds those services; a label never removes any.
 #  - Manual (Actions → deploy → Run workflow): empty = by changes, "all" = every code service, or a list
 #    ("api frontend").
 # Needs the repository secret RAILWAY_TOKEN: a Railway *project* token for the production environment.
@@ -56,8 +57,8 @@ jobs:
             SERVICES="$REQUESTED"; WHY="pedido manual"
           elif git rev-parse -q --verify "refs/tags/deployed/production" >/dev/null; then
             BASE=$(git rev-parse deployed/production)
-            SERVICES=$(git diff --name-only "$BASE" "$HEAD_SHA" | python3 deploy/railway/changed_services.py)
-            WHY="cambios desde ${BASE:0:7}"
+            SERVICES=$(python3 deploy/railway/changed_services.py --range "$BASE" "$HEAD_SHA")
+            WHY="cambios y etiquetas [deploy: ...] desde ${BASE:0:7}"
           else
             SERVICES="$ALL"; WHY="primer despliegue (no hay tag deployed/production)"
           fi

@@ -16,6 +16,10 @@ despliega el `api` primero (aplica las migraciones al arrancar), espera su SUCCE
   (`api frontend`). Un despliegue manual parcial no mueve el tag.
 - Requiere el secreto del repositorio `RAILWAY_TOKEN`: un *project token* de Railway del entorno production.
 - Si un despliegue falla, el tag no se mueve y esos cambios salen con el siguiente.
+- `ci` también mira el rango pendiente: si solo cambió frontend, docs o archivos de deploy, omite lint y la suite
+  backend. Etiquetas en cualquier commit del rango (solo agregan, nunca quitan): `[ci: full]` fuerza la suite,
+  `[deploy: api frontend]` / `[deploy: all]` agrega servicios al despliegue. Detalle en `CLAUDE.md`/`AGENTS.md`.
+- Ver qué haría el siguiente push: `python3 deploy/railway/changed_services.py --ci|--range deployed/production HEAD`.
 - Probar el mapeo: `python3 deploy/railway/changed_services.py --self-test`.
 
 ## Despliegue con el CLI (piloto)
