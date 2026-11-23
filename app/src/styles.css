@@ -3168,3 +3168,33 @@ input[type="checkbox"], input[type="radio"] { accent-color:#287f70; }
 .brand svg { width: 100%; height: 100%; }
 .login-legal { margin: 0; color: #7d8b85; font-size: 12px; }
 .login-legal a { color: #287f70; }
+
+/* Normative profile editor (super_admin), inside «Perfil normativo del proyecto» */
+.profile-editor-toggle { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.profile-editor { grid-column: 1 / -1; display: grid; gap: 12px; padding: 12px; border: 1px solid #d6e6df; border-radius: 9px; background: #f7fbf9; }
+.profile-editor-head, .profile-editor-rules-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #2f4139; font-weight: 700; }
+.profile-editor-inherit { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; padding: 10px; border-radius: 8px; background: #fff; border: 1px dashed #b9d6cb; }
+.profile-editor label { display: grid; gap: 5px; color: #5d6e67; font-size: 10.5px; font-weight: 600; }
+.profile-editor label.checkbox-row { display: flex; align-items: center; gap: 6px; font-weight: 500; color: #33433d; }
+.profile-editor input:not([type="checkbox"]):not([type="radio"]), .profile-editor select, .profile-editor textarea { width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid #dfe6e3; border-radius: 7px; color: #2f4139; background: #fff; font: inherit; font-size: 11px; font-weight: 400; }
+.profile-editor textarea { resize: vertical; }
+.profile-editor-grid, .profile-rule-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+.profile-editor .wide { grid-column: 1 / -1; }
+.profile-editor fieldset { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 0; padding: 8px 10px 10px; border: 1px solid #e3ebe7; border-radius: 8px; }
+.profile-editor fieldset label:not(.checkbox-row) { flex: 1 1 140px; }
+.profile-editor-criteria { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }
+.profile-editor-rules { display: grid; gap: 6px; }
+.profile-rule { border: 1px solid #e3ebe7; border-radius: 8px; background: #fff; }
+.profile-rule.is-open { border-color: #9ccbbb; }
+.profile-rule-summary { width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 0; background: none; color: #33433d; font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
+.profile-rule-summary > span:first-of-type { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.profile-rule-chevron { flex: none; transform: rotate(-90deg); transition: transform .15s; color: #7d8b85; }
+.profile-rule.is-open .profile-rule-chevron { transform: none; }
+.profile-rule-flag { flex: none; color: #b7791f; }
+.profile-rule-body { padding: 4px 10px 12px; }
+.profile-editor-foot { display: grid; gap: 8px; }
+.profile-editor-review { display: grid; gap: 8px; padding: 10px; border: 1px solid #cfe3da; border-radius: 8px; background: #fff; }
+.profile-editor-warn { color: #a8443c; font-size: 10.5px; }
+ul.profile-editor-warn { margin: 0; padding-left: 18px; }
+.profile-editor-ok { color: #247c6c; font-size: 10.5px; }
+@media (max-width: 640px) { .profile-editor-grid, .profile-rule-body, .profile-editor-inherit { grid-template-columns: 1fr; } }

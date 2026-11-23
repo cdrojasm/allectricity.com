@@ -32,7 +32,8 @@ export function HelpTip({ topic, label }) {
   useEffect(() => {
     if (!open) return undefined;
     const close = (event) => { if (!card.current?.contains(event.target) && !button.current?.contains(event.target)) setOpen(false); };
-    const onKey = (event) => { if (event.key === "Escape") { setOpen(false); button.current?.focus(); } };
+    // Escape closes only the card: it must not also reach a dialog's Escape handler on window and close it.
+    const onKey = (event) => { if (event.key === "Escape") { event.stopPropagation(); setOpen(false); button.current?.focus(); } };
     const onScroll = (event) => { if (!card.current?.contains(event.target)) setOpen(false); };
     document.addEventListener("pointerdown", close);
     document.addEventListener("keydown", onKey);

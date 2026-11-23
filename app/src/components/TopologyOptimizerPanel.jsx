@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ACTIVE_RUN, RUN_STATUS_LABELS, apiRequest } from "../optimization.js";
 import { HelpLabel, HelpTip } from "./HelpTip.jsx";
+import { NormativeProfileEditor } from "./NormativeProfileEditor.jsx";
 
 // Matherra in the plan editor: set up and launch a topology search and follow it. Its alternatives are reviewed,
 // previewed and applied in Resultado, next to the verdict, so they live in one place only.
@@ -58,6 +59,8 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, onShowResu
   const [profiles, setProfiles] = useState([]);
   const [pinned, setPinned] = useState([]);
   const [profileBusy, setProfileBusy] = useState(false);
+  const [curatorCatalog, setCuratorCatalog] = useState(null);   // every version, drafts included: only a super_admin gets it
+  const [catalogTick, setCatalogTick] = useState(0);
   const [run, setRun] = useState(null);
   const [alternatives, setAlternatives] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -108,6 +111,16 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, onShowResu
       const active = rows.find((row) => ACTIVE_RUN.has(row.status));
       if (active) follow(active.id);
     }).catch(() => { /* Sin historial el formulario empieza vacío. */ });
+    return () => { live = false; };
+  }, [projectId, token]);
+
+  // Profiles: reloaded too when the editor saves or publishes one.
+  useEffect(() => {
+    if (!token) return undefined;
+    let live = true;
+    apiRequest(token, "/api/v1/constraint-profiles?include_drafts=true")
+      .then((body) => { if (live) setCuratorCatalog(body.profiles || []); })
+      .catch(() => { if (live) setCuratorCatalog(null); });   // 403: not a curator, the editor stays hidden
     Promise.all([apiRequest(token, "/api/v1/constraint-profiles"), apiRequest(token, `/api/v1/projects/${encodeURIComponent(projectId)}/constraint-profiles`)])
       .then(([catalog, selection]) => {
         if (!live) return;
@@ -118,7 +131,7 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, onShowResu
         setPinned((selection.profiles || []).map((item) => ({ profile_id: item.profile_id, version: item.profile_version })));
       }).catch(() => { if (live) setError("No se pudieron cargar los perfiles normativos."); });
     return () => { live = false; };
-  }, [projectId, token]);
+  }, [projectId, token, catalogTick]);
 
   useEffect(() => {
     setCatalogOptions({});
@@ -238,7 +251,8 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, onShowResu
       {profiles.length ? profiles.map((profile) => <label className="checkbox-row" key={`${profile.profile_id}-${profile.version}`}>
         <input type="checkbox" disabled={profileBusy} checked={pinned.some((item) => item.profile_id === profile.profile_id)} onChange={(event) => toggleProfile(profile, event.target.checked)}/>
         {profile.definition?.title || profile.profile_id} · v{profile.version} · {profile.definition?.jurisdiction || "jurisdicción sin indicar"}
-      </label>) : <small>No hay perfiles normativos revisados disponibles. Un administrador debe publicar uno antes de optimizar.</small>}
+      </label>) : <small>No hay perfiles normativos revisados disponibles. {curatorCatalog ? "Crea uno con el botón de abajo, o hereda uno de una norma." : "Un administrador debe publicar uno antes de optimizar."}</small>}
+      {curatorCatalog && <NormativeProfileEditor token={token} catalog={curatorCatalog} onPublished={() => setCatalogTick((tick) => tick + 1)}/>}
     </fieldset>
 
     <fieldset><legend>Falla y exposición</legend>

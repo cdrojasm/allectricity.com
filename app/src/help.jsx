@@ -48,7 +48,7 @@ export const HELP = {
   },
   normative_profile: {
     title: "Perfil normativo del proyecto",
-    text: ["Un conjunto revisado de criterios para una jurisdicción: qué límites aplican, a qué clases de exposición y con qué márgenes. Matherra lo usa para decidir si una alternativa es factible.", "Solo aparecen perfiles revisados por un administrador. Fijarlo queda guardado en el proyecto y lo usan todas las búsquedas siguientes."],
+    text: ["Un conjunto revisado de criterios para una jurisdicción: qué límites aplican, a qué clases de exposición y con qué márgenes. Matherra lo usa para decidir si una alternativa es factible.", "Solo aparecen perfiles revisados por un administrador; un administrador puede crearlos aquí mismo con «Crear perfil normativo». Fijarlo queda guardado en el proyecto y lo usan todas las búsquedas siguientes."],
   },
   exposure_class: {
     title: "Clase de exposición",
@@ -196,5 +196,88 @@ export const HELP = {
     text: "Con el largo y la profundidad de la malla da el volumen de excavación que se cotiza.",
     formula: <>V<S>excavación</S> = largo de zanja · ancho · profundidad</>,
     typical: "0,3 a 0,5 m.",
+  },
+
+  // ── Normative profile editor (super_admin) ───────────────────────────────────────────────────────────
+  profile_editor: {
+    title: "Crear un perfil normativo",
+    text: ["Un perfil normativo traduce una norma (por ejemplo RETIE o IEEE 80) a reglas que Matherra puede comprobar: qué criterios son obligatorios, cuándo aplican y de qué cláusula salen.", "Se crea en dos pasos: primero lo guardas como borrador (nadie más lo ve) y después, cuando un profesional competente lo revisó, lo marcas como revisado. Solo los perfiles revisados se pueden fijar a un proyecto."],
+  },
+  profile_inherit: {
+    title: "Heredar de norma",
+    text: ["Llena el formulario con una norma que ya existe, para no empezar de cero. Después cambias solo lo que tu caso necesita.", "Plantillas: borradores preparados por nosotros a partir del texto oficial; todavía tienen que revisarse. Perfiles del catálogo: los que ya se subieron; si conservas su identificador, lo que guardes será una versión nueva de ese perfil y la anterior no se modifica."],
+    typical: "Para Colombia, hereda de «RETIE 2026 · subestaciones c.a.» y completa la aplicabilidad de cada regla.",
+  },
+  profile_id: {
+    title: "Identificador del perfil",
+    text: ["Nombre técnico, único y permanente: minúsculas, números, puntos, guiones. Se usa para encontrar el perfil y para versionarlo.", "Si ya existe un perfil con este identificador, guardar crea la versión siguiente de ese perfil. Si no existe, crea un perfil nuevo."],
+    typical: "país.norma.tipo, por ejemplo co.retie.substation_ac",
+  },
+  profile_title: {
+    title: "Título",
+    text: "El nombre que verán los diseñadores al elegir el perfil en su proyecto. Di la norma, la edición y a qué instalaciones aplica.",
+    typical: "Colombia — subestaciones de corriente alterna — RETIE 2026",
+  },
+  profile_jurisdiction: {
+    title: "Jurisdicción",
+    text: "El país o región donde rige la norma. Matherra compara este valor con el país del proyecto y no deja optimizar si no coinciden.",
+    typical: "Colombia",
+  },
+  profile_installation: {
+    title: "Tipo de instalación",
+    text: "A qué instalaciones aplica el perfil. Un perfil para subestaciones no debe usarse, por ejemplo, para una vivienda o una torre de transmisión.",
+    typical: "AC substation (subestación de corriente alterna)",
+  },
+  profile_description: {
+    title: "Descripción",
+    text: "Alcance, exclusiones y advertencias que el diseñador debe conocer antes de usar el perfil: clase de tensión, tipo de acceso, supuestos.",
+  },
+  required_criteria: {
+    title: "Criterios obligatorios del perfil",
+    text: ["Los criterios de seguridad que el perfil se compromete a cubrir. Para poder marcarlo como revisado, cada criterio marcado necesita al menos una regla obligatoria que aplique.", "Contacto: tensión entre la mano y los pies al tocar una estructura. Paso: tensión entre los dos pies. Transferidas: tensión que un elemento metálico lleva fuera de la malla (rieles, tuberías, cercas)."],
+    figure: FIG_TOUCH_STEP,
+  },
+  profile_rule: {
+    title: "Reglas",
+    text: ["Cada regla es un requisito de la norma: qué controla, si es obligatoria o solo una guía, cuándo aplica, cómo se verifica y de qué cláusula sale.", "Las reglas con ⚠ tienen algo pendiente: abre la tarjeta para ver qué falta."],
+  },
+  rule_category: {
+    title: "Tipo de regla",
+    text: ["Obligatoria: la norma la exige; si no se cumple, el diseño no cumple.", "Guía: un valor de referencia o recomendación; se informa pero no bloquea.", "Constructiva y comercial: límites prácticos o de costo (por ejemplo, largo máximo de varilla disponible)."],
+  },
+  rule_criterion: {
+    title: "Criterio o variable",
+    text: ["Criterio: el control de seguridad que cubre la regla (contacto, paso o transferidas). Úsalo en reglas obligatorias de seguridad.", "Variable: un dato del diseño que la regla limita, por ejemplo la longitud de varilla o la resistencia de puesta a tierra. Si das mínimo y máximo, Matherra solo explora valores dentro de ese rango."],
+  },
+  rule_applicability: {
+    title: "Aplicabilidad",
+    text: ["Aplica: un profesional confirmó que la regla rige para el alcance del perfil.", "No aplica: confirmado que no rige (explica por qué en las condiciones).", "Desconocida: falta confirmarlo. Un perfil con criterios obligatorios cuya regla está en «desconocida» no se puede marcar como revisado: la falta de un dato nunca se convierte en cumplimiento."],
+  },
+  rule_conditions: {
+    title: "Condiciones de aplicabilidad",
+    text: "Cuándo rige la regla y qué hay que confirmar, una por línea. Por ejemplo: exposición pública u ocupacional, si hay capa superficial, nivel de tensión, tipo de electrodo.",
+  },
+  rule_verification: {
+    title: "Método de verificación",
+    text: "Cómo se comprueba que el diseño cumple: qué valor calculado se compara con qué límite y con qué datos. Así otra persona puede repetir la verificación.",
+    typical: "Comparar la tensión de contacto calculada con el límite de la Tabla 3.12.1.a para la exposición y el tiempo de despeje del proyecto.",
+  },
+  rule_expression: {
+    title: "Requisito",
+    text: "Lo que dice la norma, en palabras, con sus valores. Es lo que leerá quien revise el estudio.",
+  },
+  rule_source: {
+    title: "Fuente",
+    text: ["De dónde sale la regla. Para reglas obligatorias y guías son necesarios el documento, la edición y la cláusula; el enlace al texto oficial ayuda a revisarla.", "Esta fuente aparece en la trazabilidad del estudio."],
+    typical: "RETIE, Resolución 40284 de 2026, Libro 3 · 2026-06-23 · Art. 3.12.1 literal g, Tabla 3.12.1.a",
+  },
+  rule_bounds: {
+    title: "Límites de la variable",
+    text: "Opcional. Mínimo y máximo permitidos para la variable, con su unidad. Si varias reglas que aplican limitan la misma variable, se usa el rango más estrecho.",
+    typical: "Longitud de varilla: 1,5 a 6 m",
+  },
+  profile_review: {
+    title: "Marcar como revisado",
+    text: ["Publica esta versión: desde ese momento los diseñadores pueden fijarla a sus proyectos y Matherra la usa para decidir si un diseño cumple.", "Hazlo solo cuando un profesional competente, con la matrícula que exija la ley, revisó cada regla contra el texto oficial. Una versión revisada ya no se edita: los cambios van en una versión nueva."],
   },
 };
