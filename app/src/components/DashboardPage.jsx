@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { Activity, ArrowRight, Box, CalendarClock, Layers, Sparkles } from "lucide-react";
-import { SystemHealthCard } from "./SystemHealthCard.jsx";
 import { DesignStatusBadge } from "../shared.jsx";
 
 const featureNames = {
@@ -25,10 +24,16 @@ function formatDate(timestamp, includeTime = false) {
     : { dateStyle: "medium" });
 }
 
+function dateKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 function DashboardPage({ token, user, lastVisit, onOpen, onShowProjects }) {
   const [projects, setProjects] = useState([]);
   const [tokensUsed, setTokensUsed] = useState(null);
   const [features, setFeatures] = useState([]);
+  const [dailyTokens, setDailyTokens] = useState([]);
+  const [visitDays, setVisitDays] = useState([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -46,6 +51,19 @@ function DashboardPage({ token, user, lastVisit, onOpen, onShowProjects }) {
         if (!response.ok) throw new Error("Consumo no disponible");
         const budgets = await response.json();
         if (live) setTokensUsed(budgets.reduce((sum, budget) => sum + Number(budget.used_tokens || 0), 0));
+        const since = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
+        const usageRows = await Promise.all(budgets.map(async (budget) => {
+          try {
+            const usageResponse = await fetch(`/api/v1/budgets/${encodeURIComponent(budget.id)}/usage?since=${since}&limit=1000`, { headers });
+            return usageResponse.ok ? usageResponse.json() : [];
+          } catch { return []; }
+        }));
+        const totals = new Map();
+        usageRows.flat().forEach((row) => {
+          const date = dateKey(new Date(Number(row.created_at) * 1000));
+          totals.set(date, (totals.get(date) || 0) + Number(row.total_tokens || 0));
+        });
+        if (live) setDailyTokens([...totals].sort(([a], [b]) => a.localeCompare(b)).slice(-7));
       } catch { if (live) setTokensUsed(undefined); }
       try {
         const legacyKey = `terra_recent_features:${user.id}`;
@@ -57,6 +75,10 @@ function DashboardPage({ token, user, lastVisit, onOpen, onShowProjects }) {
         }
         if (live && Array.isArray(recent)) setFeatures(recent.slice(0, 6));
       } catch { if (live) setFeatures([]); }
+      try {
+        const days = JSON.parse(localStorage.getItem(`allectricity_visit_days:${user.id}`) || "[]");
+        if (live && Array.isArray(days)) setVisitDays(days.slice(-7));
+      } catch { if (live) setVisitDays([]); }
     }
     load();
     return () => { live = false; };
@@ -64,6 +86,15 @@ function DashboardPage({ token, user, lastVisit, onOpen, onShowProjects }) {
 
   // Activity of projects that no longer exist is not shown.
   const visibleFeatures = features.filter((item) => projects.some((project) => project.name === item.projectName));
+  const tokenByDay = Object.fromEntries(dailyTokens);
+  const chartCalendar = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date();
+    date.setHours(12, 0, 0, 0);
+    date.setDate(date.getDate() - (6 - index));
+    const key = dateKey(date);
+    return { key, visited: visitDays.includes(key), tokens: Number(tokenByDay[key] || 0), label: date.toLocaleDateString("es-CO", { weekday: "short", day: "2-digit" }) };
+  });
+  const maxDailyTokens = Math.max(1, ...chartCalendar.map((day) => day.tokens));
   return <main className="dashboard-page">
     <header className="dashboard-heading"><div><div className="eyebrow">ALLECTRICITY WORKSPACE / INICIO</div><h1>Hola, {user.first_name || ""}</h1><p>Resumen de tus proyectos y actividad reciente.</p></div><button className="button primary" onClick={onShowProjects}><Layers size={15}/> Ver proyectos <ArrowRight size={14}/></button></header>
     {error && <div className="project-error" role="alert">{error}</div>}
@@ -79,8 +110,11 @@ function DashboardPage({ token, user, lastVisit, onOpen, onShowProjects }) {
       <section className="dashboard-card dashboard-activity"><div className="dashboard-section-heading"><div><Sparkles size={17}/><h2>Funciones usadas recientemente</h2></div></div>
         {visibleFeatures.length ? <ul className="dashboard-feature-list">{visibleFeatures.map((item, index) => <li key={`${item.usedAt}-${index}`}><span className="dashboard-feature-icon"><Activity size={15}/></span><span><strong>{featureNames[item.feature] || item.feature}</strong><small>{item.projectName || "Proyecto"} · {formatDate(item.usedAt, true)}</small></span></li>)}</ul> : <div className="dashboard-empty compact"><Sparkles size={23}/><strong>Sin actividad reciente</strong><span>Las funciones que abras aparecerán aquí.</span></div>}
       </section>
-      <SystemHealthCard token={token} isSuperAdmin={user.roles?.includes("super_admin")}/>
     </div>
+    <section className="dashboard-charts" aria-label="Uso y visitas">
+      <article className="dashboard-card dashboard-chart-card"><div className="dashboard-section-heading"><div><Activity size={17}/><h2>Tokens usados por día</h2></div><small>Últimos 7 días</small></div><div className="dashboard-chart-bars" role="img" aria-label="Tokens consumidos por día">{dailyTokens.length ? chartCalendar.map((day) => <div className="dashboard-chart-column" key={day.key} title={`${day.key}: ${day.tokens.toLocaleString("es-CO")} tokens`}><strong>{day.tokens.toLocaleString("es-CO")}</strong><span style={{ height: `${Math.max(5, day.tokens / maxDailyTokens * 100)}%` }}/><small>{day.label}</small></div>) : <p className="dashboard-chart-empty">Aún no hay consumo registrado.</p>}</div></article>
+      <article className="dashboard-card dashboard-chart-card"><div className="dashboard-section-heading"><div><CalendarClock size={17}/><h2>Días visitados</h2></div><small>Últimos 7 días</small></div><div className="dashboard-chart-bars dashboard-visit-chart" role="img" aria-label="Días visitados en los últimos 7 días">{chartCalendar.map((day) => <div className="dashboard-chart-column" key={day.key} title={`${day.key}: ${day.visited ? "Visitado" : "Sin visita"}`}><span className={day.visited ? "visited" : "not-visited"} style={{ height: day.visited ? "100%" : "12%" }}/><small>{day.label}</small></div>)}</div></article>
+    </section>
   </main>;
 }
 

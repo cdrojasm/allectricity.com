@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Send, UserPlus, Users, X } from "lucide-react";
+import { Search, Send, UserPlus, Users, X } from "lucide-react";
 import { LicensesPanel } from "./LicensesPanel.jsx";
 
 // Pilot onboarding for super_admin: invite an engineer with the designer role and a token budget.
@@ -31,6 +31,11 @@ export function UsersAdminPage({ token, onNotice }) {
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
+  const [userStatus, setUserStatus] = useState("all");
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [page, setPage] = useState(0);
+  const pageSize = 8;
   const [form, setForm] = useState({ email: "", first_name: "", last_name: "", tokens: 2000000 });
 
   async function reload() {
@@ -47,6 +52,14 @@ export function UsersAdminPage({ token, onNotice }) {
   const roleName = (id) => roles.find((role) => role.id === id)?.name;
   const rolesOf = (userId) => assignments.filter((item) => item.user_id === userId).map((item) => roleName(item.role_id)).filter(Boolean);
   const budgetOf = (userId) => budgets.filter((item) => item.user_id === userId && item.active);
+  const filteredUsers = users.filter((user) => {
+    const needle = query.trim().toLocaleLowerCase("es");
+    const matches = !needle || [user.first_name, user.last_name, user.email].some((value) => String(value || "").toLocaleLowerCase("es").includes(needle));
+    return matches && (userStatus === "all" || (user.active === false ? "inactive" : "active") === userStatus) && (roleFilter === "all" || rolesOf(user.id).includes(roleFilter));
+  });
+  const pageUsers = filteredUsers.slice(page * pageSize, (page + 1) * pageSize);
+  const pageCount = Math.max(1, Math.ceil(filteredUsers.length / pageSize));
+  useEffect(() => { if (page >= pageCount) setPage(pageCount - 1); }, [page, pageCount]);
 
   async function invite(event) {
     event.preventDefault();
@@ -76,14 +89,16 @@ export function UsersAdminPage({ token, onNotice }) {
     <div className="projects-topline"><div><div className="eyebrow">ALLECTRICITY WORKSPACE / USUARIOS</div><h1>Usuarios</h1><p>Invita ingenieros al piloto con permiso de diseño y una bolsa de tokens para el agente.</p></div><button className="button primary" onClick={() => setOpen(true)}><UserPlus size={15}/> Invitar ingeniero</button></div>
     <div className="project-summary"><span><Users size={17}/><strong>{users.length}</strong> usuarios</span></div>
     {error && <div className="project-error" role="alert">{error}<button onClick={() => setError("")} aria-label="Cerrar"><X size={14}/></button></div>}
+    <div className="projects-table-tools"><label><Search size={15}/><input aria-label="Buscar usuarios" placeholder="Buscar por nombre o correo" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0); }}/></label><select aria-label="Filtrar usuarios por estado" value={userStatus} onChange={(event) => { setUserStatus(event.target.value); setPage(0); }}><option value="all">Todos los estados</option><option value="active">Activos</option><option value="inactive">Desactivados</option></select><select aria-label="Filtrar usuarios por rol" value={roleFilter} onChange={(event) => { setRoleFilter(event.target.value); setPage(0); }}><option value="all">Todos los roles</option>{roles.map((role) => <option key={role.id} value={role.name}>{roleLabels[role.name] || role.name}</option>)}</select></div>
     <div className="projects-table-wrap"><table className="projects-table" data-testid="users-table"><thead><tr><th>USUARIO</th><th>ROLES</th><th>TOKENS</th><th>ESTADO</th><th></th></tr></thead><tbody>
-      {users.map((user) => { const own = budgetOf(user.id); const total = own.reduce((sum, item) => sum + item.total_tokens, 0); const used = own.reduce((sum, item) => sum + item.used_tokens, 0);
+      {pageUsers.map((user) => { const own = budgetOf(user.id); const total = own.reduce((sum, item) => sum + item.total_tokens, 0); const used = own.reduce((sum, item) => sum + item.used_tokens, 0);
         return <tr key={user.id}><td><strong>{`${user.first_name || ""} ${user.last_name || ""}`.trim() || user.email}</strong><small>{user.email}</small></td>
           <td>{rolesOf(user.id).map((name) => roleLabels[name] || name).join(", ") || "—"}</td>
           <td>{own.length ? `${used.toLocaleString("es-CO")} de ${total.toLocaleString("es-CO")}` : "Sin bolsa"}</td>
           <td>{user.active === false ? "Desactivado" : "Activo"}</td>
           <td>{user.active !== false && <button className="button" onClick={() => resend(user)}><Send size={13}/> Reenviar enlace</button>}</td></tr>; })}
-    </tbody></table></div>
+      {Array.from({ length: Math.max(0, pageSize - pageUsers.length) }, (_, index) => <tr className="projects-placeholder-row" aria-hidden="true" key={`user-placeholder-${index}`}><td colSpan="5"/></tr>)}
+    </tbody></table></div><div className="projects-pagination"><span>{filteredUsers.length ? `${page * pageSize + 1}–${Math.min((page + 1) * pageSize, filteredUsers.length)} de ${filteredUsers.length} usuarios` : "0 usuarios"}</span><div><button className="button" disabled={!page} onClick={() => setPage((value) => Math.max(0, value - 1))}>Anterior</button><span>Página {page + 1} de {pageCount}</span><button className="button" disabled={page + 1 >= pageCount} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>Siguiente</button></div></div>
     <LicensesPanel token={token} onNotice={onNotice} />
     {open && <div className="modal-backdrop project-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) setOpen(false); }}><form className="project-modal" onSubmit={invite} aria-label="Invitar ingeniero">
       <div className="project-modal-head"><div><div className="eyebrow">PILOTO</div><h2>Invitar ingeniero</h2></div><button type="button" className="icon-button" aria-label="Cerrar" onClick={() => setOpen(false)}><X size={18}/></button></div>

@@ -275,6 +275,11 @@ function ProjectsPage({ token, onNotice, onOpen }) {
   const [busy, setBusy] = useState(false);
   const [searching, setSearching] = useState(false);
   const [locationResults, setLocationResults] = useState([]);
+  const [projectQuery, setProjectQuery] = useState("");
+  const [projectStatus, setProjectStatus] = useState("all");
+  const [projectSort, setProjectSort] = useState("updated");
+  const [projectPage, setProjectPage] = useState(0);
+  const projectPageSize = 8;
   const [error, setError] = useState("");
   const fileInput = useRef(null);
   const auth = { Authorization: `Bearer ${token}` };
@@ -290,6 +295,15 @@ function ProjectsPage({ token, onNotice, onOpen }) {
     catch (e) { setError(e.message); }
   }
   useEffect(() => { refresh(); }, [token]);
+  const filteredProjects = projects.filter((project) => {
+    const query = projectQuery.trim().toLocaleLowerCase("es");
+    const matchesText = !query || [project.name, project.description, project.city, project.country].some((value) => String(value || "").toLocaleLowerCase("es").includes(query));
+    const status = project.design_status?.state || "sin_diseno";
+    return matchesText && (projectStatus === "all" || status === projectStatus);
+  }).sort((a, b) => projectSort === "name" ? a.name.localeCompare(b.name, "es") : projectSort === "location" ? `${a.city || ""} ${a.country || ""}`.localeCompare(`${b.city || ""} ${b.country || ""}`, "es") : (b.updated_at || 0) - (a.updated_at || 0));
+  const pageCount = Math.max(1, Math.ceil(filteredProjects.length / projectPageSize));
+  const pageProjects = filteredProjects.slice(projectPage * projectPageSize, (projectPage + 1) * projectPageSize);
+  useEffect(() => { if (projectPage >= pageCount) setProjectPage(pageCount - 1); }, [projectPage, pageCount]);
   function start(project = null) {
     setEditing(project?.id || null);
     setForm(project ? { ...empty, ...project, country: project.country || "", city: project.city || "", attachments: project.attachments || [] } : { ...empty });
@@ -305,12 +319,19 @@ function ProjectsPage({ token, onNotice, onOpen }) {
       const data = await request(`/api/v1/locations/search?${params}`);
       setLocationResults(data.results || []);
       if (!data.results?.length) setError("No encontramos esa ubicación. Prueba con otro nombre.");
-      else chooseLocation(data.results[0]);
     } catch (e) { setError(e.message.toLowerCase().includes("too many attempts") ? "Espera un momento antes de volver a buscar." : e.message); }
     finally { setSearching(false); }
   }
   function chooseLocation(location) {
-    setForm((f) => ({ ...f, country: location.country || f.country, city: f.city.trim() || location.city || "", latitude: Number(Number(location.latitude).toFixed(6)), longitude: Number(Number(location.longitude).toFixed(6)) }));
+    setForm((f) => ({ ...f, country: location.country || f.country, city: location.city || f.city, latitude: Number(Number(location.latitude).toFixed(6)), longitude: Number(Number(location.longitude).toFixed(6)) }));
+    setLocationResults([]);
+  }
+  async function pickMapPoint(latitude, longitude) {
+    setForm((f) => ({ ...f, latitude: Number(latitude.toFixed(6)), longitude: Number(longitude.toFixed(6)) }));
+    try {
+      const place = await request(`/api/v1/locations/reverse?${new URLSearchParams({ latitude: String(latitude), longitude: String(longitude) })}`);
+      if (place.city || place.country) setForm((f) => ({ ...f, city: place.city || f.city, country: place.country || f.country }));
+    } catch { /* Coordinates remain selected if reverse geocoding is unavailable. */ }
   }
   async function save(event) {
     event.preventDefault(); setBusy(true); setError("");
@@ -356,9 +377,11 @@ function ProjectsPage({ token, onNotice, onOpen }) {
     <div className="projects-topline"><div><div className="eyebrow">ALLECTRICITY WORKSPACE / PORTAFOLIO</div><h1>Proyectos</h1><p>Organiza tus proyectos de tierras y sus documentos de referencia.</p></div><button className="button primary" onClick={() => start()}><Plus size={15}/> Nuevo proyecto</button></div>
     <div className="project-summary"><span><Layers size={17}/><strong>{projects.length}</strong> proyectos</span><span>Tipo disponible: <strong>Tierras</strong></span></div>
     {error && <div className="project-error" role="alert">{error}<button onClick={() => setError("")}><X size={14}/></button></div>}
+    <div className="projects-table-tools"><label><Search size={15}/><input aria-label="Buscar proyectos" placeholder="Buscar por nombre, descripción o ubicación" value={projectQuery} onChange={(event) => { setProjectQuery(event.target.value); setProjectPage(0); }}/></label><select aria-label="Filtrar proyectos por estado" value={projectStatus} onChange={(event) => { setProjectStatus(event.target.value); setProjectPage(0); }}><option value="all">Todos los estados</option><option value="sin_diseno">Sin diseño</option><option value="borrador">Borrador</option><option value="no_cumple">No cumple</option><option value="cumple">Cumple</option></select><select aria-label="Ordenar proyectos" value={projectSort} onChange={(event) => setProjectSort(event.target.value)}><option value="updated">Más recientes</option><option value="name">Nombre</option><option value="location">Ubicación</option></select></div>
     <div className="projects-table-wrap"><table className="projects-table"><thead><tr><th>PROYECTO</th><th>TIPO</th><th>UBICACIÓN</th><th>ARCHIVOS</th><th>ACTUALIZADO</th><th></th></tr></thead><tbody>
-      {projects.length ? projects.map((p) => <tr key={p.id}><td><button className="project-open-link" onClick={() => onOpen(p)}><strong>{p.name} <DesignStatusBadge status={p.design_status}/></strong><small>{p.description || "Sin descripción"}</small></button></td><td><span className="land-tag">Tierras</span></td><td>{[p.city, p.country].filter(Boolean).join(", ") || (p.latitude != null && p.longitude != null ? `${Number(p.latitude).toFixed(4)}, ${Number(p.longitude).toFixed(4)}` : "Sin ubicación")}</td><td>{p.attachments?.length || 0} archivos</td><td>{new Date(p.updated_at * 1000).toLocaleDateString("es-CO")}</td><td className="row-actions"><button title="Abrir espacio del proyecto" onClick={() => onOpen(p)}><MessageCircle size={15}/></button><button title="Editar proyecto" onClick={() => start(p)}><Pencil size={15}/></button><button title="Borrar proyecto" onClick={() => askToDelete(p)}><Trash2 size={15}/></button></td></tr>) : <tr><td colSpan="6" className="projects-empty"><FolderOpen size={28}/><strong>Aún no hay proyectos</strong><span>Crea tu primer proyecto para empezar a organizar la información del sitio.</span><button className="button" onClick={() => start()}><Plus size={14}/> Crear proyecto</button></td></tr>}
+      {projects.length ? <>{pageProjects.map((p) => <tr key={p.id}><td><button className="project-open-link" onClick={() => onOpen(p)}><strong>{p.name} <DesignStatusBadge status={p.design_status}/></strong><small>{p.description || "Sin descripción"}</small></button></td><td><span className="land-tag">Tierras</span></td><td>{[p.city, p.country].filter(Boolean).join(", ") || (p.latitude != null && p.longitude != null ? `${Number(p.latitude).toFixed(4)}, ${Number(p.longitude).toFixed(4)}` : "Sin ubicación")}</td><td>{p.attachments?.length || 0} archivos</td><td>{new Date(p.updated_at * 1000).toLocaleDateString("es-CO")}</td><td className="row-actions"><button title="Abrir espacio del proyecto" onClick={() => onOpen(p)}><MessageCircle size={15}/></button><button title="Editar proyecto" onClick={() => start(p)}><Pencil size={15}/></button><button title="Borrar proyecto" onClick={() => askToDelete(p)}><Trash2 size={15}/></button></td></tr>)}{Array.from({ length: projectPageSize - pageProjects.length }, (_, index) => <tr className="projects-placeholder-row" aria-hidden="true" key={`placeholder-${index}`}><td colSpan="6"/></tr>)}</> : <tr><td colSpan="6" className="projects-empty"><FolderOpen size={28}/><strong>{projects.length ? "No hay proyectos que coincidan" : "Aún no hay proyectos"}</strong><span>{projects.length ? "Prueba con otro texto o filtro." : "Crea tu primer proyecto para empezar a organizar la información del sitio."}</span>{!projects.length && <button className="button" onClick={() => start()}><Plus size={14}/> Crear proyecto</button>}</td></tr>}
     </tbody></table></div>
+    <div className="projects-pagination"><span>{filteredProjects.length ? `${projectPage * projectPageSize + 1}–${Math.min((projectPage + 1) * projectPageSize, filteredProjects.length)} de ${filteredProjects.length} proyectos` : "0 proyectos"}</span><div><button className="button" disabled={projectPage === 0} onClick={() => setProjectPage((page) => Math.max(0, page - 1))}>Anterior</button><span>Página {projectPage + 1} de {pageCount}</span><button className="button" disabled={projectPage + 1 >= pageCount} onClick={() => setProjectPage((page) => Math.min(pageCount - 1, page + 1))}>Siguiente</button></div></div>
     {open && <div className="modal-backdrop project-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false); }}><form className="project-modal" onSubmit={save}>
       <div className="project-modal-head"><div><div className="eyebrow">DETALLES DEL PROYECTO</div><h2>{editing ? "Editar proyecto" : "Crear proyecto"}</h2></div><button type="button" className="icon-button" aria-label="Cerrar" onClick={() => setOpen(false)}><X size={19}/></button></div>
       <div className="project-form-body">
@@ -366,10 +389,10 @@ function ProjectsPage({ token, onNotice, onOpen }) {
         <label>Descripción <span className="optional">Opcional</span><textarea rows="3" maxLength="5000" placeholder="Describe el propósito o alcance del proyecto" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}/></label>
         <label>Tipo de proyecto<select value={form.project_type} onChange={(e) => setForm({ ...form, project_type: e.target.value })}><option value="land">Tierras</option></select></label>
         <div className="form-label">Ubicación del proyecto <span className="optional">Todos los datos de ubicación son opcionales</span></div>
-        <div className="location-search-grid"><label>País <span className="optional">Opcional</span><input maxLength="120" placeholder="Ej. Colombia" value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })}/></label><label>Ciudad <span className="optional">Opcional</span><input maxLength="120" placeholder="Ej. Bogotá" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })}/></label><button type="button" className="button location-search-button" disabled={searching || (!form.country.trim() && !form.city.trim())} onClick={searchCity}><Search size={14}/>{searching ? "Buscando…" : "Buscar"}</button></div>
-        {!!locationResults.length && <div className="location-search-results" role="status">{locationResults.length > 1 && <small>Resultados encontrados; puedes elegir otro:</small>}{locationResults.map((location, index) => <button key={`${location.latitude}-${location.longitude}`} type="button" className={Number(form.latitude) === Number(location.latitude) ? "selected" : ""} onClick={() => chooseLocation(location)}>{location.label}<MapPin size={13}/></button>)}</div>}
+        <div className="location-lookup"><div className="location-search-grid"><label>País <span className="optional">Opcional</span><input maxLength="120" placeholder="Ej. Colombia" value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })}/></label><label>Ciudad <span className="optional">Opcional</span><input maxLength="120" placeholder="Ej. Bogotá" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })}/></label><button type="button" className="button location-search-button" disabled={searching || (!form.country.trim() && !form.city.trim())} onClick={searchCity}><Search size={14}/>{searching ? "Buscando…" : "Buscar"}</button></div>
+        {!!locationResults.length && <div className="location-search-results" role="listbox" aria-label="Resultados de ubicación">{locationResults.length > 1 && <small>Elige una ubicación:</small>}{locationResults.map((location) => <button key={`${location.latitude}-${location.longitude}`} type="button" role="option" aria-selected={Number(form.latitude) === Number(location.latitude)} className={Number(form.latitude) === Number(location.latitude) ? "selected" : ""} onClick={() => chooseLocation(location)}><span>{location.label}</span><MapPin size={13}/></button>)}</div>}</div>
         <div className="map-optional-hint">Arrastra el mapa para explorar, usa los controles o haz clic para elegir las coordenadas.</div>
-        <MapPicker latitude={form.latitude} longitude={form.longitude} onPick={(latitude, longitude) => setForm((f) => ({ ...f, latitude: Number(latitude.toFixed(6)), longitude: Number(longitude.toFixed(6)) }))}/>
+        <MapPicker latitude={form.latitude} longitude={form.longitude} onPick={pickMapPoint}/>
         <div className="coordinate-fields"><label>Latitud<input type="number" step="any" min="-90" max="90" value={form.latitude ?? ""} onChange={(e) => setForm({ ...form, latitude: e.target.value === "" ? null : Number(e.target.value) })}/></label><label>Longitud<input type="number" step="any" min="-180" max="180" value={form.longitude ?? ""} onChange={(e) => setForm({ ...form, longitude: e.target.value === "" ? null : Number(e.target.value) })}/></label><span><MapPin size={13}/> Coordenadas WGS84</span></div>
         <div className="form-label">Archivos del proyecto <span className="optional">PDF, imágenes, CSV o XLSX</span></div><button type="button" className="project-file-drop" disabled={!editing} onClick={() => fileInput.current?.click()}><Paperclip size={17}/><span><strong>Adjuntar archivos</strong><small>{editing ? "Máximo 20 MB por archivo" : "Crea el proyecto para agregar archivos"}</small></span><Plus size={16}/></button><input ref={fileInput} hidden type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx" onChange={(e) => { attachFiles(e.target.files); e.target.value = ""; }}/>
         {!!form.attachments.length && <div className="project-attachments">{form.attachments.map((a, i) => <span key={`${a.name}-${i}`}><File size={14}/>{a.name}<small>{a.status === "uploading" ? "Subiendo…" : a.status || "Adjunto"}</small><button type="button" aria-label={`Quitar ${a.name}`} onClick={() => setForm({ ...form, attachments: form.attachments.filter((_, index) => index !== i) })}><X size={13}/></button></span>)}</div>}

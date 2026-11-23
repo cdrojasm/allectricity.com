@@ -129,6 +129,26 @@ def create_app(settings=None, services=None):
         app.state.geocoder_cache[cache_key] = (monotonic() + 86_400, payload)
         return payload
 
+    @app.get("/api/v1/locations/reverse", tags=["locations"])
+    def reverse_location(actor=Depends(require()), latitude: float = Query(..., ge=-90, le=90), longitude: float = Query(..., ge=-180, le=180)):
+        cache_key = f"reverse:{latitude:.5f}:{longitude:.5f}"
+        cached = app.state.geocoder_cache.get(cache_key)
+        if cached and cached[0] > monotonic():
+            return cached[1]
+        app.state.services.identity.throttle("location_search", "nominatim", limit=1, seconds=2)
+        params = urlencode({"lat": latitude, "lon": longitude, "format": "jsonv2", "addressdetails": 1})
+        reverse_url = app.state.geocoder_search_url.rsplit("/", 1)[0] + "/reverse"
+        request = UrlRequest(f"{reverse_url}?{params}", headers={"User-Agent": "AllectricityWorkspace/0.1 (location search)"})
+        try:
+            with urlopen(request, timeout=12) as response:
+                match = json.loads(response.read(512_000))
+        except (OSError, URLError, ValueError) as exc:
+            raise HTTPException(502, "The location lookup service is unavailable") from exc
+        address = match.get("address", {})
+        payload = {"label": match.get("display_name", ""), "city": address.get("city") or address.get("town") or address.get("village") or address.get("municipality") or address.get("county") or "", "country": address.get("country", "")}
+        app.state.geocoder_cache[cache_key] = (monotonic() + 86_400, payload)
+        return payload
+
     def project_record(db, project_id, actor):
         record = db.one("projects", id=project_id)
         if record is None or (not actor.privileged and record["owner_id"] != actor.user_id):

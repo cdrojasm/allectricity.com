@@ -104,7 +104,15 @@ function App() {
     const previousVisit = Number(localStorage.getItem(key) || localStorage.getItem(legacyKey));
     if (previousVisit) localStorage.removeItem(legacyKey);
     setLastVisit(previousVisit || null);
-    localStorage.setItem(key, String(Date.now()));
+    const now = Date.now();
+    const daysKey = `allectricity_visit_days:${user.id}`;
+    let days = [];
+    try { days = JSON.parse(localStorage.getItem(daysKey) || "[]"); } catch { days = []; }
+    const currentDate = new Date(now);
+    const today = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, "0")}-${String(currentDate.getDate()).padStart(2, "0")}`;
+    const safeDays = Array.isArray(days) ? days : [];
+    localStorage.setItem(daysKey, JSON.stringify([...new Set([...safeDays, today])].sort().slice(-90)));
+    localStorage.setItem(key, String(now));
   }, [user?.id]);
   useEffect(() => {
     if (publicStudy || !token || !user) return undefined;
@@ -217,7 +225,7 @@ function App() {
           {canManageUsers && <IconButton title="Usuarios" aria-label="Usuarios" className={`rail-button ${tab === "users" ? "active" : ""}`} onClick={showUsers}><UserCog size={21} /></IconButton>}
         </div>
         <div className="rail-bottom">
-          <IconButton title="Ayuda del espacio" onClick={() => setNotice("Abre un proyecto para revisar sus archivos, mediciones, plano y seguridad.")}><CircleHelp size={20} /></IconButton>
+          <IconButton title="Documentación" aria-label="Abrir documentación" onClick={() => window.open("/ayuda", "_blank", "noopener,noreferrer")}><CircleHelp size={20} /></IconButton>
           <AccountMenu user={user} onHome={showDashboard} onPlans={showPlans} onLogout={logout} />
         </div>
       </nav>

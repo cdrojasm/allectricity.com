@@ -312,17 +312,20 @@ def usage(
 def usages(
     budget_id: str,
     project_id: str | None = None,
+    since: int | None = Query(None, ge=0),
     actor=Depends(require("budgets:read")),
     svc=Depends(services),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ):
     with svc.store.transaction() as db:
         check_budget_owner(actor, require_record(db, "budget", budget_id))
+        filters = {"budget_id": budget_id, **({"project_id": project_id} if project_id else {})}
+        if since is not None:
+            return db.ordered("budget_usage", "created_at", after=since - 1, limit=limit, **filters)
         return db.many(
             "budget_usage",
-            budget_id=budget_id,
+            **filters,
             limit=limit,
             offset=offset,
-            **({"project_id": project_id} if project_id else {}),
         )
