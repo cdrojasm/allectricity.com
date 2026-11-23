@@ -182,9 +182,14 @@ _FIELD_LABELS = {
     "fault.surface_resistivity_ohm_m": ("capa superficial", " Ω·m"),
     "fault.surface_thickness_m": ("espesor de la capa superficial", " m"),
     "fault.body_weight_kg": ("peso corporal", " kg"), "soil_model": ("ajuste del suelo", ""), "conductor.cross_section_mm2": ("sección del conductor", " mm²"),
+    "conductor.ambient_temperature_c": ("temperatura ambiente", " °C"),
+    "conductor.joint_type": ("tipo de unión", ""), "conductor.material_id": ("material del conductor", ""),
+    "conductor.maximum_temperature_c": ("temperatura máxima del conductor", " °C"),
+    "conductor.thermal_duration_s": ("duración térmica", " s"),
+    "soil_layers": ("capas de suelo", ""), "geometry.areas": ("áreas", ""),
 }
 _LIST_LABELS = {"geometry.rods": "varillas", "geometry.conductors": "conductores", "geometry.areas": "áreas",
-                "geometry.structures": "estructuras", "soil_layers": "capas de suelo"}
+                "geometry.structures": "estructuras"}
 
 
 def _number(value) -> str:
@@ -199,6 +204,12 @@ def _saved_field_text(path: str, value) -> str:
     """A saved field in words for the chat: a label and a rounded value, never the raw JSON of a list."""
     if path in _LIST_LABELS and isinstance(value, list):
         return f"{_LIST_LABELS[path]}: {len(value)}"
+    if path == "soil_layers" and isinstance(value, list):
+        resistivities = [layer.get("resistivity_ohm_m") for layer in value
+                         if isinstance(layer, dict) and isinstance(layer.get("resistivity_ohm_m"), (int, float))]
+        if len(resistivities) == 1:
+            return f"resistividad del suelo: {_number(resistivities[0])} Ω·m"
+        return f"capas de suelo: {len(value)}"
     if path == "soil_measurements" and isinstance(value, dict):
         return f"mediciones de resistividad: {len(value.get('measurements') or [])}"
     label, unit = _FIELD_LABELS.get(path, (path, ""))
