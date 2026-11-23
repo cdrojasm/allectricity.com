@@ -16,6 +16,10 @@ const RATE_FIELDS = [
   ["installation.connection", "Conexiones", "por conexión"],
 ];
 const STANDARDS = ["IEEE 80-2013", "RETIE 2026 (Resolución 40284)"];
+const SCOPE_ORDER = ["default", "catalog", "personal"];
+const SCOPE_LABELS = { default: "norma", catalog: "catálogo", personal: "mío" };
+// «No conozco los precios»: same text as optimizer_topology_job.UNIT_RATE_SOURCE, which marks the comparison relative.
+const UNIT_RATE_SOURCE = "Precios unitarios de referencia: 1 por unidad (compara cantidad de material, no dinero)";
 const BUDGETS = [["60", "60 · rápido"], ["150", "150 · recomendado"], ["300", "300 · exhaustivo"]];
 const EMPTY_FORM = { injection: "", clearingTime: "", bodyWeight: "", surfaceRho: "", surfaceThickness: "", exposureClass: "", surfaceLayerPresent: "", standards: [] };
 const number = (value, digits = 1) => (typeof value === "number" ? value.toLocaleString("es-CO", { maximumFractionDigits: digits }) : "—");
@@ -60,6 +64,8 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, onShowResu
   const [pinned, setPinned] = useState([]);
   const [profileBusy, setProfileBusy] = useState(false);
   const [curatorCatalog, setCuratorCatalog] = useState(null);   // every version, drafts included: only a super_admin gets it
+  const [visibleCatalog, setVisibleCatalog] = useState([]);     // shipped + catalog (reviewed) + the user's own profiles
+  const [standardProfiles, setStandardProfiles] = useState({}); // standard name → its shipped profile id
   const [catalogTick, setCatalogTick] = useState(0);
   const [run, setRun] = useState(null);
   const [alternatives, setAlternatives] = useState(0);
@@ -124,6 +130,8 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, onShowResu
     Promise.all([apiRequest(token, "/api/v1/constraint-profiles"), apiRequest(token, `/api/v1/projects/${encodeURIComponent(projectId)}/constraint-profiles`)])
       .then(([catalog, selection]) => {
         if (!live) return;
+        setVisibleCatalog(catalog.profiles || []);
+        setStandardProfiles(catalog.standard_profiles || {});
         const latest = new Map();
         for (const item of (catalog.profiles || []).filter((entry) => entry.status === "reviewed"))
           if (!latest.has(item.profile_id) || item.version > latest.get(item.profile_id).version) latest.set(item.profile_id, item);
@@ -244,15 +252,50 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, onShowResu
   const active = run && ACTIVE_RUN.has(run.status);
   const progress = run?.result_summary?.progress;
   const blocker = (() => { try { payload(); return ""; } catch (failure) { return failure.message; } })();
+  // The profile of each standard chosen in «Estándares a evaluar» is the obvious one: offer it first.
+  const suggested = form.standards.map((standard) => standardProfiles[standard]).filter(Boolean)
+    .map((id) => profiles.find((profile) => profile.profile_id === id)).filter(Boolean);
+  const missingSuggested = suggested.filter((profile) => !pinned.some((item) => item.profile_id === profile.profile_id));
+  const orderedProfiles = [...profiles].sort((a, b) => Number(suggested.includes(b)) - Number(suggested.includes(a))
+    || SCOPE_ORDER.indexOf(a.scope) - SCOPE_ORDER.indexOf(b.scope) || (a.definition?.title || "").localeCompare(b.definition?.title || ""));
+  // Without prices there is usually no trench width either: take the typical 0.4 m (only if empty), and say so.
+  function useUnitRates() {
+    setRates(Object.fromEntries(RATE_FIELDS.map(([key]) => [key, "1"]))); setPicks({}); setRateSource(UNIT_RATE_SOURCE);
+    if (trenchWidth === "" || trenchWidth == null) { setTrenchWidth("0.4"); setTrenchSource("Valor típico supuesto (0,3–0,5 m), sin dato de obra"); }
+  }
+
+  async function pinSuggested() {
+    const next = [...pinned.filter((item) => !missingSuggested.some((profile) => profile.profile_id === item.profile_id)),
+      ...missingSuggested.map((profile) => ({ profile_id: profile.profile_id, version: profile.version }))];
+    setProfileBusy(true); setError("");
+    try {
+      const body = await apiRequest(token, `/api/v1/projects/${encodeURIComponent(projectId)}/constraint-profiles`, { method: "PUT", body: { profiles: next }, fallback: "No se pudo fijar el perfil al proyecto." });
+      setPinned((body.profiles || []).map((item) => ({ profile_id: item.profile_id, version: item.profile_version })));
+    } catch (failure) { setError(readableError(failure)); }
+    finally { setProfileBusy(false); }
+  }
   return <form className="optimizer-run-form topology-optimizer" onSubmit={start}>
     <p className="matherra-intro">Busca trazados de conductores y varillas dentro de las áreas intervenibles y los compara por costo y seguridad. Puede concluir que no hay una alternativa factible.</p>
 
+    <fieldset><legend><span className="help-label">Estándares a evaluar<HelpTip topic="evaluated_standards"/><Origin text={origins.standards}/></span></legend>
+      {STANDARDS.map((standard) => <label className="checkbox-row" key={standard}><input type="checkbox" checked={form.standards.includes(standard)} onChange={(event) => { touch("standards"); setForm((current) => ({ ...current, standards: event.target.checked ? [...current.standards, standard] : current.standards.filter((item) => item !== standard) })); }}/>{standard}</label>)}
+    </fieldset>
+
     <fieldset><legend><HelpLabel text="Perfil normativo del proyecto" topic="normative_profile"/></legend>
-      {profiles.length ? profiles.map((profile) => <label className="checkbox-row" key={`${profile.profile_id}-${profile.version}`}>
+      {missingSuggested.length > 0 && <div className="profile-suggestion" data-testid="profile-suggestion">
+        <span>Sugerido por la norma que elegiste: <strong>{missingSuggested.map((profile) => profile.definition?.title || profile.profile_id).join(" y ")}</strong>.</span>
+        <button type="button" className="button primary" disabled={profileBusy} onClick={pinSuggested}>{missingSuggested.length > 1 ? "Usar estos perfiles" : "Usar este perfil"}</button>
+        <HelpTip topic="profile_suggested" label="Perfil sugerido"/>
+      </div>}
+      {orderedProfiles.length ? orderedProfiles.map((profile) => <label className="checkbox-row" key={`${profile.profile_id}-${profile.version}`}>
         <input type="checkbox" disabled={profileBusy} checked={pinned.some((item) => item.profile_id === profile.profile_id)} onChange={(event) => toggleProfile(profile, event.target.checked)}/>
-        {profile.definition?.title || profile.profile_id} · v{profile.version} · {profile.definition?.jurisdiction || "jurisdicción sin indicar"}
-      </label>) : <small>No hay perfiles normativos revisados disponibles. {curatorCatalog ? "Crea uno con el botón de abajo, o hereda uno de una norma." : "Un administrador debe publicar uno antes de optimizar."}</small>}
-      {curatorCatalog && <NormativeProfileEditor token={token} catalog={curatorCatalog} onPublished={() => setCatalogTick((tick) => tick + 1)}/>}
+        <span>{profile.definition?.title || profile.profile_id} · v{profile.version}
+          <span className={`profile-scope profile-scope-${profile.scope || "catalog"}`}>{SCOPE_LABELS[profile.scope] || SCOPE_LABELS.catalog}</span>
+          {suggested.includes(profile) && <span className="profile-scope profile-scope-suggested">sugerido</span>}</span>
+      </label>) : <small>Todavía no hay perfiles revisados. Crea uno con tu criterio con el botón de abajo.</small>}
+      <NormativeProfileEditor token={token} catalog={curatorCatalog || visibleCatalog} curator={Boolean(curatorCatalog)}
+        suggestedId={suggested[0]?.profile_id || form.standards.map((standard) => standardProfiles[standard]).find(Boolean) || null}
+        onPublished={() => setCatalogTick((tick) => tick + 1)}/>
     </fieldset>
 
     <fieldset><legend>Falla y exposición</legend>
@@ -267,11 +310,13 @@ function TopologyOptimizerPanel({ projectId, token, artifact, canRun, onShowResu
       <label><span className="help-label">Espesor superficial (m)<HelpTip topic="surface_thickness"/><Origin text={origins.surfaceThickness}/></span><input required type="number" min="0" step="any" value={form.surfaceThickness} onChange={set("surfaceThickness")}/></label>
     </fieldset>
 
-    <fieldset><legend><span className="help-label">Estándares a evaluar<HelpTip topic="evaluated_standards"/><Origin text={origins.standards}/></span></legend>
-      {STANDARDS.map((standard) => <label className="checkbox-row" key={standard}><input type="checkbox" checked={form.standards.includes(standard)} onChange={(event) => { touch("standards"); setForm((current) => ({ ...current, standards: event.target.checked ? [...current.standards, standard] : current.standards.filter((item) => item !== standard) })); }}/>{standard}</label>)}
-    </fieldset>
 
     <fieldset><legend><span className="help-label">Tarifas ({currency || "moneda"})<HelpTip topic="matherra_rates"/><Origin text={origins.rates}/></span></legend>
+      <div className="unit-rates">
+        <button type="button" className="button" onClick={useUnitRates}>No conozco los precios: usar 1 por unidad</button>
+        <HelpTip topic="matherra_unit_rates" label="Precios unitarios de referencia"/>
+        {rateSource === UNIT_RATE_SOURCE && <small className="unit-rates-note" role="status">Precios de referencia (1 por unidad): Matherra buscará el diseño que cumpla con <strong>menos material</strong>. Los costos que veas serán relativos, no dinero.</small>}
+      </div>
       <label>Moneda<input value={currency} maxLength={3} onChange={(e) => setCurrency(e.target.value.toUpperCase())}/></label>
       {RATE_FIELDS.map(([key, label, unit]) => {
         const options = catalogOptions[key] || [];

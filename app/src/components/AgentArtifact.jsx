@@ -10,6 +10,10 @@ import { CalculationOptionsDialog, ImproveDesign, Metric, MissingInputs, ModelWa
 import { Icon3D, IconOptimizer, IconOptions, IconOverview, IconPlan, IconResult } from "../icons.jsx";
 import TopologyOptimizerPanel from "./TopologyOptimizerPanel.jsx";
 
+// «1 por unidad» rates (Matherra without prices): the costs measure material, not money.
+const costLabel = (amount, comparison) => (comparison?.relative_costs
+  ? (Number.isFinite(amount) ? `${formatNumber(amount, 0)} u. relativas` : "—") : formatMoney(amount, comparison?.currency));
+
 const calculationFreshnessLabels = { al_dia: "Resultado al día", desactualizado: "Resultado desactualizado", calculando: "Cálculo en curso", sin_calculo: "Sin cálculo", error: "Cálculo con error" };
 const chipLabels = { claim: "Extraído", document: "Documento", user: "Confirmado", tool: "Calculado", assumption: "Supuesto", schema_default: "Predeterminado" };
 
@@ -364,9 +368,10 @@ function MatherraRunReview({ project, token, artifact, refreshKey, onApplied }) 
       {run.error && <span className="optimizer-context-error">{run.error}</span>}
       {comparison && <span>{run.result_summary?.solver_calls_total ?? run.result_summary?.solver_calls ?? "—"} evaluaciones · {comparison.alternatives.length === 1 ? "1 alternativa verificada" : `${comparison.alternatives.length} alternativas verificadas`} en el nivel más fino.</span>}
     </div>}
-    {comparison?.base && <p className="matherra-base-summary">Diseño de partida: {formatMoney(comparison.base.cost, comparison.currency)}, {baseVerdict(comparison.base.electrical)}.
-      {saving && (saving.kind === "saving" ? ` La recomendada ahorra ${formatMoney(saving.amount, comparison.currency)} (${formatShare(saving.fraction, 1)}).`
-        : ` La recomendada cuesta ${formatMoney(-saving.amount, comparison.currency)} más${saving.base_status === "violates" ? ": es lo que cuesta cumplir" : ""}.`)}</p>}
+    {comparison?.relative_costs && <p className="matherra-relative-note" role="note">Costos relativos: usaste precios de 1 por unidad, así que comparan cantidad de material, no dinero.</p>}
+    {comparison?.base && <p className="matherra-base-summary">Diseño de partida: {costLabel(comparison.base.cost, comparison)}, {baseVerdict(comparison.base.electrical)}.
+      {saving && (saving.kind === "saving" ? ` La recomendada ahorra ${costLabel(saving.amount, comparison)} (${formatShare(saving.fraction, 1)}).`
+        : ` La recomendada cuesta ${costLabel(-saving.amount, comparison)} más${saving.base_status === "violates" ? ": es lo que cuesta cumplir" : ""}.`)}</p>}
     {notice && <p className="matherra-apply-notice" role="status">{notice}</p>}
     {comparison && <div className="matherra-candidate-list">
       {comparison.alternatives.length ? comparison.alternatives.map((candidate) => {
@@ -374,7 +379,7 @@ function MatherraRunReview({ project, token, artifact, refreshKey, onApplied }) 
         return <article className={`matherra-candidate${candidate.recommended ? " recommended" : ""}`} data-testid="matherra-candidate" key={candidate.alternative_id}>
           <div className="matherra-candidate-heading"><strong>{candidate.recommended ? "Recomendada · " : ""}Alternativa {candidate.rank}</strong>{candidate.pareto && <span>Equilibrio costo–seguridad</span>}</div>
           <div className="matherra-candidate-metrics">
-            <span><small>Costo</small><strong>{formatMoney(candidate.cost, comparison.currency)}</strong></span>
+            <span><small>Costo</small><strong>{costLabel(candidate.cost, comparison)}</strong></span>
             <span><small>Utilización</small><strong>{formatShare(candidate.utilization_ratio, 1)}</strong></span>
             <span><small>Margen mínimo</small><strong>{formatShare(candidate.margin, 1)}</strong></span>
             <span><small>Contacto / paso</small><strong>{Number.isFinite(candidate.Vt_v) && Number.isFinite(candidate.Vs_v) ? `${formatNumber(candidate.Vt_v, 0)} / ${formatNumber(candidate.Vs_v, 0)} V` : "—"}</strong></span>

@@ -48,7 +48,7 @@ export const HELP = {
   },
   normative_profile: {
     title: "Perfil normativo del proyecto",
-    text: ["Un conjunto revisado de criterios para una jurisdicción: qué límites aplican, a qué clases de exposición y con qué márgenes. Matherra lo usa para decidir si una alternativa es factible.", "Solo aparecen perfiles revisados por un administrador; un administrador puede crearlos aquí mismo con «Crear perfil normativo». Fijarlo queda guardado en el proyecto y lo usan todas las búsquedas siguientes."],
+    text: ["Un conjunto revisado de criterios para una jurisdicción: qué controles de seguridad son obligatorios, cuándo aplican y de qué cláusula salen. Matherra lo usa para decidir si una alternativa es factible.", "La app trae un perfil por cada norma (IEEE 80-2013 y RETIE 2026) y te sugiere el de la norma que elegiste arriba. Si tu caso necesita otro criterio, crea un perfil propio con «Crear perfil con mi criterio». Fijarlo queda guardado en el proyecto y lo usan todas las búsquedas siguientes."],
   },
   exposure_class: {
     title: "Clase de exposición",
@@ -200,13 +200,21 @@ export const HELP = {
 
   // ── Normative profile editor (super_admin) ───────────────────────────────────────────────────────────
   profile_editor: {
-    title: "Crear un perfil normativo",
-    text: ["Un perfil normativo traduce una norma (por ejemplo RETIE o IEEE 80) a reglas que Matherra puede comprobar: qué criterios son obligatorios, cuándo aplican y de qué cláusula salen.", "Se crea en dos pasos: primero lo guardas como borrador (nadie más lo ve) y después, cuando un profesional competente lo revisó, lo marcas como revisado. Solo los perfiles revisados se pueden fijar a un proyecto."],
+    title: "Crear un perfil con tu criterio",
+    text: ["Úsalo cuando los perfiles de norma no se ajustan a tu caso: una norma de tu empresa, una exigencia del cliente, otro país o un alcance distinto.", "Lo más rápido es heredar de la norma que ya elegiste y cambiar solo lo necesario. Se crea en dos pasos: lo guardas como borrador y, cuando revisaste cada regla, lo marcas como revisado. Es tuyo: solo tú lo ves y lo fijas a tus proyectos."],
+  },
+  profile_suggested: {
+    title: "Perfil sugerido",
+    text: ["Es el perfil de la norma que marcaste en «Estándares a evaluar». Es lo más común: si evalúas con RETIE, el proyecto usa el perfil RETIE.", "Puedes fijarlo con un clic o elegir otro (por ejemplo, uno propio)."],
+  },
+  profile_scope: {
+    title: "Dónde se publica",
+    text: ["Catálogo compartido: lo ven y lo fijan todos los usuarios cuando lo marcas como revisado. Úsalo solo para perfiles revisados por un profesional competente.", "Solo para mí: un perfil propio, como el que crearía cualquier diseñador."],
   },
   profile_inherit: {
     title: "Heredar de norma",
-    text: ["Llena el formulario con una norma que ya existe, para no empezar de cero. Después cambias solo lo que tu caso necesita.", "Plantillas: borradores preparados por nosotros a partir del texto oficial; todavía tienen que revisarse. Perfiles del catálogo: los que ya se subieron; si conservas su identificador, lo que guardes será una versión nueva de ese perfil y la anterior no se modifica."],
-    typical: "Para Colombia, hereda de «RETIE 2026 · subestaciones c.a.» y completa la aplicabilidad de cada regla.",
+    text: ["Llena el formulario con una norma que ya existe, para no empezar de cero. Después cambias solo lo que tu caso necesita. Aparece primero (★) la norma que elegiste en «Estándares a evaluar».", "Normas: los perfiles IEEE 80 y RETIE que trae la app. Catálogo: los publicados por un administrador. Mis perfiles: los tuyos; si heredas de uno tuyo, lo que guardes será su versión siguiente y la anterior no cambia.", "Personalizado: un formulario en blanco para escribir tu criterio desde cero."],
+    typical: "Para Colombia, hereda de «RETIE 2026 · subestaciones» y ajusta lo que tu proyecto necesite.",
   },
   profile_id: {
     title: "Identificador del perfil",
@@ -278,6 +286,11 @@ export const HELP = {
   },
   profile_review: {
     title: "Marcar como revisado",
-    text: ["Publica esta versión: desde ese momento los diseñadores pueden fijarla a sus proyectos y Matherra la usa para decidir si un diseño cumple.", "Hazlo solo cuando un profesional competente, con la matrícula que exija la ley, revisó cada regla contra el texto oficial. Una versión revisada ya no se edita: los cambios van en una versión nueva."],
+    text: ["Desde ese momento puedes fijar esta versión a tus proyectos (o, si es del catálogo, cualquiera puede) y Matherra la usa para decidir si un diseño cumple.", "Marcarlo dice que revisaste cada regla y respondes por ese criterio en el estudio que firmas. Una versión revisada ya no se edita: los cambios van en una versión nueva."],
+  },
+  matherra_unit_rates: {
+    title: "No conozco los precios",
+    text: ["Pone todas las tarifas en 1. Así Matherra busca el diseño que cumple con la menor cantidad de material: más metros de conductor, más varillas o más excavación cuestan más.", "Si el ancho de zanja está vacío, usa 0,4 m (valor típico) y lo anota como supuesto. Sirve para probar y comparar diseños sin una cotización. Los costos que veas serán relativos, no dinero, y el estudio lo dice. Ojo: un metro de conductor pesa igual que una varilla o un m³ de excavación; con precios reales el orden de las alternativas puede cambiar."],
+    formula: <>Costo relativo = Σ cantidad<S>i</S> · 1</>,
   },
 };

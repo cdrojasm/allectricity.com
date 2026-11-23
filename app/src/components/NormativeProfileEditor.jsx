@@ -2,18 +2,14 @@ import React, { useMemo, useState } from "react";
 import { ChevronDown, Plus, Trash2 } from "lucide-react";
 import { apiRequest } from "../optimization.js";
 import { HelpLabel, HelpTip } from "./HelpTip.jsx";
-import RETIE_SUBSTATION_DRAFT from "../normative/co_retie_substation_ac_2026_draft.json";
 
-// Normative profile editor for a super_admin, inside «Perfil normativo del proyecto». Fill it from a norm
-// («Heredar de norma»: a bundled template or a catalog profile) or from scratch («Personalizado»), save it as a
-// draft and, once a competent professional reviewed it, mark it reviewed so designers can pin it.
-// The API validates everything again (constraint_profile_routes.py); the checks here only explain what is missing.
-
-// Templates are copies of docs/normative_profiles/**; keep them in step when a draft there changes.
-const TEMPLATES = [
-  { key: "template:co.retie.substation_ac", label: "RETIE 2026 · subestaciones c.a. (Colombia) — plantilla borrador", value: RETIE_SUBSTATION_DRAFT },
-];
+// Normative profile editor, inside «Perfil normativo del proyecto». Anyone can write a profile with their own
+// criterion: fill it from a norm («Heredar de norma»: the shipped IEEE 80 / RETIE profiles, the catalog or your
+// own profiles; the norm picked in «Estándares a evaluar» comes first) or from scratch («Personalizado»), save it
+// as a draft and mark it reviewed. A designer's profile is personal (only they see and pin it); a super_admin
+// may also publish to the shared catalog. The API checks everything again (constraint_profile_routes.py).
 const CUSTOM = "custom";
+const SCOPE_GROUPS = [["default", "Normas (incluidas en la app)"], ["catalog", "Catálogo compartido"], ["personal", "Mis perfiles"]];
 const CRITERIA = [["touch", "Contacto"], ["step", "Paso"], ["transferred", "Transferidas"]];
 const CATEGORIES = [["mandatory", "Obligatoria"], ["guidance", "Guía"], ["constructability", "Constructiva"], ["commercial", "Comercial"]];
 const APPLICABILITY = [["applicable", "Aplica"], ["not_applicable", "No aplica"], ["unknown", "Desconocida"]];
@@ -83,6 +79,16 @@ function missingForReview(form) {
     && rule.criterion === criterion && rule.applicability === "applicable"));
 }
 const criterionLabel = (value) => CRITERIA.find(([key]) => key === value)?.[1] || value;
+// ["touch", "step"] → "contacto y paso"
+const criteriaText = (items) => {
+  const names = items.map(criterionLabel).map((name) => name.toLowerCase());
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} y ${names[names.length - 1]}` : names.join("");
+};
+
+const slug = (text) => text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+  .replace(/[^a-z0-9]+/g, "-").slice(0, 40).replace(/^-+|-+$/g, "");
+const newPersonalId = (title) => `mio.${slug(title) || "perfil"}-${Date.now().toString(36)}`;
+const rowKey = (row) => `catalog:${row.profile_id}:${row.version}`;
 
 function readable(error) {
   const text = error?.message || "";
@@ -91,9 +97,10 @@ function readable(error) {
   return text || "No se pudo guardar el perfil.";
 }
 
-export function NormativeProfileEditor({ token, catalog, onPublished }) {
+export function NormativeProfileEditor({ token, catalog, curator = false, suggestedId = null, onPublished }) {
   const [open, setOpen] = useState(false);
   const [origin, setOrigin] = useState(CUSTOM);
+  const [scope, setScope] = useState(curator ? "catalog" : "personal");
   const [form, setForm] = useState(BLANK);
   const [expanded, setExpanded] = useState(0);
   const [saved, setSaved] = useState(null);      // { profile_id, version } of the draft just saved
@@ -102,42 +109,63 @@ export function NormativeProfileEditor({ token, catalog, onPublished }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const existing = useMemo(() => new Set(catalog.map((row) => row.profile_id)), [catalog]);
   const latest = useMemo(() => {
     const byId = new Map();
     for (const row of catalog) if (!byId.has(row.profile_id) || row.version > byId.get(row.profile_id).version) byId.set(row.profile_id, row);
     return [...byId.values()];
   }, [catalog]);
+  const owner = useMemo(() => Object.fromEntries(latest.map((row) => [row.profile_id, row])), [latest]);
+  // Which existing profiles this person may add a version to: their own personal ones; a curator, also the catalog.
+  const versionable = (id) => owner[id] && (owner[id].scope === "personal" || (curator && owner[id].scope === "catalog"));
+  const id = form.profile_id.trim();
   const blocking = form.rules.flatMap((rule, index) => ruleProblems(rule).map((text) => `Regla ${index + 1}: ${text}`));
-  const headerMissing = ["profile_id", "title", "jurisdiction", "installation_type"].filter((key) => !String(form[key]).trim());
-  const idValid = /^[a-z0-9][a-z0-9._-]+$/.test(form.profile_id.trim());
+  const headerMissing = [...(curator ? ["profile_id"] : []), "title", "jurisdiction", "installation_type"].filter((key) => !String(form[key]).trim());
+  const idValid = !curator || /^[a-z0-9][a-z0-9._-]+$/.test(id);
+  const idTaken = Boolean(id && owner[id] && !versionable(id));
   const reviewGaps = missingForReview(form);
-  const savesAsVersion = existing.has(form.profile_id.trim());
+  const savesAsVersion = Boolean(id && versionable(id));
+  const personal = savesAsVersion ? owner[id].scope === "personal" : scope === "personal";
 
   const edit = (patch) => { setForm((old) => ({ ...old, ...patch })); setSaved(null); setNotice(""); };
   const editRule = (index, patch) => edit({ rules: form.rules.map((rule, i) => (i === index ? { ...rule, ...patch } : rule)) });
   const editSource = (index, key, value) => editRule(index, { source: { ...form.rules[index].source, [key]: value } });
 
+  function openEditor() {
+    // Start from the norm the user already picked (the suggested profile), or from a blank form.
+    const suggested = suggestedId && owner[suggestedId];
+    setOrigin(suggested ? rowKey(suggested) : CUSTOM);
+    // The curator flag arrives after mount (the drafts listing answers later), so the default scope is set here.
+    setScope(curator ? "catalog" : "personal");
+    setOpen(true);
+  }
+
   function inherit() {
     setError(""); setSaved(null); setConfirmed(false);
-    if (origin === CUSTOM) { setForm({ ...BLANK, rules: [blankRule()] }); setExpanded(0); setNotice("Formulario en blanco: escribe la norma desde cero."); return; }
-    const template = TEMPLATES.find((item) => item.key === origin);
-    if (template) { setForm(fromDefinition(template.value.profile_id, template.value.definition)); setExpanded(-1); setNotice(`Heredado de la plantilla. Revisa la aplicabilidad de cada regla.`); return; }
-    const row = catalog.find((item) => `catalog:${item.profile_id}:${item.version}` === origin);
-    if (row) { setForm(fromDefinition(row.profile_id, row.definition || {})); setExpanded(-1); setNotice(`Heredado de ${row.profile_id} v${row.version}. Si conservas el identificador, guardarás la versión ${Math.max(...catalog.filter((item) => item.profile_id === row.profile_id).map((item) => item.version)) + 1}.`); }
+    if (origin === CUSTOM) { setForm({ ...BLANK, rules: [blankRule()] }); setExpanded(0); setNotice("Formulario en blanco: escribe tu criterio desde cero."); return; }
+    const row = catalog.find((item) => rowKey(item) === origin);
+    if (!row) return;
+    // Your own profile (or, for a curator, a catalog one) keeps its id: saving adds a version. Anything else is a copy.
+    const keep = versionable(row.profile_id);
+    const next = fromDefinition(keep ? row.profile_id : "", row.definition || {});
+    if (!keep) next.title = `${next.title} · ${curator ? "copia" : "criterio propio"}`;
+    setForm(next); setExpanded(-1);
+    setNotice(keep
+      ? `Heredado de ${row.definition?.title || row.profile_id} v${row.version}. Al guardar se crea la versión ${Math.max(...catalog.filter((item) => item.profile_id === row.profile_id).map((item) => item.version)) + 1}; la anterior no cambia.`
+      : `Heredado de ${row.definition?.title || row.profile_id}. Cambia lo que tu criterio necesite y guárdalo como perfil propio; la norma original no cambia.`);
   }
 
   async function save() {
     setBusy(true); setError(""); setNotice("");
     try {
-      const profileId = form.profile_id.trim();
+      const profileId = id || newPersonalId(form.title);
       const definition = toDefinition(form);
       const row = savesAsVersion
         ? await apiRequest(token, `/api/v1/constraint-profiles/${encodeURIComponent(profileId)}/versions`, { method: "POST", body: { definition }, fallback: "No se pudo guardar la versión." })
-        : await apiRequest(token, "/api/v1/constraint-profiles", { method: "POST", body: { profile_id: profileId, definition }, fallback: "No se pudo crear el perfil." });
+        : await apiRequest(token, "/api/v1/constraint-profiles", { method: "POST", body: { profile_id: profileId, definition, ...(curator ? { scope } : {}) }, fallback: "No se pudo crear el perfil." });
+      setForm((old) => ({ ...old, profile_id: row.profile_id || profileId }));
       setSaved({ profile_id: row.profile_id || profileId, version: row.version || 1 });
       setConfirmed(false);
-      setNotice(`Borrador guardado: ${row.profile_id || profileId} v${row.version || 1}. Todavía no aparece para los diseñadores.`);
+      setNotice(`Borrador guardado (versión ${row.version || 1}). ${personal ? "Márcalo como revisado para poder fijarlo a tus proyectos." : "Todavía no aparece para los diseñadores."}`);
       onPublished?.();
     } catch (failure) { setError(readable(failure)); }
     finally { setBusy(false); }
@@ -148,7 +176,7 @@ export function NormativeProfileEditor({ token, catalog, onPublished }) {
     setBusy(true); setError("");
     try {
       await apiRequest(token, `/api/v1/constraint-profiles/${encodeURIComponent(saved.profile_id)}/versions/${saved.version}/review`, { method: "POST", fallback: "No se pudo marcar como revisado." });
-      setNotice(`${saved.profile_id} v${saved.version} quedó revisado: ya puedes fijarlo al proyecto arriba.`);
+      setNotice(`«${form.title}» v${saved.version} quedó revisado: ya puedes fijarlo al proyecto arriba.`);
       setSaved(null); setOpen(false); onPublished?.();
     } catch (failure) { setError(readable(failure)); }
     finally { setBusy(false); }
@@ -163,7 +191,7 @@ export function NormativeProfileEditor({ token, catalog, onPublished }) {
   };
 
   if (!open) return <div className="profile-editor-toggle">
-    <button type="button" className="button" onClick={() => setOpen(true)}><Plus size={14}/> Crear perfil normativo</button>
+    <button type="button" className="button" onClick={openEditor}><Plus size={14}/> Crear perfil con mi criterio</button>
     <HelpTip topic="profile_editor" label="Crear un perfil normativo"/>
     {notice && <small className="profile-editor-ok" role="status">{notice}</small>}
   </div>;
@@ -178,15 +206,15 @@ export function NormativeProfileEditor({ token, catalog, onPublished }) {
       <label><HelpLabel text="Heredar de norma" topic="profile_inherit"/>
         <select value={origin} onChange={(event) => setOrigin(event.target.value)}>
           <option value={CUSTOM}>Personalizado — lo escribo todo yo</option>
-          <optgroup label="Plantillas">
-            {TEMPLATES.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-          </optgroup>
-          {latest.length > 0 && <optgroup label="Perfiles del catálogo">
-            {catalog.slice().sort((a, b) => a.profile_id.localeCompare(b.profile_id) || b.version - a.version).map((row) =>
-              <option key={`${row.profile_id}-${row.version}`} value={`catalog:${row.profile_id}:${row.version}`}>
-                {row.definition?.title || row.profile_id} · v{row.version} · {row.status === "reviewed" ? "revisado" : row.status === "retired" ? "retirado" : "borrador"}
+          {SCOPE_GROUPS.map(([group, label]) => {
+            const rows = catalog.filter((row) => (row.scope || "catalog") === group && row.status !== "retired")
+              .sort((a, b) => (b.profile_id === suggestedId) - (a.profile_id === suggestedId) || a.profile_id.localeCompare(b.profile_id) || b.version - a.version);
+            return rows.length > 0 && <optgroup key={group} label={label}>
+              {rows.map((row) => <option key={rowKey(row)} value={rowKey(row)}>
+                {row.profile_id === suggestedId ? "★ " : ""}{row.definition?.title || row.profile_id} · v{row.version}{row.status === "reviewed" ? "" : row.status === "retired" ? " · retirado" : " · borrador"}{row.profile_id === suggestedId ? " · sugerido por tu norma" : ""}
               </option>)}
-          </optgroup>}
+            </optgroup>;
+          })}
         </select>
       </label>
       <button type="button" className="button primary" onClick={inherit}>{origin === CUSTOM ? "Empezar en blanco" : "Heredar"}</button>
@@ -194,11 +222,16 @@ export function NormativeProfileEditor({ token, catalog, onPublished }) {
     {notice && <small className="profile-editor-ok" role="status">{notice}</small>}
 
     <div className="profile-editor-grid">
-      <label><HelpLabel text="Identificador" topic="profile_id"/>
+      {curator && <label><HelpLabel text="Publicar en" topic="profile_scope"/>
+        <select value={savesAsVersion ? owner[id].scope : scope} disabled={savesAsVersion} onChange={(event) => setScope(event.target.value)}>
+          <option value="catalog">Catálogo compartido (lo ven todos)</option><option value="personal">Solo para mí</option>
+        </select>
+      </label>}
+      {curator && <label><HelpLabel text="Identificador" topic="profile_id"/>
         <input value={form.profile_id} placeholder="co.retie.substation_ac" onChange={(event) => edit({ profile_id: event.target.value.toLowerCase() })}/>
         {form.profile_id && !idValid && <small className="profile-editor-warn">Solo minúsculas, números, puntos y guiones.</small>}
-        {idValid && <small>{savesAsVersion ? "Ya existe: se guardará como versión nueva de ese perfil." : "Perfil nuevo."}</small>}
-      </label>
+        {idValid && id && <small className={idTaken ? "profile-editor-warn" : undefined}>{idTaken ? "Ese identificador es de un perfil que no se puede modificar; usa otro." : savesAsVersion ? "Ya existe: se guardará como versión nueva de ese perfil." : "Perfil nuevo."}</small>}
+      </label>}
       <label><HelpLabel text="Título" topic="profile_title"/><input value={form.title} onChange={(event) => edit({ title: event.target.value })}/></label>
       <label><HelpLabel text="Jurisdicción" topic="profile_jurisdiction"/><input value={form.jurisdiction} placeholder="Colombia" onChange={(event) => edit({ jurisdiction: event.target.value })}/></label>
       <label><HelpLabel text="Tipo de instalación" topic="profile_installation"/><input value={form.installation_type} placeholder="AC substation" onChange={(event) => edit({ installation_type: event.target.value })}/></label>
@@ -264,17 +297,17 @@ export function NormativeProfileEditor({ token, catalog, onPublished }) {
     </div>
 
     <footer className="profile-editor-foot">
-      {(headerMissing.length > 0 || blocking.length > 0) && <small className="profile-editor-warn">Para guardar: {[...headerMissing.length ? ["completa identificador, título, jurisdicción y tipo de instalación"] : [], ...blocking].join(" · ")}</small>}
-      {reviewGaps.length > 0 && <small>Para poder revisarlo más adelante, {reviewGaps.map(criterionLabel).join(", ").toLowerCase()} {reviewGaps.length === 1 ? "necesita" : "necesitan"} una regla obligatoria marcada como «Aplica».</small>}
-      <button type="button" className="button primary" disabled={busy || !idValid || headerMissing.length > 0 || blocking.length > 0 || !form.rules.length} onClick={save}>
-        {busy && !saved ? "Guardando…" : savesAsVersion ? "Guardar como versión nueva (borrador)" : "Guardar borrador"}
+      {(headerMissing.length > 0 || blocking.length > 0) && <small className="profile-editor-warn">Para guardar: {[...headerMissing.length ? [`completa ${curator ? "identificador, " : ""}título, jurisdicción y tipo de instalación`] : [], ...blocking].join(" · ")}</small>}
+      {reviewGaps.length > 0 && <small>Para poder revisarlo más adelante, {criteriaText(reviewGaps)} {reviewGaps.length === 1 ? "necesita" : "necesitan"} una regla obligatoria marcada como «Aplica».</small>}
+      <button type="button" className="button primary" disabled={busy || !idValid || idTaken || headerMissing.length > 0 || blocking.length > 0 || !form.rules.length} onClick={save}>
+        {busy && !saved ? "Guardando…" : savesAsVersion ? "Guardar como versión nueva (borrador)" : personal ? "Guardar como perfil propio (borrador)" : "Guardar en el catálogo (borrador)"}
       </button>
       {saved && <div className="profile-editor-review">
-        <HelpLabel text={`Publicar ${saved.profile_id} v${saved.version}`} topic="profile_review"/>
+        <HelpLabel text={`Marcar «${form.title}» v${saved.version} como revisado`} topic="profile_review"/>
         <label className="checkbox-row"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)}/>
-          Un profesional competente revisó cada regla contra el texto oficial y aprueba esta versión.</label>
+          {personal ? "Revisé cada regla y respondo por este criterio en mis proyectos." : "Un profesional competente revisó cada regla contra el texto oficial y aprueba esta versión para todos."}</label>
         <button type="button" className="button primary" disabled={busy || !confirmed || reviewGaps.length > 0} onClick={review}>Marcar como revisado</button>
-        {reviewGaps.length > 0 && <small className="profile-editor-warn">No se puede revisar todavía: {reviewGaps.map(criterionLabel).join(", ").toLowerCase()} sin regla obligatoria que aplique.</small>}
+        {reviewGaps.length > 0 && <small className="profile-editor-warn">No se puede revisar todavía: {criteriaText(reviewGaps)} sin regla obligatoria que aplique.</small>}
       </div>}
       {error && <small className="profile-editor-warn" role="alert">{error}</small>}
     </footer>
