@@ -1,4 +1,11 @@
-"""Curate versioned rule profiles and pin reviewed versions to projects."""
+"""Versioned rule profiles and the reviewed versions pinned to projects.
+
+Who does what (scope of the profile, see constraint_profile_repository):
+- default:  shipped IEEE 80 / RETIE profiles; everyone sees and pins them; only a super_admin may retire a version.
+- catalog:  a super_admin creates, versions, reviews and retires them; everyone sees and pins the reviewed ones.
+- personal: any designer creates one for their own projects; only its owner sees, versions, reviews, retires
+            and pins it (a super_admin may see and manage every profile).
+"""
 
 from __future__ import annotations
 
@@ -10,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.exc import IntegrityError
 
+from src.domain.spat.default_normative_profiles import STANDARD_PROFILES
 from src.domain.spat.optimizer_constraints import compile_site_translation_bounds, resolve_optimizer_constraints
 from src.domain.spat.discrete_domains import resolve_discrete_domains
 from src.infrastructure.persistence.constraint_profile_repository import ConstraintProfileRepository
@@ -80,6 +88,8 @@ class ProfileCreate(BaseModel):
 
     profile_id: str = Field(min_length=2, max_length=80, pattern=r"^[a-z0-9][a-z0-9._-]+$")
     definition: ConstraintProfileDefinition
+    # Only a super_admin may publish to the shared catalog; for anyone else the profile is personal.
+    scope: Literal["catalog", "personal"] | None = None
 
 
 class ProfileVersionCreate(BaseModel):
@@ -140,6 +150,28 @@ def _validate_definition(profile_id, version, definition):
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+def _visible(row, actor) -> bool:
+    """Whether the actor may see this profile version at all."""
+    if actor.privileged:
+        return True
+    if row.get("scope") == "personal":
+        return row.get("owner_id") == actor.user_id
+    return row["status"] == "reviewed"
+
+
+def _manageable(repo, profile_id, actor) -> dict:
+    """The profile, if the actor may add versions to it, review or retire it; 404/403 otherwise."""
+    profile = repo.profile(profile_id)
+    if profile is None or (profile["scope"] == "personal" and not actor.privileged
+                           and profile["owner_id"] != actor.user_id):
+        raise HTTPException(404, "Constraint profile not found")
+    if profile["scope"] == "personal" and profile["owner_id"] == actor.user_id:
+        return profile
+    if not actor.privileged:
+        raise HTTPException(403, "Only a privileged curator can change shared profiles")
+    return profile
 
 
 def _owned_project(db, project_id, actor):
@@ -269,24 +301,30 @@ def list_constraint_profiles(
         raise HTTPException(403, "Only a privileged curator can list draft profiles")
     with request.app.state.services.store.transaction() as db:
         rows = ConstraintProfileRepository(db.connection).all_versions()
-        if not include_drafts:
-            rows = [row for row in rows if row["status"] == "reviewed"]
-        return {"profiles": rows}
+        if include_drafts:
+            return {"profiles": rows, "standard_profiles": STANDARD_PROFILES}
+        # Reviewed shared profiles plus every version of the actor's own personal profiles.
+        rows = [row for row in rows if (row["scope"] == "personal" and row["owner_id"] == actor.user_id)
+                or (row["scope"] != "personal" and row["status"] == "reviewed")]
+        return {"profiles": rows, "standard_profiles": STANDARD_PROFILES}
 
 
 @router.post("/api/v1/constraint-profiles", status_code=201)
 def create_constraint_profile(
     payload: ProfileCreate,
     request: Request,
-    actor=Depends(require(privileged=True)),
+    actor=Depends(require("designs:write")),
 ):
+    if payload.scope == "catalog" and not actor.privileged:
+        raise HTTPException(403, "Only a privileged curator can publish to the shared catalog")
+    scope = payload.scope or ("catalog" if actor.privileged else "personal")
     definition = payload.definition.model_dump(exclude_none=True)
     _validate_definition(payload.profile_id, 1, definition)
     now = int(time())
     try:
         with request.app.state.services.store.transaction(write=True) as db:
             repo = ConstraintProfileRepository(db.connection)
-            row = repo.create_profile(payload.profile_id, actor.user_id, definition, now)
+            row = repo.create_profile(payload.profile_id, actor.user_id, definition, now, scope=scope)
             return row
     except IntegrityError as exc:
         raise HTTPException(409, "Constraint profile id already exists") from exc
@@ -301,7 +339,7 @@ def get_constraint_profile_version(
 ):
     with request.app.state.services.store.transaction() as db:
         row = ConstraintProfileRepository(db.connection).get_version(profile_id, version)
-        if not row or (row["status"] != "reviewed" and not actor.privileged):
+        if not row or not _visible(row, actor):
             raise HTTPException(404, "Constraint profile version not found")
         return row
 
@@ -311,14 +349,13 @@ def create_constraint_profile_version(
     profile_id: str,
     payload: ProfileVersionCreate,
     request: Request,
-    actor=Depends(require(privileged=True)),
+    actor=Depends(require("designs:write")),
 ):
     definition = payload.definition.model_dump(exclude_none=True)
     with request.app.state.services.store.transaction(write=True) as db:
         repo = ConstraintProfileRepository(db.connection)
-        latest = repo.latest_versions()
-        if not any(row["profile_id"] == profile_id for row in latest):
-            raise HTTPException(404, "Constraint profile not found")
+        if _manageable(repo, profile_id, actor)["scope"] == "default":
+            raise HTTPException(403, "Shipped profiles change only with the app; save your changes as a new profile")
         version = repo.next_version(profile_id)
         _validate_definition(profile_id, version, definition)
         return repo.create_version(profile_id, version, definition, actor.user_id, int(time()))
@@ -329,10 +366,11 @@ def review_constraint_profile_version(
     profile_id: str,
     version: int,
     request: Request,
-    actor=Depends(require(privileged=True)),
+    actor=Depends(require("designs:write")),
 ):
     with request.app.state.services.store.transaction(write=True) as db:
         repo = ConstraintProfileRepository(db.connection)
+        _manageable(repo, profile_id, actor)
         row = repo.get_version(profile_id, version)
         if not row:
             raise HTTPException(404, "Constraint profile version not found")
@@ -353,10 +391,11 @@ def retire_constraint_profile_version(
     profile_id: str,
     version: int,
     request: Request,
-    actor=Depends(require(privileged=True)),
+    actor=Depends(require("designs:write")),
 ):
     with request.app.state.services.store.transaction(write=True) as db:
         repo = ConstraintProfileRepository(db.connection)
+        _manageable(repo, profile_id, actor)
         row = repo.get_version(profile_id, version)
         if not row:
             raise HTTPException(404, "Constraint profile version not found")
@@ -386,10 +425,14 @@ def set_project_constraint_profiles(
     with request.app.state.services.store.transaction(write=True) as db:
         _owned_project(db, project_id, actor)
         repo = ConstraintProfileRepository(db.connection)
+        project = db.one("projects", id=project_id)
         for selection in payload.profiles:
             row = repo.get_version(selection["profile_id"], selection["version"])
             if not row or row["status"] != "reviewed":
                 raise HTTPException(422, "Projects may only pin reviewed profile versions")
+            # A personal profile belongs to its owner: it may only be pinned to that owner's projects.
+            if row["scope"] == "personal" and row["owner_id"] not in {actor.user_id, project["owner_id"]}:
+                raise HTTPException(422, "A personal profile can only be pinned to its owner's projects")
         rows = repo.select_for_project(project_id, payload.profiles, actor.user_id, int(time()))
         return {"profiles": rows}
 

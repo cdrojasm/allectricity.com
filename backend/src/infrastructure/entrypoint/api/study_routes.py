@@ -162,7 +162,9 @@ def _optimization(db, project_id, origin):
     summary = run.get("result_summary") or {}
     return {
         "available": True, "run_id": run["id"], "algorithm": comparison["algorithm"], "based_on_version": applied.get("based_on_version"),
-        "certified": False, "currency": comparison["currency"], "alternative": alternative,
+        # With «1 por unidad» rates the costs count material, not money: the study must not print them as pesos.
+        "certified": False, "currency": "u. relativas" if comparison.get("relative_costs") else comparison["currency"],
+        "relative_costs": bool(comparison.get("relative_costs")), "alternative": alternative,
         "base": {"cost": base.get("cost"), "cost_status": base.get("cost_status"), "status": electrical.get("status"),
                  "feasible": electrical.get("feasible"), "ratio": electrical.get("ratio")},
         "saving": comparison["saving_vs_base"], "solver_calls": summary.get("solver_calls_total"),

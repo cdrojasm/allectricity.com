@@ -30,6 +30,9 @@ from src.domain.spat.geometry_cost import evaluate_geometry_cost, takeoff
 from src.domain.spat.geometry_operators import OperatorConstraints, bridges_of, diagonals_of
 
 TOPOLOGY_ALGORITHM = "topology_alns"
+# «No conozco los precios»: every rate is 1 with this source. The search then minimizes the amount of material
+# (metres, rods, m³, connections all weigh the same), and the comparison reports relative costs, not money.
+UNIT_RATE_SOURCE = "Precios unitarios de referencia: 1 por unidad (compara cantidad de material, no dinero)"
 TOPOLOGY_STRATEGY = "alns"   # the official policy (OPT-017); the experimental refinements stay out of the product
 FIXED_RATE_KEYS = ("excavation.trench", "installation.conductor", "installation.rod", "installation.connection")
 # The unit each takeoff line is measured in, and the catalog quantity units that mean exactly that.
@@ -140,6 +143,13 @@ def build_rate_card(rates: dict[str, dict[str, Any]], *, currency: str, trench_w
         assumptions["trench_width_m"] = float(trench_width_m)
         provenance["assumption.trench_width_m"] = {"source_type": "explicit", "source": trench_width_source.strip(), "unit": "m"}
     return {"rate_card": {"currency": currency, "assumptions": assumptions, "rates": card_rates}, "provenance": provenance}
+
+
+def relative_costs(provenance: dict[str, Any] | None) -> bool:
+    """Whether every rate of a run was the «1 per unit» reference instead of a real price."""
+    rates = [entry for key, entry in (provenance or {}).items() if not key.startswith("assumption.")]
+    return bool(rates) and all(entry.get("source_type") == "explicit" and entry.get("source") == UNIT_RATE_SOURCE
+                               for entry in rates)
 
 
 def check_rate_card_covers(rate_card: dict[str, Any], geometries: list[dict[str, Any]]) -> list[str]:
@@ -378,6 +388,11 @@ def compare_alternatives(run: dict[str, Any], alternatives: list[dict[str, Any]]
         warnings.append("Se agotó el presupuesto de llamadas al solver; uno mayor podría encontrar diseños más baratos.")
     if not rows:
         warnings.append("Ningún diseño pasó la verificación más fina dentro del presupuesto.")
+    relative = relative_costs((run.get("request_snapshot") or {}).get("rate_provenance"))
+    if relative:
+        warnings.insert(0, "Se usaron precios unitarios de referencia (1 por unidad): los costos comparan cantidad de "
+                           "material, no dinero. Un metro de conductor pesa lo mismo que una varilla o un m³ de "
+                           "excavación; con precios reales el orden de las alternativas puede cambiar.")
     return {
         "schema_version": "spat.optimizer-comparison/1.0",
         "run_id": run["id"], "status": run["status"],
@@ -389,5 +404,6 @@ def compare_alternatives(run: dict[str, Any], alternatives: list[dict[str, Any]]
                    for key in ("soil", "injection_a", "exposure", "standards", "seed", "max_solver_calls")},
         "constraint_profile": ((run.get("request_snapshot") or {}).get("constraint_context") or {}).get("selected_profiles"),
         "rate_provenance": (run.get("request_snapshot") or {}).get("rate_provenance"),
+        "relative_costs": relative,
         "warnings": warnings,
     }
