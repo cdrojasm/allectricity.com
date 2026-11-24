@@ -3,6 +3,7 @@ import { awaitJob } from "../asyncJobs.js";
 import { Bot, Check, CheckCircle2, ChevronRight, CircleHelp, ExternalLink, Filter, Globe2, LoaderCircle, MapPin, Package, Plus, Search, Send, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
 
 const CATEGORIES = ["Material", "Equipo", "Servicio", "Conductor", "Varilla", "Conector", "Soldadura", "Accesorio"];
+const SEARCH_GROUP_PREFIX = "Búsqueda guardada: ";
 const EMPTY_FORM = {
   name: "", category: "Conductor", material: "Cobre", section: "", price: "", quantity: "", unit: "unidad", currency: "COP",
   structured_options_text: "", contact_email: "", contact_phone: "", contact_whatsapp_url: "", contact_url: "", image_url: "", lead_time: "", lead_time_type: "dispatch",
@@ -10,7 +11,8 @@ const EMPTY_FORM = {
 };
 
 function catalogItem(item) {
-  return { ...item, section: item.section || item.specification || "", price: item.price_per_unit ?? item.price ?? "",
+  const group = String(item.notes || "").split("\n").find((line) => line.startsWith(SEARCH_GROUP_PREFIX))?.slice(SEARCH_GROUP_PREFIX.length) || "";
+  return { ...item, searchGroup: group, section: item.section || item.specification || "", price: item.price_per_unit ?? item.price ?? "",
     currency: (item.price_currency || item.currency || "COP").toUpperCase(), unit: normalizeUnit(item.quantity_unit || item.unit),
     quantity: item.quantity ?? "", source_url: item.source_url || "", captured_at: item.quoted_at || item.captured_at || item.created_at,
     supplier: item.supplier || "", source_type: item.source_type || (item.source_url ? "web" : "manual") };
@@ -125,6 +127,7 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
   const [discoveryMetadata, setDiscoveryMetadata] = useState(null);
   const [busy, setBusy] = useState(false);
   const [discoveryStatus, setDiscoveryStatus] = useState("");
+  const [discoveryElapsed, setDiscoveryElapsed] = useState(0);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantError, setAssistantError] = useState("");
@@ -139,10 +142,22 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
   const [historyError, setHistoryError] = useState("");
   const [form, setForm] = useState(EMPTY_FORM);
   const [query, setQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [groupFilter, setGroupFilter] = useState("");
+  const [sortBy, setSortBy] = useState("recent");
   const assistantThread = useRef(null);
   const assistantLoadedKey = useRef("");
   const catalogLoadRef = useRef(0);
   const historyLoadRef = useRef(0);
+  const discoveryStartedAt = useRef(0);
+
+  useEffect(() => {
+    if (!busy || !discoveryStartedAt.current) return undefined;
+    const updateElapsed = () => setDiscoveryElapsed(Math.floor((Date.now() - discoveryStartedAt.current) / 1000));
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(timer);
+  }, [busy]);
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   const catalogUrl = projectId ? `/api/v1/projects/${encodeURIComponent(projectId)}/material-catalog` : "";
@@ -230,8 +245,21 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
   const visible = useMemo(() => {
     const source = tab === "catalog" ? approved : candidates;
     const needle = query.trim().toLocaleLowerCase("es");
-    return source.filter((item) => !needle || [item.name, item.material, item.supplier, item.city, item.category].join(" ").toLocaleLowerCase("es").includes(needle));
-  }, [approved, candidates, query, tab]);
+    const filtered = source.filter((item) => (!needle || [item.name, item.material, item.supplier, item.city, item.category, item.searchGroup].join(" ").toLocaleLowerCase("es").includes(needle))
+      && (!categoryFilter || item.category === categoryFilter) && (!groupFilter || item.searchGroup === groupFilter));
+    return filtered.sort((a, b) => {
+      if (sortBy === "name") return (a.name || "").localeCompare(b.name || "", "es");
+      if (sortBy === "price") {
+        const left = a.price === "" || a.price == null ? Number.POSITIVE_INFINITY : Number(a.price);
+        const right = b.price === "" || b.price == null ? Number.POSITIVE_INFINITY : Number(b.price);
+        return left === right ? 0 : left - right;
+      }
+      const timestamp = (value) => !value ? 0 : /^\d+$/.test(String(value)) ? Number(value) * (Number(value) < 1e12 ? 1000 : 1) : Date.parse(value) || 0;
+      return timestamp(b.captured_at) - timestamp(a.captured_at);
+    });
+  }, [approved, candidates, query, tab, categoryFilter, groupFilter, sortBy]);
+  const searchGroups = [...new Set(items.map((item) => item.searchGroup).filter(Boolean))];
+  const catalogCategories = [...new Set(items.map((item) => item.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
   const latestVersion = Math.max(0, ...items.map((item) => Number(item.version) || 0));
 
   useEffect(() => {
@@ -245,7 +273,8 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
       setMessage("Indica el país y la ciudad o región para acotar proveedores cercanos.");
       return;
     }
-    setBusy(true); setMessage("");
+    setBusy(true); setMessage(""); setDiscoveryElapsed(0); setDiscoveryStatus("Preparando la consulta");
+    discoveryStartedAt.current = Date.now();
     try {
       const response = await fetch("/api/v1/material-catalog/discover", {
         method: "POST",
@@ -258,11 +287,12 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
       while (true) {
         await new Promise((resolve) => window.setTimeout(resolve, queued.poll_after_ms || 1200));
         const job = await readJson(await fetch(`/api/v1/material-catalog/discover/${encodeURIComponent(queued.job_id)}`, { headers }));
-        setDiscoveryStatus(job.status === "queued" ? "En cola" : job.status === "running" ? "Consultando proveedores" : "");
+        setDiscoveryStatus(job.status === "queued" ? "En cola para iniciar" : job.status === "running" ? "Buscando en fuentes web" : "");
         if (job.status === "completed") { body = job.result || {}; break; }
         if (job.status === "failed") throw new Error(job.error || "Falló la búsqueda de proveedores.");
       }
       const results = body.results || body.candidates || [];
+      const searchGroup = `${(searchText.trim() || category).slice(0, 120)} · ${location.city}, ${location.country}`;
       const found = [];
       let skipped = 0;
       let saveErrors = 0;
@@ -277,7 +307,7 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
           source_name: item.source_name || body.metadata?.provider || null,
           country: location.country, city: location.city,
           quoted_at: Math.floor(new Date(item.captured_at || body.metadata?.captured_at || Date.now()).getTime() / 1000), expires_at: null,
-          notes: notesWithContacts(item.notes, { email: item.contact_email, phone: item.contact_phone,
+          notes: notesWithContacts([item.notes, `${SEARCH_GROUP_PREFIX}${searchGroup}`].filter(Boolean).join("\n"), { email: item.contact_email, phone: item.contact_phone,
             whatsapp_url: item.contact_whatsapp_url, contact_url: item.contact_url, image_url: item.image_url, lead_time: item.lead_time }) || null };
         try {
           const saved = await readJson(await fetch(catalogUrl, { method: "POST", headers, body: JSON.stringify(payload) }));
@@ -290,7 +320,7 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
       setMessage(found.length ? `${found.length} leads guardados en este proyecto.${saveErrors ? ` ${saveErrors} no se pudieron guardar.` : ""}${skipped ? ` ${skipped} se descartaron por no tener título o URL.` : ""} Son resultados web, no cotizaciones verificadas; confirma precios y disponibilidad con cada proveedor.` : results.length ? `No se guardaron resultados.${saveErrors ? ` Falló el guardado de ${saveErrors};` : ""} ${skipped ? `${skipped} no tenían título o URL verificable.` : "Revisa permisos de edición del proyecto."}` : "La búsqueda no encontró resultados en las fuentes disponibles.");
     } catch (error) {
       setMessage(error.message || "No se pudo conectar con el servicio de búsqueda.");
-    } finally { setBusy(false); setDiscoveryStatus(""); }
+    } finally { setBusy(false); setDiscoveryStatus(""); discoveryStartedAt.current = 0; }
   }
 
   async function saveCandidate(event) {
@@ -413,6 +443,11 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
         <label>Resultados<select value={maxResults} onChange={(e) => setMaxResults(Number(e.target.value))}><option value={3}>3 resultados</option><option value={5}>5 resultados</option><option value={8}>8 resultados</option><option value={10}>10 resultados</option></select></label>
         <button className="button primary catalog-discover-button" type="submit" disabled={busy}><Search size={15}/>{busy ? `${discoveryStatus || "Iniciando búsqueda"}…` : "Buscar proveedores"}</button>
       </form>
+      {busy && <div className="catalog-discovery-progress" role="status" aria-live="polite">
+        <LoaderCircle size={17} className="catalog-discovery-spinner" />
+        <div><strong>{discoveryStatus || "Iniciando búsqueda"}</strong><p>{discoveryElapsed < 8 ? "Estamos conectando con el proveedor de búsqueda." : discoveryElapsed < 30 ? "La consulta sigue activa; estamos esperando resultados de las fuentes disponibles." : "La búsqueda está tardando más de lo habitual. La pantalla sigue consultando y te avisará cuando termine o si ocurre un error."}</p></div>
+        <span>{discoveryElapsed} s</span>
+      </div>}
       {message && <div className="catalog-message" role="status"><CircleHelp size={15}/><span>{message}</span><button aria-label="Cerrar aviso" onClick={() => setMessage("")}><X size={14}/></button></div>}
       <div className="catalog-search-foot"><span><Sparkles size={13}/>{discoveryMetadata ? `Fuente: ${discoveryMetadata.provider || "buscador web"} · ${discoveryMetadata.result_count ?? 0} resultados. Son leads, no cotizaciones verificadas.` : "Los resultados dependen del proveedor de búsqueda configurado; no se generan precios ni disponibilidad."}</span><span>Radio de búsqueda: {location.radius_km} km</span></div>
     </section>
@@ -432,11 +467,15 @@ export function MaterialCatalogSuite({ token, userId, initialProjectId, onNotice
 
     <section className="catalog-list-section">
       <div className="catalog-list-header"><div className="catalog-tabs" role="tablist" aria-label="Materiales"><button className={tab === "discover" ? "active" : ""} role="tab" aria-selected={tab === "discover"} onClick={() => { setTab("discover"); setQuery(""); }}>Candidatos <span>{candidates.length}</span></button><button className={tab === "catalog" ? "active" : ""} role="tab" aria-selected={tab === "catalog"} onClick={() => { setTab("catalog"); setQuery(""); }}>Catálogo aprobado <span>{approved.length}</span></button></div>
-        <div className="catalog-list-tools"><label className="catalog-filter"><Search size={14}/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar material o proveedor"/><Filter size={13}/></label></div></div>
+        <div className="catalog-list-tools"><label className="catalog-filter"><Search size={14}/><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar material o proveedor"/><Filter size={13}/></label>
+          <select aria-label="Filtrar por búsqueda" value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}><option value="">Todas las búsquedas</option>{searchGroups.map((group) => <option key={group} value={group}>{group}</option>)}</select>
+          <select aria-label="Filtrar por tipo" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}><option value="">Todos los tipos</option>{catalogCategories.map((value) => <option key={value}>{value}</option>)}</select>
+          <select aria-label="Ordenar materiales" value={sortBy} onChange={(e) => setSortBy(e.target.value)}><option value="recent">Más recientes</option><option value="name">Nombre A–Z</option><option value="price">Precio menor</option></select></div></div>
       {!projectId ? <div className="catalog-empty"><span className="catalog-empty-icon"><Package size={20}/></span><h3>Selecciona un proyecto</h3><p>El inventario y sus cotizaciones se guardan por proyecto.</p></div> : loadingCatalog ? <div className="catalog-empty"><LoaderCircle size={20}/><p>Cargando inventario…</p></div> : visible.length ? <div className="catalog-items">{visible.map((item) => {
         const expired = item.expires_at && new Date(Number(item.expires_at) * 1000) < new Date();
         return <article className="catalog-item" key={item.id}>
-        <div className="catalog-item-mark"><Package size={18}/></div><div className="catalog-item-main"><div className="catalog-item-title"><h3>{item.name || "Material sin nombre"}</h3><span className={`catalog-status ${item.status}`}>{item.status === "approved" ? "Aprobado" : "Por revisar"}</span></div>
+        <div className="catalog-item-mark"><Package size={18}/></div><div className="catalog-item-main"><div className="catalog-item-title"><h3 title={item.name || "Material sin nombre"}>{item.name || "Material sin nombre"}</h3><span className={`catalog-status ${item.status}`} title={item.status === "approved" ? "Material aprobado para reutilizar" : "Candidato pendiente de validación de fuente y precio"}>{item.status === "approved" ? "Aprobado" : "Por revisar"}</span></div>
+          {item.searchGroup && <small className="catalog-item-search-group" title={item.searchGroup}>Búsqueda: {item.searchGroup}</small>}
           <p>{[item.material, item.section, item.category].filter(Boolean).join(" · ")}</p><div className="catalog-item-meta"><span><MapPin size={12}/>{[item.city, item.country].filter(Boolean).join(", ") || "Ubicación sin registrar"}</span>{item.supplier && <span>{item.supplier}</span>}<span>{displayDate(item.captured_at)}</span>{item.expires_at && <span>{expired ? "Cotización vencida" : `Vigente hasta ${displayDate(item.expires_at)}`}</span>}{item.source_url && <a href={item.source_url} target="_blank" rel="noreferrer">Ver fuente <ExternalLink size={11}/></a>}{item.source_name && <span>Fuente: {item.source_name}</span>}</div>
           {(() => { const contacts = contactsFromNotes(item.notes); return (Object.values(contacts).some(Boolean) || contacts.lead_time) && <div className="catalog-item-contacts"><strong>Contacto y disponibilidad</strong>{contacts.email && <a href={`mailto:${contacts.email}?subject=${encodeURIComponent(`Consulta: ${item.name}`)}`}>Email: {contacts.email}</a>}{contacts.phone && <a href={`tel:${contacts.phone.replace(/[^+\d]/g, "")}`}>Llamar: {contacts.phone}</a>}{contacts.whatsapp_url && <a href={contacts.whatsapp_url} target="_blank" rel="noreferrer">Abrir WhatsApp</a>}{contacts.contact_url && <a href={contacts.contact_url} target="_blank" rel="noreferrer">Formulario del proveedor</a>}{contacts.lead_time && <span>{contacts.lead_time}</span>}{contacts.image_url && <a href={contacts.image_url} target="_blank" rel="noreferrer">Ver imagen del producto</a>}</div>; })()}
         </div><div className="catalog-item-price"><strong>{money(item.price, item.currency || location.currency)}</strong><span>{item.quantity ? `${item.quantity} ${item.unit || "unidad"} · ${money(Number(item.price) * Number(item.quantity), item.currency || location.currency)} total` : `por ${item.unit || "unidad"}`}</span></div>

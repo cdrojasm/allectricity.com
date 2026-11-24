@@ -254,6 +254,12 @@ def _summary(result: dict[str, Any]) -> dict[str, Any]:
                        if result.get("best") else None)
     summary["finalists"] = [{k: v for k, v in f.items() if k not in {"geometry", "cost_breakdown"}}
                             for f in result.get("finalists") or []]
+    near_misses = [f for f in result.get("finalists") or []
+                   if f.get("status") == "demoted" and isinstance(f.get("ratio"), (int, float)) and f.get("geometry")]
+    near_misses.sort(key=lambda f: (f["ratio"], f.get("cost", float("inf")), f.get("candidate_sha256", "")))
+    summary["near_misses"] = [{key: finalist.get(key) for key in
+                                ("candidate_sha256", "cost", "level", "ratio", "metrics", "geometry")}
+                               for finalist in near_misses[:3]]
     return summary
 
 

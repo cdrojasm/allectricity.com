@@ -328,7 +328,11 @@ function MatherraRunReview({ project, token, artifact, refreshKey, onApplied }) 
         setDetail(body);
         setRuns((rows) => rows.map((row) => (row.id === body.run.id ? { ...row, status: body.run.status } : row)));
         const compared = body.run.status === "completed" ? await apiRequest(token, `${root}/${encodeURIComponent(runId)}/comparison`, { fallback: "No se pudo comparar las alternativas." }) : null;
-        if (live) setComparison(compared);
+        if (live) {
+          setComparison(compared);
+          const best = compared?.alternatives?.find((row) => row.recommended) || compared?.alternatives?.[0];
+          if (best) setPreviewId(best.alternative_id);
+        }
         if (ACTIVE_RUN.has(body.run.status)) timer = setTimeout(load, 1800);
       } catch (failure) { if (live) setError(failure.message); }
     };
@@ -354,6 +358,9 @@ function MatherraRunReview({ project, token, artifact, refreshKey, onApplied }) 
   const base = run?.request_snapshot?.initial_geometry || (run?.artifact_id === artifact?.artifact_id ? artifact?.snapshot?.geometry : null);
   const geometries = new Map((detail?.alternatives || []).map((alt) => [alt.id, alt.evaluation_snapshot?.geometry || alt.candidate_snapshot?.geometry]));
   const saving = comparison?.saving_vs_base;
+  const nearMiss = run?.result_summary?.near_misses?.[0];
+  const nearMissCriteria = nearMiss?.metrics?.criterion_ratios || [];
+  const baseCriteria = comparison?.base?.electrical?.metrics?.criterion_ratios || [];
   return <section className="matherra-run-review" aria-label="Alternativas de Matherra">
     <div className="optimization-review-heading"><strong>Matherra</strong>{runs.length > 1
       ? <select aria-label="Historial de Matherra" value={runId} onChange={(event) => { setRunId(event.target.value); setDetail(null); setComparison(null); setPreviewId(null); setError(""); setNotice(""); }}>
@@ -374,6 +381,20 @@ function MatherraRunReview({ project, token, artifact, refreshKey, onApplied }) 
         : ` La recomendada cuesta ${costLabel(-saving.amount, comparison)} más${saving.base_status === "violates" ? ": es lo que cuesta cumplir" : ""}.`)}</p>}
     {notice && <p className="matherra-apply-notice" role="status">{notice}</p>}
     {comparison && <div className="matherra-candidate-list">
+      {comparison.alternatives.length === 0 && base && <article className="matherra-best-design matherra-no-alternative">
+        {nearMiss ? <>
+          <strong>Diseño más cercano encontrado · todavía no cumple</strong>
+          <p>La búsqueda evaluó este candidato en {nearMiss.level || "un nivel fino"}, pero todavía incumple. Se ordena por menor exceso eléctrico y luego por costo ({costLabel(nearMiss.cost, comparison)}). Compáralo con el diseño actual para ver si bajó la tensión de contacto o de paso; no es un diseño aprobado.</p>
+          <div className="matherra-near-miss-criteria">{nearMissCriteria.map((criterion) => {
+            const original = baseCriteria.find((item) => item.criterion === criterion.criterion && item.standard === criterion.standard);
+            const label = criterion.criterion === "touch" ? "Contacto" : criterion.criterion === "step" ? "Paso" : criterion.criterion;
+            return <div key={`${criterion.standard}-${criterion.criterion}`}><strong>{label}</strong><span>{original ? `${formatShare(original.ratio, 1)} → ` : ""}{formatShare(criterion.ratio, 1)} de utilización</span><small>{original ? `${formatNumber(original.actual_v, 0)} / ${formatNumber(original.limit_v, 0)} V → ` : ""}{formatNumber(criterion.actual_v, 0)} / {formatNumber(criterion.limit_v, 0)} V tolerables</small></div>;
+          })}</div>
+          <TopologyPreview base={base} alternative={nearMiss.geometry}/>
+        </> : <>
+          <strong>Diseño actual</strong><p>Con este presupuesto no se encontró una alternativa que pasara la verificación más fina. Aquí puedes revisar el diseño de partida; no hay un candidato cercano con evaluación fina para comparar.</p><TopologyPreview base={base} alternative={base}/>
+        </>}
+      </article>}
       {comparison.alternatives.length ? comparison.alternatives.map((candidate) => {
         const geometry = geometries.get(candidate.alternative_id);
         return <article className={`matherra-candidate${candidate.recommended ? " recommended" : ""}`} data-testid="matherra-candidate" key={candidate.alternative_id}>
@@ -391,9 +412,9 @@ function MatherraRunReview({ project, token, artifact, refreshKey, onApplied }) 
             <button className="button" type="button" aria-expanded={previewId === candidate.alternative_id} disabled={!geometry || !base} onClick={() => setPreviewId(previewId === candidate.alternative_id ? null : candidate.alternative_id)}>{previewId === candidate.alternative_id ? "Ocultar vista previa" : "Vista previa"}</button>
             <button className="button primary" type="button" disabled={!geometry || applyingId != null || candidate.applied_is_latest} onClick={() => apply(candidate.alternative_id)}>{applyingId === candidate.alternative_id ? "Aplicando…" : candidate.applied_is_latest ? "Versión actual" : "Aplicar como nueva versión"}</button>
           </div>
-          {previewId === candidate.alternative_id && geometry && base && <TopologyPreview base={base} alternative={geometry}/>}
+          {previewId === candidate.alternative_id && geometry && base && <div className="matherra-best-design"><strong>{candidate.recommended ? "Mejor alternativa encontrada · comparación gráfica con el diseño actual" : `Vista gráfica · alternativa ${candidate.rank}`}</strong><TopologyPreview base={base} alternative={geometry}/></div>}
         </article>;
-      }) : <p className="no-information">Matherra terminó, pero ninguna alternativa pasó la verificación más fina con este presupuesto. Prueba con un presupuesto mayor o revisa las áreas intervenibles.</p>}
+      }) : !base && <p className="no-information">Matherra terminó, pero ninguna alternativa pasó la verificación más fina con este presupuesto. Prueba con un presupuesto mayor o revisa las áreas intervenibles.</p>}
       {comparison.alternatives.some((row) => row.pareto) && <small className="matherra-candidate-validation">«Equilibrio costo–seguridad»: ninguna otra alternativa es a la vez más barata y más segura.</small>}
       <details className="matherra-review-notes"><summary>Cómo interpretar este resultado</summary><ul>{comparison.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details>
     </div>}

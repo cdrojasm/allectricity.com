@@ -89,9 +89,20 @@ def electrical_verdict(level: str, result: dict[str, Any]) -> dict[str, Any]:
     at L1 to be escalated, at finer levels when `Feasible` is True. Otherwise it could not be assessed (a standard
     with no evaluable criterion, a mandatory criterion missing) and is rejected, never promoted on silence.
     """
+    criterion_ratios = []
+    for standard_result in result.get("SafetyEvaluations") or []:
+        for criterion in standard_result.get("criteria", []):
+            limit = criterion.get("tolerable_v")
+            actual = criterion.get("actual_v")
+            if criterion.get("status") == "no_evaluable" or not isinstance(limit, (int, float)) or limit <= 0 or not isinstance(actual, (int, float)):
+                continue
+            criterion_ratios.append({"standard": standard_result.get("standard"), "criterion": criterion.get("criterion"),
+                                     "actual_v": actual, "limit_v": limit, "ratio": actual / limit,
+                                     "status": criterion.get("status")})
     verdict = {"status": result["FeasibilityStatus"], "ratio": utilization_ratio(result), "feasible": result["Feasible"],
                # what the comparison and the report show; plain numbers so the verdict stays checkpointable
                "metrics": {"Rg_ohm": result.get("Rg"), "Vs_v": result.get("Vs"), "Vt_v": result.get("Vt"),
+                           "criterion_ratios": criterion_ratios,
                            "missing_mandatory_criteria": list(result.get("MissingMandatoryCriteria") or [])}}
     if verdict["status"] != "VIOLATED" and not admits(level=level, status=verdict["status"], feasible=verdict["feasible"]):
         return {**verdict, "status": "REJECTED", "reason": "not_assessable", "detail": "no criterion could be assessed"}
