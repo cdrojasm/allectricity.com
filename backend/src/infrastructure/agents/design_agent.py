@@ -207,7 +207,7 @@ def _saved_field_text(path: str, value) -> str:
     if path == "soil_layers" and isinstance(value, list):
         resistivities = [layer.get("resistivity_ohm_m") for layer in value
                          if isinstance(layer, dict) and isinstance(layer.get("resistivity_ohm_m"), (int, float))]
-        if len(resistivities) == 1:
+        if len(value) == 1 and len(resistivities) == 1:
             return f"resistividad del suelo: {_number(resistivities[0])} Ω·m"
         return f"capas de suelo: {len(value)}"
     if path == "soil_measurements" and isinstance(value, dict):
