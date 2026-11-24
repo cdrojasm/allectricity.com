@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "spat-design-agent"
 version = "0.1.0"
 description = "Agente de diseño y validación de sistemas de puesta a tierra."
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.16"
 dependencies = [
   "pydantic>=2.8,<3.0",
   "sqlalchemy>=2.0,<3",
@@ -30,7 +30,7 @@ api = [
   "pypdfium2>=4.30,<6",
   "openpyxl>=3.1,<4",
   "neo4j>=5.26,<7",
-  "pillow>=10,<13",
+  "pillow>=13,<14",
 ]
 # Phoenix: prompt catalog + traces (OpenTelemetry/OpenInference) of every unit of work.
 # neo4j: the orchestrator reads what the project's files say (knowledge graph) before asking the user.
@@ -42,7 +42,7 @@ documents = [
   "pdfplumber>=0.11,<1",
   "openpyxl>=3.1,<4",
   "python-docx>=1.1,<2",
-  "pillow>=10,<13",
+  "pillow>=13,<14",
   "neo4j>=5.26,<7",
   "arize-phoenix-client>=3,<4",
   "arize-phoenix-otel>=0.17,<1",
@@ -56,6 +56,7 @@ billing = ["mercadopago>=3.6,<4"]
 render = ["playwright>=1.50,<2"]
 parsers = ["ezdxf>=1.3"]
 reports = ["reportlab>=4.2", "playwright>=1.50,<2"]
+ocr = ["fastapi>=0.115,<1.0", "uvicorn>=0.30,<1.0", "pillow>=13,<14", "pytesseract>=0.3.13,<1"]
 dev = ["pytest>=8.0", "pytest-xdist>=3.5", "httpx>=0.27", "ruff>=0.6", "scipy>=1.11"]
 
 [tool.pytest.ini_options]

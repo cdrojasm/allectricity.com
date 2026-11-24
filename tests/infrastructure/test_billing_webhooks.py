@@ -82,7 +82,17 @@ def test_valid_notification_is_stored_and_queued_once(billing):
     [event] = rows(store)
     assert event["mode"] == "test" and event["topic"] == "subscription_preapproval"
     assert event["resource_id"] == "123456" and event["status"] == "received"
+    assert event["payload"] == {}
     assert queued == [event["id"], event["id"]]  # still pending, so the redelivery re-queues it
+
+
+def test_oversized_webhook_body_is_rejected(billing):
+    client, store, queued = billing
+    body = b"x" * (billing_routes.MAX_BODY_BYTES + 1)
+    response = client.post(URL.format("test") + "?data.id=123456&type=payment",
+                           content=body, headers=signed("test", "123456"))
+    assert response.status_code == 413
+    assert rows(store) == [] and queued == []
 
 
 def test_the_secret_that_signed_the_notification_decides_its_mode(billing):

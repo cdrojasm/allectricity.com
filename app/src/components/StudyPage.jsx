@@ -39,7 +39,7 @@ function StudyBillOfMaterials({ bom, title = "Lista de materiales" }) {
   if (!bom) return null;
   return <section data-testid="study-bom">
     <h2>{title}</h2>
-    <BillOfMaterialsTable bom={bom}/>
+    <BillOfMaterialsTable bom={bom} adjustments={bom.adjustments || {}}/>
     {bom.cost && <p data-testid="study-bom-cost"><strong>Costo estimado:</strong> {formatNumber(bom.cost.total, 0)} {bom.cost.currency || ""}{bom.cost.by_group ? ` (${Object.entries(bom.cost.by_group).map(([group, amount]) => `${rateLabels[group] || group}: ${formatNumber(Number(amount), 0)}`).join(" · ")})` : ""}. {bom.cost.note}</p>}
     {bom.notes?.length > 0 && <ul className="study-references">{bom.notes.map((note) => <li key={note}>{note}</li>)}</ul>}
   </section>;

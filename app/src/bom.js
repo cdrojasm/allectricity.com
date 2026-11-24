@@ -30,7 +30,7 @@ export function bomRows(bom) {
     rows.push({ group: "Obra civil", name: "Zanja", spec: `${formatNumber(bom.trench.depth_m, 2)} m de profundidad${bom.trench.width_m ? ` · ${formatNumber(bom.trench.width_m, 2)} m de ancho` : ""}`, quantity: quantity(bom.trench.length_m), raw: bom.trench.length_m, unit: "m" });
     rows.push({ group: "Obra civil", name: "Excavación", spec: bom.trench.excavation_m3 === null || bom.trench.excavation_m3 === undefined ? "Requiere un ancho de zanja declarado" : "Volumen de la zanja", quantity: quantity(bom.trench.excavation_m3), raw: bom.trench.excavation_m3, unit: "m³" });
   }
-  return rows;
+  return rows.map((row) => ({ ...row, adjustmentKey: JSON.stringify([row.group, row.name, row.spec, row.unit]) }));
 }
 
 export function bomCsv(rows) {

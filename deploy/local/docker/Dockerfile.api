@@ -16,8 +16,9 @@ COPY dependencies/pyproject.toml ./
 # Third-party dependencies depend only on pyproject.toml, so a source change does not reinstall them.
 # The stub package lets pip resolve the project's extras; the project itself is installed after its sources.
 FROM base AS runtime-deps
+COPY dependencies/requirements/api.txt ./requirements.lock
 RUN mkdir src && touch src/__init__.py \
-    && pip install --no-cache-dir '.[api,agent,billing,parsers]' && pip uninstall -y spat-design-agent \
+    && pip install --no-cache-dir --require-hashes -r requirements.lock \
     && rm -rf src build ./*.egg-info
 
 FROM runtime-deps AS runtime
@@ -36,8 +37,9 @@ EXPOSE 8000
 CMD ["sh", "-c", "case \"${SPAT_ROLE:-api}\" in scheduler) exec celery -A src.infrastructure.entrypoint.worker.tasks:celery_app beat --loglevel=INFO --schedule=/tmp/spat-celerybeat ;; migrate) exec alembic -c alembic.ini upgrade head ;; *) if [ \"${RUN_MIGRATIONS:-false}\" = true ]; then alembic -c alembic.ini upgrade head || exit 1; fi; exec uvicorn src.infrastructure.entrypoint.api.main:app --host \"${BIND_HOST:-0.0.0.0}\" --port \"${PORT:-8000}\" ;; esac"]
 
 FROM runtime-deps AS test-deps
+COPY dependencies/requirements/tests.txt ./requirements.lock
 RUN mkdir src && touch src/__init__.py \
-    && pip install --no-cache-dir '.[api,documents,billing,dev]' && pip uninstall -y spat-design-agent \
+    && pip install --no-cache-dir --require-hashes -r requirements.lock \
     && rm -rf src build ./*.egg-info
 
 FROM test-deps AS test
@@ -47,6 +49,9 @@ COPY backend/alembic.ini ./alembic.ini
 # Prompt seeds: fallback of the units of work that run in the API while Phoenix is unreachable.
 COPY prompts ./prompts
 COPY scripts/smoke_session.py ./scripts/smoke_session.py
+COPY scripts/security_inventory.py ./scripts/security_inventory.py
+COPY scripts/security_lock_inventory.py ./scripts/security_lock_inventory.py
+COPY scripts/security_runtime_inventory.py ./scripts/security_runtime_inventory.py
 RUN pip install --no-cache-dir --no-deps . && rm -rf build ./*.egg-info && useradd --create-home --uid 10001 spat
 COPY --from=potential-builder /spat-potential-engine /usr/local/bin/spat-potential-engine
 ENV SPAT_POTENTIAL_ENGINE=/usr/local/bin/spat-potential-engine

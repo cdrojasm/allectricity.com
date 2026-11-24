@@ -11,6 +11,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: '15 8 * * 1'
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -91,3 +93,24 @@ jobs:
           cache-dependency-path: app/package-lock.json
       - run: npm --prefix app ci
       - run: make frontend-build
+
+  dependency-security:
+    name: Locked Python dependency SBOM and CVE scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Python lockfiles are current
+        run: |
+          make python-lock
+          git diff --exit-code -- dependencies/uv.lock dependencies/requirements
+      - name: Export locked SBOMs and scan with Grype
+        run: make security-lock-inventory
+      - name: Preserve SBOMs and vulnerability reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dependency-security-${{ github.run_id }}
+          path: artifacts/security/locks-*/
+          if-no-files-found: warn
+          retention-days: 90

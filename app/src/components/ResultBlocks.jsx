@@ -156,15 +156,18 @@ export function CalculationOptionsDialog({ config, layers, busy, onChange, onClo
   </div>;
 }
 
-export function BillOfMaterialsTable({ bom }) {
+export function BillOfMaterialsTable({ bom, adjustments = {} }) {
   const rows = bomRows(bom);
-  return <table className="bom-table"><thead><tr><th>Material</th><th>Especificación</th><th className="num">Cantidad</th><th>Unidad</th></tr></thead>
-    <tbody>{rows.map((row) => <tr key={`${row.group}-${row.name}-${row.spec}`}><td><strong>{row.name}</strong><small>{row.group}</small></td><td>{row.spec}</td><td className="num">{row.quantity}</td><td>{row.unit}</td></tr>)}</tbody></table>;
+  return <table className="bom-table"><thead><tr><th>Material</th><th>Especificación</th><th className="num">Base</th><th className="num">Total para compra</th><th>Unidad</th></tr></thead>
+    <tbody>{rows.map((row) => { const adjustment = adjustments[row.adjustmentKey] || {}; const adjusted = Number(row.raw || 0) * (1 + Number(adjustment.percentage || 0) / 100) + Number(adjustment.extra_quantity || 0); const purchase = row.unit === "und" ? Math.ceil(adjusted) : adjusted; return <tr key={row.adjustmentKey}><td><strong>{row.name}</strong><small>{row.group}</small></td><td>{row.spec}</td><td className="num">{row.quantity}</td><td className="num">{row.raw == null ? "—" : formatNumber(purchase, row.unit === "und" ? 0 : 2)}</td><td>{row.unit}</td></tr>; })}</tbody></table>;
 }
 
 // Workspace «Materiales» tab: the take-off of the current version.
 export function BillOfMaterialsPanel({ project, conversation, token, refreshKey, onOpenCatalog }) {
   const [state, setState] = useState({ status: "loading" });
+  const [adjustments, setAdjustments] = useState({});
+  const [savingAdjustments, setSavingAdjustments] = useState(false);
+  const [adjustmentNotice, setAdjustmentNotice] = useState("");
   useEffect(() => {
     let live = true;
     const headers = { Authorization: `Bearer ${token}` };
@@ -180,13 +183,23 @@ export function BillOfMaterialsPanel({ project, conversation, token, refreshKey,
         const response = await fetch(`${root}/${artifact.artifact_id}/versions/${artifact.version}/materiales`, { headers });
         if (!response.ok) throw new Error();
         const body = await response.json();
-        if (live) setState({ status: body.bill_of_materials ? "ready" : "empty", bom: body.bill_of_materials, version: artifact.version, name: artifact.name });
+        if (live) { setState({ status: body.bill_of_materials ? "ready" : "empty", bom: body.bill_of_materials, version: artifact.version, artifactId: artifact.artifact_id, name: artifact.name }); setAdjustments(body.adjustments || {}); }
       } catch { if (live) setState({ status: "error" }); }
     })();
     return () => { live = false; };
   }, [project.id, conversation?.id, token, refreshKey]);
   const { bom } = state;
   const rows = bomRows(bom);
+  async function saveAdjustments() {
+    setSavingAdjustments(true); setAdjustmentNotice("");
+    try {
+      const response = await fetch(`/api/v1/projects/${project.id}/artefactos-diseno-tierras/${state.artifactId}/versions/${state.version}/materiales`, { method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ adjustments }) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : "No se pudieron guardar los excedentes.");
+      setAdjustmentNotice("Excedentes guardados para esta versión.");
+    } catch (error) { setAdjustmentNotice(error.message || "No se pudieron guardar los excedentes."); }
+    finally { setSavingAdjustments(false); }
+  }
   return <section className="panel artifact-side-panel bom-panel">
     <div className="panel-heading"><div><IconMaterials size={17}/><h2>Lista de materiales</h2></div><div className="artifact-results-heading-actions">{state.version && <span className="muted-label">Versión {state.version}</span>}{onOpenCatalog && <button type="button" className="button" onClick={onOpenCatalog} title="Precios aprobados para cotizar estos materiales"><IconCatalog size={14}/> Catálogo de materiales</button>}{bom && <button type="button" className="button" onClick={() => download(`materiales-${project.name}-v${state.version}.csv`, `﻿${bomCsv(rows)}`, "text/csv")}><Download size={14}/> Exportar CSV</button>}</div></div>
     {state.status === "loading" && <p className="panel-empty-text">Calculando cantidades…</p>}
@@ -200,7 +213,8 @@ export function BillOfMaterialsPanel({ project, conversation, token, refreshKey,
         <Metric label="Conexiones" value={formatNumber(bom.connections ?? 0, 0)} unit="und" hint={bom.connections_by_type ? `${formatNumber(bom.connections_by_type.conductor_conductor, 0)} conductor–conductor · ${formatNumber(bom.connections_by_type.conductor_rod, 0)} conductor–electrodo` : null} tip="Conductor–conductor: cada cruce o unión en T de la malla. Conductor–electrodo: la unión de cada varilla a la malla. Suelen ser de tipos distintos (molde de soldadura exotérmica o conector), por eso se cotizan aparte."/>
         <Metric label="Zanja" value={formatNumber(bom.trench?.length_m ?? 0, 1)} unit="m" hint={bom.trench?.depth_m ? `a ${formatNumber(bom.trench.depth_m, 2)} m de profundidad` : null}/>
       </div>
-      <div className="bom-table-wrap"><BillOfMaterialsTable bom={bom}/></div>
+      <div className="bom-table-wrap"><BillOfMaterialsTable bom={bom} adjustments={adjustments}/></div>
+      <details className="bom-adjustment-editor"><summary>Ajustar excedentes para compra</summary><p>La cantidad base sigue siendo la geométrica. Declara desperdicio porcentual y adicionales por renglón; el total se calcula para cotización y no altera el diseño. Las unidades discretas se redondean hacia arriba.</p><div>{rows.map((row) => <label key={row.adjustmentKey}><span>{row.name} · base {row.quantity} {row.unit}</span><span><input aria-label={`Porcentaje adicional para ${row.name}`} type="number" min="0" max="1000" step="0.1" disabled={row.raw == null} value={adjustments[row.adjustmentKey]?.percentage ?? 0} onChange={(event) => setAdjustments((current) => ({ ...current, [row.adjustmentKey]: { ...current[row.adjustmentKey], percentage: Number(event.target.value) || 0 } }))}/> %</span><span><input aria-label={`Cantidad adicional para ${row.name}`} type="number" min="0" step="any" disabled={row.raw == null} value={adjustments[row.adjustmentKey]?.extra_quantity ?? 0} onChange={(event) => setAdjustments((current) => ({ ...current, [row.adjustmentKey]: { ...current[row.adjustmentKey], extra_quantity: Number(event.target.value) || 0 } }))}/> {row.unit}</span></label>)}</div><button type="button" className="button" disabled={savingAdjustments} onClick={saveAdjustments}>{savingAdjustments ? "Guardando…" : "Guardar excedentes"}</button>{adjustmentNotice && <small role="status">{adjustmentNotice}</small>}</details>
       {bom.cost && <p className="panel-lead"><strong>Costo estimado:</strong> {formatNumber(bom.cost.total, 0)} {bom.cost.currency || ""}. {bom.cost.note}</p>}
       {bom.notes?.length > 0 && <ul className="panel-notes">{bom.notes.map((note) => <li key={note}>{note}</li>)}</ul>}
     </>}

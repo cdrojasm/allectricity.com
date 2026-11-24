@@ -263,7 +263,7 @@ studies = Table(
     Column("access", String(20), nullable=False),
     Column("status", String(20), nullable=False),
     Column("config", JSON, nullable=False),
-    Column("password_hash", String(64)),
+    Column("password_hash", String(255)),
     Column("expires_at", BigInteger),
     Column("published_at", BigInteger),
     Column("created_at", BigInteger, nullable=False),

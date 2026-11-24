@@ -4,6 +4,7 @@ from decimal import Decimal
 from math import isfinite
 import re
 from time import time
+from typing import Literal
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -21,6 +22,7 @@ router = APIRouter(
     prefix="/api/v1/projects/{project_id}/material-catalog",
     tags=["material-catalog"],
 )
+personal_router = APIRouter(prefix="/api/v1/material-catalog/personal", tags=["material-catalog"])
 
 
 _STRUCTURED_TARGET_UNITS = {"rod_length_m": "m"}
@@ -77,6 +79,49 @@ class StructuredOptionsInput(BaseModel):
         return self
 
 
+class ServiceDetailsInput(BaseModel):
+    """Explicit commercial and delivery terms for a service catalog entry."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    pricing_type: Literal["fixed", "measured"]
+    scope: str = Field(min_length=1, max_length=3000)
+    acceptance_criteria: str | None = Field(default=None, max_length=3000)
+    work_duration: str | None = Field(default=None, max_length=240)
+    wait_duration: str | None = Field(default=None, max_length=240)
+
+
+class ContactDataInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    email: str | None = Field(default=None, max_length=320)
+    phone: str | None = Field(default=None, max_length=60)
+    whatsapp_url: str | None = Field(default=None, max_length=2000)
+    contact_url: str | None = Field(default=None, max_length=2000)
+    image_url: str | None = Field(default=None, max_length=2000)
+
+
+class AvailabilityInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    lead_time: str | None = Field(default=None, max_length=240)
+    lead_time_type: Literal["dispatch", "work"] = "dispatch"
+    source_url: str | None = Field(default=None, max_length=2000)
+    checked_at: int | None = Field(default=None, ge=0)
+
+
+def _validate_service_details(category, service_details):
+    if category == "Servicio" and service_details is None:
+        raise ValueError("service_details is required for service catalog items")
+    if category != "Servicio" and service_details is not None:
+        raise ValueError("service_details is only valid for service catalog items")
+
+
+def _validate_service_unit(category, quantity_unit, service_details):
+    _validate_service_details(category, service_details)
+    if service_details and service_details.pricing_type == "fixed" and quantity_unit != "servicio":
+        raise ValueError("fixed-price services must use quantity_unit 'servicio'")
+    if service_details and service_details.pricing_type == "measured" and quantity_unit == "servicio":
+        raise ValueError("measured services must declare a measurable quantity_unit")
+
+
 class MaterialItemInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
@@ -85,6 +130,10 @@ class MaterialItemInput(BaseModel):
     material: str | None = Field(default=None, max_length=160)
     specification: str = Field(min_length=1, max_length=5000)
     structured_options: StructuredOptionsInput | None = None
+    service_details: ServiceDetailsInput | None = None
+    contact_data: ContactDataInput | None = None
+    availability: AvailabilityInput | None = None
+    field_provenance: dict = Field(default_factory=dict)
     quantity: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=4)
     quantity_unit: str | None = Field(default=None, max_length=40)
     quantity_basis: str | None = Field(default=None, max_length=2000)
@@ -111,6 +160,7 @@ class MaterialItemInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_quote(self):
+        _validate_service_unit(self.category, self.quantity_unit, self.service_details)
         if self.price_per_unit is not None and not self.price_currency:
             raise ValueError("price_currency is required with price_per_unit")
         if self.expires_at is not None and self.quoted_at is not None and self.expires_at < self.quoted_at:
@@ -126,6 +176,10 @@ class MaterialItemPatch(BaseModel):
     material: str | None = Field(default=None, max_length=160)
     specification: str | None = Field(default=None, min_length=1, max_length=5000)
     structured_options: StructuredOptionsInput | None = None
+    service_details: ServiceDetailsInput | None = None
+    contact_data: ContactDataInput | None = None
+    availability: AvailabilityInput | None = None
+    field_provenance: dict | None = None
     quantity: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=4)
     quantity_unit: str | None = Field(default=None, max_length=40)
     quantity_basis: str | None = Field(default=None, max_length=2000)
@@ -200,6 +254,98 @@ def _totals(rows):
         totals[currency] = totals.get(currency, Decimal("0")) + Decimal(row["estimated_cost"])
     result = [{"currency": currency, "amount": format(amount, "f")} for currency, amount in sorted(totals.items())]
     return result[0] if len(result) == 1 else None
+
+
+@personal_router.get("")
+def list_personal_catalog(request: Request, actor=Depends(require("designs:read"))):
+    with request.app.state.services.store.transaction() as db:
+        rows = [_with_quote_state(row) for row in _repository(db).list_personal(actor.user_id)]
+        return {"items": rows, "estimated_total": _totals(rows)}
+
+
+@personal_router.post("", status_code=201)
+def create_personal_catalog_item(data: MaterialItemInput, request: Request, actor=Depends(require("designs:write"))):
+    now = int(time())
+    repo_cls = MaterialCatalogRepository
+    with request.app.state.services.store.transaction(write=True) as db:
+        repo = repo_cls(db.connection)
+        row = repo.insert({**data.model_dump(), "id": str(uuid4()), "project_id": None,
+            "created_by": actor.user_id, "updated_by": actor.user_id, "status": "candidate",
+            "version": 1, "created_at": now, "updated_at": now})
+        _snapshot(repo, row, "created", actor.user_id, now)
+        return _with_quote_state(row)
+
+
+@personal_router.patch("/{item_id}")
+def update_personal_catalog_item(item_id: str, data: MaterialItemPatch, request: Request,
+                                actor=Depends(require("designs:write"))):
+    changes = data.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(422, "At least one field must be provided")
+    now = int(time())
+    with request.app.state.services.store.transaction(write=True) as db:
+        repo = _repository(db)
+        current = repo.get_personal(actor.user_id, item_id)
+        if not current:
+            raise HTTPException(404, "Personal catalog item not found")
+        if current["status"] == "archived":
+            raise HTTPException(409, "Archived items cannot be edited")
+        merged = {**current, **changes}
+        details = merged.get("service_details")
+        if details and isinstance(details, dict):
+            details = ServiceDetailsInput.model_validate(details)
+        _validate_service_unit(merged.get("category"), merged.get("quantity_unit"), details)
+        row = repo.update_personal(actor.user_id, item_id, {**changes, "updated_by": actor.user_id,
+            "version": current["version"] + 1, "updated_at": now})
+        _snapshot(repo, row, "updated", actor.user_id, now)
+        return _with_quote_state(row)
+
+
+@personal_router.post("/{item_id}/approval")
+def set_personal_catalog_approval(item_id: str, data: ApprovalInput, request: Request,
+                                  actor=Depends(require("designs:write"))):
+    now = int(time())
+    with request.app.state.services.store.transaction(write=True) as db:
+        repo = _repository(db)
+        current = repo.get_personal(actor.user_id, item_id)
+        if not current:
+            raise HTTPException(404, "Personal catalog item not found")
+        if current["status"] == "archived":
+            raise HTTPException(409, "Archived items cannot be approved")
+        if data.approved:
+            if current.get("price_per_unit") is None or not current.get("supplier"):
+                raise HTTPException(409, "Approval requires a price and supplier")
+            if not current.get("source_url") and not current.get("notes"):
+                raise HTTPException(409, "Approval requires a traceable source URL or note")
+            if current.get("expires_at") and current["expires_at"] <= now:
+                raise HTTPException(409, "Expired quotes cannot be approved")
+        row = repo.update_personal(actor.user_id, item_id, {"status": "approved" if data.approved else "candidate",
+            "updated_by": actor.user_id, "version": current["version"] + 1, "updated_at": now})
+        _snapshot(repo, row, "approved" if data.approved else "unapproved", actor.user_id, now)
+        return _with_quote_state(row)
+
+
+@personal_router.delete("/{item_id}", status_code=204)
+def archive_personal_catalog_item(item_id: str, request: Request, actor=Depends(require("designs:write"))):
+    now = int(time())
+    with request.app.state.services.store.transaction(write=True) as db:
+        repo = _repository(db)
+        current = repo.get_personal(actor.user_id, item_id)
+        if not current:
+            raise HTTPException(404, "Personal catalog item not found")
+        if current["status"] != "archived":
+            row = repo.update_personal(actor.user_id, item_id, {"status": "archived", "updated_by": actor.user_id,
+                "version": current["version"] + 1, "updated_at": now})
+            _snapshot(repo, row, "archived", actor.user_id, now)
+    return None
+
+
+@personal_router.get("/{item_id}/versions")
+def personal_catalog_item_versions(item_id: str, request: Request, actor=Depends(require("designs:read"))):
+    with request.app.state.services.store.transaction() as db:
+        if not _repository(db).get_personal(actor.user_id, item_id):
+            raise HTTPException(404, "Personal catalog item not found")
+        return {"versions": _repository(db).personal_versions(actor.user_id, item_id)}
 
 
 @router.get("")
@@ -300,6 +446,13 @@ def update_material_item(
         if current["status"] == "archived":
             raise HTTPException(409, "Archived items cannot be edited")
         merged = {**current, **changes}
+        try:
+            service_details = merged.get("service_details")
+            if service_details and isinstance(service_details, dict):
+                service_details = ServiceDetailsInput.model_validate(service_details)
+            _validate_service_unit(merged.get("category"), merged.get("quantity_unit"), service_details)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
         if merged.get("price_per_unit") is not None and not merged.get("price_currency"):
             raise HTTPException(422, "price_currency is required with price_per_unit")
         if merged.get("expires_at") is not None and merged.get("quoted_at") is not None and merged["expires_at"] < merged["quoted_at"]:

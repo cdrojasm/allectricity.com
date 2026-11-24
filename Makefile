@@ -6,6 +6,32 @@ BENCH_OUT ?= /tmp/free-geometry-benchmark.json
 free-geometry-benchmark: potential-engine
 	python3 services/potential_engine/validation/free_geometry_benchmark.py --json "$(BENCH_OUT)" $(ARGS)
 
+SECURITY_IMAGES ?=
+SECURITY_OUTPUT ?= artifacts/security
+ifeq ($(SECURITY_DOCKER),true)
+SECURITY_DOCKER_FLAG = --docker-tools
+endif
+ifeq ($(SECURITY_ALLOW_MUTABLE),true)
+SECURITY_MUTABLE_FLAG = --allow-mutable
+endif
+security-inventory:
+	@test -n "$(strip $(SECURITY_IMAGES))" || { echo 'Set SECURITY_IMAGES="service=image@sha256:digest ..."'; exit 2; }
+	python3 scripts/security_inventory.py --output-root "$(SECURITY_OUTPUT)" $(SECURITY_DOCKER_FLAG) $(SECURITY_MUTABLE_FLAG) $(foreach image,$(SECURITY_IMAGES),--image "$(image)")
+
+security-rescan:
+	python3 scripts/security_inventory.py --output-root "$(SECURITY_OUTPUT)" $(SECURITY_DOCKER_FLAG) --rescan
+
+security-lock-inventory:
+	python3 scripts/security_lock_inventory.py
+
+SECURITY_RUNTIME_SERVICES ?=
+security-runtime-inventory:
+	python3 scripts/security_runtime_inventory.py --output-root "$(SECURITY_OUTPUT)" $(foreach service,$(SECURITY_RUNTIME_SERVICES),--service "$(service)")
+
+PYTHON_LOCK_IMAGE ?= ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58
+python-lock:
+	docker run --rm -v "$(CURDIR)/dependencies:/workspace" -w /workspace $(PYTHON_LOCK_IMAGE) sh -c 'mkdir -p requirements && uv lock && uv export --locked --no-dev --no-emit-project --extra api --extra agent --extra billing --extra parsers -o requirements/api.txt && uv export --locked --no-dev --no-emit-project --extra api --extra documents --extra billing --extra dev -o requirements/tests.txt && uv export --locked --no-dev --no-emit-project --extra agent -o requirements/agent.txt && uv export --locked --no-dev --no-emit-project --extra documents -o requirements/documents.txt && uv export --locked --no-dev --no-emit-project -o requirements/calculations.txt && uv export --locked --no-dev --no-emit-project --extra billing -o requirements/mail.txt && uv export --locked --no-dev --no-emit-project --extra render -o requirements/render.txt && uv export --locked --no-dev --no-emit-project --extra ocr -o requirements/ocr.txt'
+
 OPT_BENCH_OUT ?= /tmp/optimizer-benchmark.json
 optimizer-benchmark: potential-engine
 	python3 services/potential_engine/validation/topology_optimizer_benchmark.py --json "$(OPT_BENCH_OUT)" $(ARGS)
@@ -19,6 +45,11 @@ help:
 	  '  potential-engine-profile Profile solver phases (ARGS=..., PROFILE_OUT=...)' \
 	  '  free-geometry-benchmark Compare L1, L2 and L2+ on seeded drawn geometries (ARGS=..., BENCH_OUT=...)' \
 	  '  optimizer-benchmark Compare optimizer strategies on equal budgets (ARGS=..., OPT_BENCH_OUT=...)' \
+	  '  security-inventory Generate CycloneDX SBOMs and Grype CVE reports (SECURITY_IMAGES=service=image@sha256:...)' \
+	  '  security-rescan    Recheck archived SBOMs with the current vulnerability database' \
+	  '  security-lock-inventory Scan locked Python dependency profiles and archive SBOMs/reports' \
+	  '  security-runtime-inventory Read pip packages from live Railway services and scan runtime SBOMs' \
+	  '  python-lock    Resolve uv.lock and hash-pinned requirements for each Python image' \
 	  '  frontend-up    Build static files and start Nginx' \
 	  '  frontend-down  Stop the Nginx container' \
 	  '  local-build    Build local Docker services' \
@@ -41,7 +72,7 @@ help:
 
 .PHONY: local-up local-down local-build test lint
 
-.PHONY: frontend-build frontend-up frontend-down potential-engine potential-engine-profile free-geometry-benchmark optimizer-benchmark
+.PHONY: frontend-build frontend-up frontend-down potential-engine potential-engine-profile free-geometry-benchmark optimizer-benchmark security-inventory security-rescan security-runtime-inventory security-lock-inventory python-lock
 potential-engine:
 	mkdir -p services/potential_engine/build
 	g++ -std=c++17 -O3 -Wall -Wextra -Wpedantic services/potential_engine/src/main.cpp -o services/potential_engine/build/spat-potential-engine
@@ -60,7 +91,7 @@ frontend-down:
 	$(COMPOSE) stop nginx
 
 local-build:
-	$(COMPOSE) build
+	$(if $(PLATFORM),DOCKER_DEFAULT_PLATFORM=$(PLATFORM) )$(COMPOSE) build $(PULL)
 
 local-up: frontend-build
 	$(COMPOSE) up --build -d
@@ -80,7 +111,7 @@ test:
 
 lint:
 	$(COMPOSE) --profile test build tests
-	$(COMPOSE) --profile test run --rm --no-deps tests ruff check --no-cache src tests --select E9,F63,F7,F82
+	$(COMPOSE) --profile test run --rm --no-deps tests ruff check --no-cache src tests scripts/security_inventory.py scripts/security_lock_inventory.py scripts/security_runtime_inventory.py --select E9,F63,F7,F82
 
 .PHONY: local-config migrate create-admin sync-prompts phoenix-openrouter smoke-local templates eval-extraction
 # Runs as the host user: on Linux (CI) a root-owned .env with mode 600 would be unreadable to `docker compose`.

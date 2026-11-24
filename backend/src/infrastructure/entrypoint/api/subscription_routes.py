@@ -19,6 +19,7 @@ from src.domain.identity import ServiceError
 from src.infrastructure.billing import mercadopago, plans
 from src.infrastructure.billing.subscriptions import Subscriptions
 from src.infrastructure.entrypoint.worker.tasks import create_mercadopago_subscription
+from src.infrastructure.security.providers import FernetMessages
 from src.infrastructure.security.middleware import require
 
 log = logging.getLogger(__name__)
@@ -125,7 +126,11 @@ def checkout(payload: CheckoutRequest, request: Request, actor=Depends(require()
     except ServiceError as exc:
         raise _http(exc) from exc
     try:
-        create_mercadopago_subscription.delay(row["id"], payload.card_token, payload.payer_email)
+        # Celery/Redis persists task arguments. Encrypt the one-time token before it enters the broker.
+        encrypted_card_token = FernetMessages(request.app.state.services.identity.settings.mail_key).encrypt(payload.card_token)
+        create_mercadopago_subscription.apply_async(
+            args=(row["id"], encrypted_card_token, payload.payer_email), expires=180
+        )
     except Exception as exc:
         service.fail(row["id"], "No se pudo iniciar el cobro. Inténtalo de nuevo.")
         raise HTTPException(503, "No se pudo iniciar el cobro. Inténtalo de nuevo.") from exc

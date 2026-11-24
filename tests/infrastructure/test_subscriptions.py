@@ -13,6 +13,7 @@ from src.infrastructure.billing.subscriptions import DAY, Subscriptions
 from src.infrastructure.entrypoint.api import subscription_routes
 from src.infrastructure.entrypoint.api.fastapi_app import create_app
 from src.infrastructure.security.container import build_services
+from src.infrastructure.security.providers import FernetMessages
 from src.infrastructure.security.settings import Settings
 
 PASSWORD = "Correct-Horse-9-Battery"
@@ -392,7 +393,8 @@ def test_a_license_cannot_stack_on_an_active_plan(billing, mp):
 def test_routes(billing, monkeypatch):
     services, _, user, _ = billing
     queued = []
-    monkeypatch.setattr(subscription_routes.create_mercadopago_subscription, "delay", lambda *args: queued.append(args))
+    monkeypatch.setattr(subscription_routes.create_mercadopago_subscription, "apply_async",
+                        lambda *, args, expires: queued.append((args, expires)))
     monkeypatch.setattr(plans, "details", lambda plan, mode=None: {"available": True, "amount": plan.price_usd * 3300,
                                                                     "currency": "COP"})
     settings = Settings(database_url=services.store.engine.url.render_as_string(hide_password=False),
@@ -417,8 +419,11 @@ def test_routes(billing, monkeypatch):
 
         started = client.post("/api/v1/billing/checkout", headers=engineer,
                               json={"tier": "standard", "card_token": "tok_12345678", "payer_email": "payer@testuser.com"})
-        assert started.status_code == 202 and queued == [(started.json()["subscription_id"], "tok_12345678",
-                                                          "payer@testuser.com")]
+        assert started.status_code == 202 and len(queued) == 1
+        (subscription_id, encrypted_token, payer_email), expires = queued[0][0], queued[0][1]
+        assert subscription_id == started.json()["subscription_id"] and payer_email == "payer@testuser.com"
+        assert FernetMessages(services.identity.settings.mail_key).decrypt(encrypted_token) == "tok_12345678"
+        assert expires == 180
         assert client.get("/api/v1/billing/subscription", headers=engineer).json()["checkout"]["status"] == "pending"
         assert client.post("/api/v1/billing/checkout", headers=engineer, json={
             "tier": "standard", "card_token": "tok_12345678", "payer_email": "payer@testuser.com"}).status_code == 409

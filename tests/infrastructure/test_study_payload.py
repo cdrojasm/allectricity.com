@@ -81,6 +81,32 @@ def test_generated_text_does_not_quote_verdict_codes():
     assert _plain_codes("El diseño cumple.") == "El diseño cumple."
 
 
+def test_legacy_study_password_is_upgraded_to_argon2id():
+    from hashlib import sha256
+
+    from src.infrastructure.entrypoint.api.study_routes import _verify_password
+
+    study = {"password_hash": sha256(b"shared secret").hexdigest()}
+    assert _verify_password(study, "shared secret")
+    assert study["password_hash"].startswith("$argon2id$")
+    assert _verify_password(study, "shared secret")
+    assert not _verify_password(study, "wrong secret")
+
+
+def test_malformed_study_password_hash_is_rejected():
+    from src.infrastructure.entrypoint.api.study_routes import _verify_password
+
+    assert not _verify_password({"password_hash": "not-a-valid-hash"}, "some password")
+
+
+def test_study_password_hash_is_removed_from_api_rows():
+    from src.infrastructure.entrypoint.api.study_routes import _public_study_row
+
+    assert _public_study_row({"slug": "sample", "password_hash": "secret"}) == {
+        "slug": "sample"
+    }
+
+
 def test_an_unavailable_public_study_says_why(env):  # noqa: F811
     from time import time
     _, services, client, _, tokens, _ = env

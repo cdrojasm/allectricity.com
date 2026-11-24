@@ -1,7 +1,7 @@
 """Bill of materials of a design version (BL-21), shared by the workspace and the published study."""
 
 
-def bill_of_materials(snapshot, origin, db, project_id) -> dict | None:
+def bill_of_materials(snapshot, origin, db, project_id, artifact_id=None, artifact_version=None) -> dict | None:
     """BL-21: quantities taken off the pinned version's geometry (conductor by material, rods by material and
     length, connections, trench). Geometric quantities only: no waste, slack or overlaps. The excavation volume
     needs a trench width, which only an optimizer run declares (with its source); the cost comes from the applied
@@ -54,6 +54,11 @@ def bill_of_materials(snapshot, origin, db, project_id) -> dict | None:
             cost = {"currency": (run.get("result_summary") or {}).get("cost_currency"), "total": evaluation["cost"],
                     "by_group": (evaluation.get("cost_detail") or {}).get("by_group"),
                     "note": "Costo de la alternativa aplicada según la corrida del optimizador y las tarifas listadas abajo; no se recalcula aquí."}
+    adjustments = {}
+    if artifact_id is not None and artifact_version is not None:
+        from src.infrastructure.persistence.bom_adjustment_repository import BomAdjustmentRepository
+        saved = BomAdjustmentRepository(db.connection).get(project_id, artifact_id, artifact_version)
+        adjustments = (saved or {}).get("adjustments", {})
     return {
         "conductor": [{"material": m, "length_m": round(v, 3), "cross_section_mm2": section.get("cross_section_mm2"),
                        "material_id": section.get("material_id")} for m, v in sorted(conductor.items())],
@@ -64,6 +69,7 @@ def bill_of_materials(snapshot, origin, db, project_id) -> dict | None:
         "trench": {"length_m": round(trench, 3), "width_m": trench_width, "depth_m": geometries[0].get("burial_depth_m"),
                    "excavation_m3": round(excavation_m3, 3) if trench_width is not None else None},
         "cost": cost,
+        "adjustments": adjustments,
         "notes": ["Cantidades geométricas de esta versión: sin desperdicio, traslapos ni holguras de instalación.",
                   *([] if trench_width is not None else ["El volumen de excavación requiere un ancho de zanja declarado con su fuente; esta versión no lo trae."])],
     }

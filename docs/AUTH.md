@@ -59,6 +59,15 @@ al usuario/sesión local para conservar revocación y RBAC, no solo cambiar algo
 
 ## Flujos y contratos
 
+### Revocar un estudio compartido
+
+Si se sospecha exposición de la contraseña de un estudio, cambiarla desde su
+configuración de acceso invalida la clave anterior. Para invalidar también el
+enlace, cambiar el estado de publicación a `revoked`; si debe compartirse de
+nuevo, publicar una nueva copia con un slug nuevo y una contraseña nueva. La
+revocación del enlace anterior es irreversible desde la API y el slug histórico
+no se reutiliza.
+
 Todos los endpoints siguientes tienen prefijo `/api/v1`. Las respuestas de API
 llevan `Cache-Control: no-store`. La API no almacena tokens en cookies; recibe
 `Authorization: Bearer <access_token>`. La UI usa autenticación local mediante

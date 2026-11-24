@@ -1,6 +1,7 @@
 """Study publication and read-only sharing endpoints (E5 / H3)."""
 
 from hashlib import sha256
+from hmac import compare_digest
 import re
 import os
 from time import time
@@ -8,6 +9,8 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from argon2 import PasswordHasher, Type
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 from src.domain.agent.patches import unconfirmed_critical
 from src.domain.jobs import JobKind
@@ -32,6 +35,7 @@ DEFAULT_CONFIG = {
     "show_allectricity_brand": True,
     "traceability": "appendix",
 }
+_STUDY_PASSWORDS = PasswordHasher(type=Type.ID)
 
 
 class StudyRequest(BaseModel):
@@ -84,7 +88,32 @@ def _merge_study_config(base: dict | None, updates: dict | None) -> dict:
 
 
 def _hash(value):
-    return sha256(value.encode("utf-8")).hexdigest() if value else None
+    return _STUDY_PASSWORDS.hash(value) if value else None
+
+
+def _verify_password(study, password):
+    """Verify Argon2id hashes and transparently upgrade legacy unsalted SHA-256 hashes."""
+    stored = study.get("password_hash")
+    if not stored or not password:
+        return False
+    if stored.startswith("$argon2id$"):
+        try:
+            valid = _STUDY_PASSWORDS.verify(stored, password)
+        except (InvalidHashError, VerificationError, VerifyMismatchError):
+            return False
+        if valid and _STUDY_PASSWORDS.check_needs_rehash(stored):
+            study["password_hash"] = _hash(password)
+        return valid
+    # Legacy hashes are fixed-length hex SHA-256 strings. Compare in constant time.
+    legacy = sha256(password.encode("utf-8")).hexdigest()
+    if len(stored) == 64 and compare_digest(stored, legacy):
+        study["password_hash"] = _hash(password)
+        return True
+    return False
+
+
+def _public_study_row(study):
+    return {key: value for key, value in study.items() if key != "password_hash"}
 
 
 def _slug(title):
@@ -117,8 +146,13 @@ def _public_study(db, slug, access=None, render=False):
         raise HTTPException(404, {"code": "not_found", "message": "No existe un estudio publicado con este enlace."})
     if study["expires_at"] and study["expires_at"] <= now:
         raise HTTPException(410, {"code": "expired", "message": "El enlace existe, pero venció.", "expired_at": study["expires_at"]})
-    if not render and access and study["access"] == "password" and study["password_hash"] != _hash(access.password or ""):
-        raise HTTPException(401, "Study password required")
+    if not render and access and study["access"] == "password":
+        stored_hash = study["password_hash"]
+        if not _verify_password(study, access.password or ""):
+            raise HTTPException(401, "Study password required")
+        # ``_verify_password`` replaces a legacy/outdated value in the in-memory row.
+        if study["password_hash"] != stored_hash:
+            db.change("studies", study["id"], password_hash=study["password_hash"])
     return study
 
 
@@ -215,7 +249,7 @@ def _payload(db, study):
         latest_calculation = max(calculations, key=lambda row: row["created_at"])
         snapshot = {**snapshot, "result": summarize(latest_calculation)}
         calculation_detail = _calculation_detail(latest_calculation)
-    return {"study": {**{k: study[k] for k in ("id", "slug", "title", "access", "status", "artifact_id", "artifact_version", "expires_at", "published_at", "updated_at")}, "config": config}, "project": {"name": project["name"], "description": project["description"], "city": project.get("city"), "country": project.get("country")}, "artifact": snapshot, "calculation": calculation_detail, "references": references, "optimization": _optimization(db, study["project_id"], artifact.get("origin")), "bill_of_materials": _bill_of_materials(snapshot, artifact.get("origin"), db, study["project_id"]), "draft": bool(unconfirmed) or bool(origin.get("draft")) or bool(assumptions), "unconfirmed_critical": unconfirmed, "assumptions": assumptions, "non_compliant": _verdict(db, study) == "no_cumple", "has_newer_version": bool(latest and latest["version"] > study["artifact_version"])}
+    return {"study": {**{k: study[k] for k in ("id", "slug", "title", "access", "status", "artifact_id", "artifact_version", "expires_at", "published_at", "updated_at")}, "config": config}, "project": {"name": project["name"], "description": project["description"], "city": project.get("city"), "country": project.get("country")}, "artifact": snapshot, "calculation": calculation_detail, "references": references, "optimization": _optimization(db, study["project_id"], artifact.get("origin")), "bill_of_materials": _bill_of_materials(snapshot, artifact.get("origin"), db, study["project_id"], study["artifact_id"], study["artifact_version"]), "draft": bool(unconfirmed) or bool(origin.get("draft")) or bool(assumptions), "unconfirmed_critical": unconfirmed, "assumptions": assumptions, "non_compliant": _verdict(db, study) == "no_cumple", "has_newer_version": bool(latest and latest["version"] > study["artifact_version"])}
 
 
 
@@ -224,7 +258,7 @@ def _payload(db, study):
 def list_studies(project_id: str, request: Request, actor=Depends(require("designs:read"))):
     with request.app.state.services.store.transaction() as db:
         _owned_project(db, project_id, actor)
-        return db.many("studies", project_id=project_id, limit=100)
+        return [_public_study_row(row) for row in db.many("studies", project_id=project_id, limit=100)]
 
 
 @router.post("", status_code=201)
@@ -244,7 +278,7 @@ def create_study(project_id: str, data: StudyRequest, request: Request, actor=De
             slug = str(uuid4())
         row = {"id": str(uuid4()), "project_id": project_id, "owner_id": actor.user_id, "slug": slug, "artifact_id": data.artifact_id, "artifact_version": artifact["version"], "title": data.title, "access": data.access, "status": "draft", "config": _merge_study_config(DEFAULT_CONFIG, data.config), "password_hash": _hash(data.password), "expires_at": data.expires_at, "published_at": None, "created_at": now, "updated_at": now}
         db.add("studies", **row)
-        return row
+        return _public_study_row(row)
 
 
 @router.patch("/{study_id}")
@@ -257,7 +291,7 @@ def update_study(project_id: str, study_id: str, data: StudyRequest, request: Re
         if not db.one("artefacto_diseno_tierras", project_id=project_id, artifact_id=data.artifact_id, version=version): raise HTTPException(404, "Artifact version not found")
         changes = {"artifact_id": data.artifact_id, "artifact_version": version, "title": data.title, "access": data.access, "password_hash": _hash(data.password) if data.password else study["password_hash"], "expires_at": data.expires_at, "config": _merge_study_config(study["config"], data.config), "updated_at": int(time())}
         db.change("studies", study_id, **changes)
-        return db.one("studies", id=study_id)
+        return _public_study_row(db.one("studies", id=study_id))
 
 
 @router.post("/{study_id}/publish")
@@ -271,7 +305,7 @@ def publish_study(project_id: str, study_id: str, data: PublishRequest, request:
         if data.status == "published" and not data.confirm_non_compliant and _verdict(db, study) == "no_cumple":
             raise HTTPException(409, {"code": "non_compliant", "message": "El diseño no cumple la norma. Confirma que quieres publicarlo con la banda «Diseño no conforme»."})
         db.change("studies", study_id, status=data.status, published_at=int(time()) if data.status == "published" else study["published_at"], updated_at=int(time()))
-        return db.one("studies", id=study_id)
+        return _public_study_row(db.one("studies", id=study_id))
 
 
 @router.patch("/{study_id}/access")
@@ -282,7 +316,7 @@ def update_study_access(project_id: str, study_id: str, data: StudyAccessRequest
         if not study: raise HTTPException(404, "Study not found")
         if data.access == "password" and not data.password and not study["password_hash"]: raise HTTPException(422, "password is required for password-protected studies")
         db.change("studies", study_id, access=data.access, password_hash=_hash(data.password) if data.password else study["password_hash"], expires_at=data.expires_at, updated_at=int(time()))
-        return db.one("studies", id=study_id)
+        return _public_study_row(db.one("studies", id=study_id))
 
 
 @router.post("/{study_id}/sections/{section_id}/generate", status_code=202)
@@ -315,7 +349,7 @@ def republish_study(project_id: str, study_id: str, data: StudyRequest, request:
         if db.one("studies", slug=slug): slug = str(uuid4())
         row = {"id": str(uuid4()), "project_id": project_id, "owner_id": actor.user_id, "slug": slug, "artifact_id": data.artifact_id, "artifact_version": artifact["version"], "title": data.title, "access": data.access, "status": "published", "config": _merge_study_config(previous["config"], data.config), "password_hash": _hash(data.password) or previous["password_hash"], "expires_at": data.expires_at, "published_at": now, "created_at": now, "updated_at": now}
         db.add("studies", **row)
-        return row
+        return _public_study_row(row)
 
 
 @router.post("/{study_id}/pdf", status_code=202)
@@ -351,8 +385,25 @@ def get_study_pdf(project_id: str, study_id: str, request: Request, actor=Depend
 
 @public_router.post("/{slug}/access")
 def public_study_access(slug: str, data: PublicAccessRequest, request: Request):
+    # Shared SQL-backed buckets apply across API replicas. Do not trust a client-supplied
+    # X-Forwarded-For value here; request.client is set by the ASGI connection.
+    client_ip = request.client.host if request.client else "unknown"
+    identity = request.app.state.services.identity
     with request.app.state.services.store.transaction() as db:
-        return _payload(db, _public_study(db, slug, data))
+        candidate = db.one("studies", slug=slug)
+    identity.throttle("study_password_ip", client_ip, limit=30, seconds=900)
+    # Key valid records by stable ID. Unknown slugs use the IP bucket so random guesses
+    # cannot grow rate_limits without bound.
+    identity.throttle("study_password_slug", candidate["id"] if candidate else f"not-found:{client_ip}",
+                       limit=10, seconds=900)
+    with request.app.state.services.store.transaction(write=True) as db:
+        try:
+            study = _public_study(db, slug, data)
+        except HTTPException as exc:
+            if exc.status_code in {401, 404, 410}:
+                raise HTTPException(401, "No se pudo validar el acceso al estudio.") from exc
+            raise
+        return _payload(db, study)
 
 
 @public_router.get("/{slug}")

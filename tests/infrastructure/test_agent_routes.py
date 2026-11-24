@@ -230,3 +230,32 @@ def test_a_project_with_files_sent_in_the_chat_can_be_deleted(chat):
     assert client.delete(f"/api/v1/projects/{project['id']}", headers=headers(tokens)).status_code == 204
     with services.store.transaction() as db:
         assert db.one("projects", id=project["id"]) is None and db.one("file_uploads", id=upload_id) is None
+
+
+def test_foreign_user_cannot_read_project_or_nested_resources(chat):
+    services, client, _, project, conversation, _, admin_actor = chat
+    _, other_tokens, _ = human(services, admin_actor, "foreign-owner@example.com", "designer")
+    project_id = project["id"]
+    upload_id = "00000000-0000-4000-8000-00000000b101"
+    with services.store.transaction(write=True) as db:
+        db.add("file_uploads", id=upload_id, owner_id=admin_actor.user_id,
+               project_id=project_id, filename="private.pdf", quarantine_key="private/q",
+               target_bucket="documents", object_key="private/o", expected_mime="application/pdf",
+               status="available", created_at=1, updated_at=1)
+
+    paths = [
+        f"/api/v1/projects/{project_id}",
+        f"/api/v1/projects/{project_id}/conversations",
+        f"/api/v1/projects/{project_id}/memory",
+        f"/api/v1/projects/{project_id}/files",
+        f"/api/v1/projects/{project_id}/artefactos-diseno-tierras",
+        f"/api/v1/projects/{project_id}/studies",
+        f"/api/v1/projects/{project_id}/optimizer-runs",
+        f"/api/v1/projects/{project_id}/knowledge-graph/claims",
+        f"/api/v1/conversations/{conversation['id']}/messages/first",
+        f"/api/v1/files/{upload_id}",
+        f"/api/v1/files/{upload_id}/download",
+    ]
+    for path in paths:
+        response = client.get(path, headers=headers(other_tokens))
+        assert response.status_code == 404, f"{path}: {response.status_code} {response.text}"

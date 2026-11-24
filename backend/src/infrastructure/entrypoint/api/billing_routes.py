@@ -61,9 +61,13 @@ def _signed_mode(url_mode, signature, request_id, data_id):
 async def _receive(url_mode, request: Request):
     if not mercadopago.webhook_secret(url_mode):
         raise HTTPException(503, f"Mercado Pago {url_mode} webhook is not configured")
-    body = await request.body()
-    if len(body) > MAX_BODY_BYTES:
-        raise HTTPException(413, "Notification too large")
+    chunks, body_size = [], 0
+    async for chunk in request.stream():
+        body_size += len(chunk)
+        if body_size > MAX_BODY_BYTES:
+            raise HTTPException(413, "Notification too large")
+        chunks.append(chunk)
+    body = b"".join(chunks)
     query = request.query_params
     request_id = request.headers.get("x-request-id", "")
     mode = _signed_mode(url_mode, request.headers.get("x-signature"), request_id, query.get("data.id", ""))
@@ -97,7 +101,9 @@ async def _receive(url_mode, request: Request):
         "notification_id": notification_id,
         "request_id": _text(request_id, 128),
         "live_mode": payload.get("live_mode") if isinstance(payload.get("live_mode"), bool) else None,
-        "payload": payload,
+        # Keep only the normalized fields above. Never persist an untrusted webhook body,
+        # which could contain payer or card data not needed to reconcile the event.
+        "payload": {},
         "status": "received" if known else "ignored",
         "attempts": 0,
         "received_at": now,

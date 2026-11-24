@@ -23,7 +23,8 @@ COPY scripts/sync_phoenix_prompts.py /app/scripts/sync_phoenix_prompts.py
 # Each *-deps stage installs only third-party packages: the stub package lets pip resolve the extras,
 # then the project itself is installed from the real sources with --no-deps.
 FROM base AS agent-deps
-RUN mkdir src && touch src/__init__.py && pip install --no-cache-dir '.[agent]' \
+COPY dependencies/requirements/agent.txt ./requirements.lock
+RUN mkdir src && touch src/__init__.py && pip install --no-cache-dir --require-hashes -r requirements.lock \
     && pip uninstall -y spat-design-agent && rm -rf src build ./*.egg-info
 
 FROM agent-deps AS agent-worker
@@ -33,7 +34,8 @@ USER spat
 CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "agent"]
 
 FROM base AS document-deps
-RUN mkdir src && touch src/__init__.py && pip install --no-cache-dir '.[documents]' \
+COPY dependencies/requirements/documents.txt ./requirements.lock
+RUN mkdir src && touch src/__init__.py && pip install --no-cache-dir --require-hashes -r requirements.lock \
     && pip uninstall -y spat-design-agent && rm -rf src build ./*.egg-info
 
 FROM document-deps AS document-worker
@@ -43,7 +45,8 @@ USER spat
 CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "-Q", "documents"]
 
 FROM base AS calculation-deps
-RUN mkdir src && touch src/__init__.py && pip install --no-cache-dir '.[calculations]' \
+COPY dependencies/requirements/calculations.txt ./requirements.lock
+RUN mkdir src && touch src/__init__.py && pip install --no-cache-dir --require-hashes -r requirements.lock \
     && pip uninstall -y spat-design-agent && rm -rf src build ./*.egg-info
 
 FROM calculation-deps AS calculation-worker
@@ -59,7 +62,8 @@ USER spat
 CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "-Q", "optimizer"]
 
 FROM base AS mail-deps
-RUN mkdir src && touch src/__init__.py && pip install --no-cache-dir '.[billing]' \
+COPY dependencies/requirements/mail.txt ./requirements.lock
+RUN mkdir src && touch src/__init__.py && pip install --no-cache-dir --require-hashes -r requirements.lock \
     && pip uninstall -y spat-design-agent && rm -rf src build ./*.egg-info
 
 FROM mail-deps AS mail-worker
@@ -70,10 +74,11 @@ CMD ["celery", "-A", "src.infrastructure.entrypoint.worker.tasks:celery_app", "w
 
 FROM base AS render-deps
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+COPY dependencies/requirements/render.txt ./requirements.lock
 # libatomic1 is required by Playwright's bundled node driver on python-slim.
 RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 \
     && rm -rf /var/lib/apt/lists/* \
-    && mkdir src && touch src/__init__.py && pip install --no-cache-dir '.[render]' \
+    && mkdir src && touch src/__init__.py && pip install --no-cache-dir --require-hashes -r requirements.lock \
     && pip uninstall -y spat-design-agent && rm -rf src build ./*.egg-info \
     && playwright install --with-deps chromium
 

@@ -544,14 +544,17 @@ def process_mercadopago_event(self, event_id):
 
 @celery_app.task(name="spat.create_mercadopago_subscription", bind=True, soft_time_limit=90, time_limit=120)
 def create_mercadopago_subscription(self, subscription_id, card_token, payer_email):
-    """Create the preapproval for a pending checkout. The card token lives only in this task's arguments (it is
-    single use and short lived); the subscription id is the idempotency key, so a retry cannot charge twice."""
+    """Create a preapproval after decrypting the short-lived broker payload.
+
+    The subscription id remains the idempotency key, so a retry cannot charge twice.
+    """
     from src.infrastructure.billing import mercadopago
     from src.infrastructure.billing.subscriptions import Subscriptions
 
     subscriptions = Subscriptions(upload_store())
     try:
-        subscriptions.create_remote(subscription_id, card_token, payer_email, retry=self.request.retries > 0)
+        clear_card_token = FernetMessages(os.environ["AUTH_MAIL_ENCRYPTION_KEY"]).decrypt(card_token)
+        subscriptions.create_remote(subscription_id, clear_card_token, payer_email, retry=self.request.retries > 0)
     except mercadopago.ResourceUnavailable as exc:
         if self.request.retries >= 3:
             subscriptions.fail(subscription_id, "Mercado Pago no respondió. Inténtalo de nuevo en unos minutos.")

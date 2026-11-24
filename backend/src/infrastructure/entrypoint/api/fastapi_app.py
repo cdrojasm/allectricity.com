@@ -31,7 +31,9 @@ from src.infrastructure.entrypoint.api.job_routes import router as job_router
 from src.infrastructure.entrypoint.api.material_catalog_routes import router as material_catalog_router
 from src.infrastructure.entrypoint.api.material_catalog_persistence_routes import (
     router as material_catalog_persistence_router,
+    personal_router as material_catalog_personal_router,
 )
+from src.infrastructure.entrypoint.api.quotation_routes import router as quotation_router, template_router as quotation_template_router
 from src.infrastructure.entrypoint.api.constraint_profile_routes import (
     router as constraint_profile_router,
 )
@@ -65,7 +67,16 @@ def create_app(settings=None, services=None):
                 telemetry.flush()
                 app.state.services.store.engine.dispose()
 
-    app = FastAPI(title="SPAT Design Agent", version="0.2.0", lifespan=lifespan)
+    environment = getattr(settings, "environment", os.getenv("SPAT_ENVIRONMENT", "local"))
+    docs_enabled = environment in {"local", "test"}
+    app = FastAPI(
+        title="SPAT Design Agent",
+        version="0.2.0",
+        lifespan=lifespan,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url=None,
+        openapi_url="/openapi.json" if docs_enabled else None,
+    )
     app.add_middleware(AuthenticationMiddleware)
     app.include_router(router)
     app.include_router(file_router)
@@ -81,6 +92,9 @@ def create_app(settings=None, services=None):
     app.include_router(public_study_router)
     app.include_router(material_catalog_router)
     app.include_router(material_catalog_persistence_router)
+    app.include_router(material_catalog_personal_router)
+    app.include_router(quotation_router)
+    app.include_router(quotation_template_router)
     app.include_router(constraint_profile_router)
     app.include_router(optimizer_router)
     app.include_router(job_router)

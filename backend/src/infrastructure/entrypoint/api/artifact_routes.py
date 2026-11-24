@@ -4,7 +4,7 @@ from time import time
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from src.application.use_cases import potential_calculations
 from src.domain.spat.artifact_contract import snapshot_fields, validate_artifact
@@ -25,6 +25,7 @@ from src.infrastructure.processing.measurement_tables import XLSX_MIME
 from src.infrastructure.processing.dxf_import import import_dxf
 from src.domain.jobs import JobKind
 from src.infrastructure.entrypoint.api.job_routes import queue_job, require_llm_capacity
+from src.infrastructure.persistence.bom_adjustment_repository import BomAdjustmentRepository
 
 router = APIRouter(prefix="/api/v1/projects/{project_id}/artefactos-diseno-tierras", tags=["artefactos-diseno-tierras"])
 catalog_router = APIRouter(prefix="/api/v1", tags=["catalogos"])
@@ -384,8 +385,38 @@ def version_bill_of_materials(project_id: str, artifact_id: str, version: int, r
         row = db.designs.get_version(project_id, artifact_id, version)
         if not row:
             raise HTTPException(404, "Artifact version not found")
-        bom = bill_of_materials(row["snapshot"], row.get("origin"), db, project_id)
-    return {"artifact_id": artifact_id, "version": version, "bill_of_materials": bom}
+        bom = bill_of_materials(row["snapshot"], row.get("origin"), db, project_id, artifact_id, version)
+        saved = BomAdjustmentRepository(db.connection).get(project_id, artifact_id, version)
+    return {"artifact_id": artifact_id, "version": version, "bill_of_materials": bom,
+            "adjustments": (saved or {}).get("adjustments", {})}
+
+
+class BomAdjustmentInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    percentage: float = Field(default=0, ge=0, le=1000)
+    extra_quantity: float = Field(default=0, ge=0, le=1_000_000)
+
+
+class BomAdjustmentsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    adjustments: dict[str, BomAdjustmentInput] = Field(max_length=200)
+
+
+@router.put("/{artifact_id}/versions/{version}/materiales")
+def save_version_bom_adjustments(project_id: str, artifact_id: str, version: int, data: BomAdjustmentsInput,
+                                 request: Request, actor=Depends(require("designs:write"))):
+    now = int(time())
+    with request.app.state.services.store.transaction(write=True) as db:
+        owned_project(db, project_id, actor)
+        row = db.designs.get_version(project_id, artifact_id, version)
+        if not row:
+            raise HTTPException(404, "Artifact version not found")
+        from src.infrastructure.services.bill_of_materials import bill_of_materials
+        if bill_of_materials(row["snapshot"], row.get("origin"), db, project_id) is None:
+            raise HTTPException(409, "This version has no bill of materials")
+        saved = BomAdjustmentRepository(db.connection).save(project_id, artifact_id, version,
+            {key: value.model_dump() for key, value in data.adjustments.items()}, actor.user_id, now)
+    return {"artifact_id": artifact_id, "version": version, "adjustments": saved["adjustments"], "updated_at": now}
 
 
 @router.get("/{artifact_id}/versions/{version}/coherencia")
