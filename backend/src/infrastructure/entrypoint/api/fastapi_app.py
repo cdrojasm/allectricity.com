@@ -8,7 +8,7 @@ from uuid import uuid4
 import json
 import os
 
-from fastapi import FastAPI, HTTPException, Depends, Request, Response
+from fastapi import FastAPI, HTTPException, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
